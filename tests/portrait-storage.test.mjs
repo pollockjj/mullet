@@ -33,9 +33,10 @@ test('normalizes a generated portrait without any canonical transcript text', ()
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('rejects portraits for another conversation or non-image results', () => {
+test('rejects portraits for another conversation, non-image results, or non-2:3 dimensions', () => {
   assert.throws(() => normalizeStoredPortrait(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredPortrait(stored({ image: new Blob(['no'], { type: 'text/plain' }) })), /image is invalid/);
+  assert.throws(() => normalizeStoredPortrait(stored({ width: 768, height: 1024 })), /supported 2:3 expression size/);
 });
 
 test('discards a portrait when its conversation becomes stale during the storage write', async () => {

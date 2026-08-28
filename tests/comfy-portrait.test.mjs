@@ -52,6 +52,7 @@ test('exposes only the compatible model assets and zimage LoRAs', async () => {
   let index = 0;
   const capabilities = await loadPortraitCapabilities(async () => Response.json(replies[index++]), 'http://comfy');
   assert.deepEqual(capabilities.loras, ['zimage/kristi6.safetensors']);
+  assert.deepEqual(capabilities.aspectRatios, [{ id: '2:3', width: 2, height: 3, label: '2:3 fixed portrait' }]);
   assert.equal(capabilities.referenceTemplate.id, PORTRAIT_REFERENCE_TEMPLATE_ID);
 });
 

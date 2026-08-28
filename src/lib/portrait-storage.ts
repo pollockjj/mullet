@@ -1,7 +1,9 @@
 import {
+  PORTRAIT_MEGAPIXELS,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
   isPortraitSource,
+  portraitDimensions,
   type PortraitModelTemplate,
   type PortraitSource
 } from './portrait.ts';
@@ -59,6 +61,13 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
   if (!(value.image instanceof Blob) || value.image.type !== 'image/png' || value.image.size < 8 || value.image.size > 20 * 1024 * 1024) {
     throw new Error('stored portrait image is invalid');
   }
+  const width = safeInteger(value.width, 'stored portrait width', 16, 8192);
+  const height = safeInteger(value.height, 'stored portrait height', 16, 8192);
+  const supportedDimensions = PORTRAIT_MEGAPIXELS.some((megapixels) => {
+    const dimensions = portraitDimensions('2:3', megapixels);
+    return dimensions.width === width && dimensions.height === height;
+  });
+  if (!supportedDimensions) throw new Error('stored portrait dimensions are not a supported 2:3 expression size');
   return {
     spec: STORED_PORTRAIT_SPEC,
     conversationId: value.conversationId,
@@ -67,8 +76,8 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
     modelTemplate: value.modelTemplate,
     promptId: value.promptId,
     seed: safeInteger(value.seed, 'stored portrait seed', 0, Number.MAX_SAFE_INTEGER),
-    width: safeInteger(value.width, 'stored portrait width', 16, 8192),
-    height: safeInteger(value.height, 'stored portrait height', 16, 8192),
+    width,
+    height,
     generatedAt: safeInteger(value.generatedAt, 'stored portrait timestamp', 1, Number.MAX_SAFE_INTEGER),
     image: value.image
   };
