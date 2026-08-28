@@ -4,6 +4,7 @@ import {
   PORTRAIT_TEMPLATE_ID,
   isPortraitSource,
   portraitDimensions,
+  validatePortraitPngDimensions,
   type PortraitModelTemplate,
   type PortraitSource
 } from './portrait.ts';
@@ -83,6 +84,16 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
   };
 }
 
+export async function verifyStoredPortrait(value: unknown): Promise<StoredPortrait> {
+  const normalized = normalizeStoredPortrait(value);
+  validatePortraitPngDimensions(
+    new Uint8Array(await normalized.image.arrayBuffer()),
+    normalized.width,
+    normalized.height
+  );
+  return normalized;
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, 1);
@@ -117,7 +128,7 @@ export async function loadStoredPortrait(): Promise<unknown | null> {
 }
 
 export async function saveStoredPortrait(portrait: StoredPortrait): Promise<void> {
-  const normalized = normalizeStoredPortrait(portrait);
+  const normalized = await verifyStoredPortrait(portrait);
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -172,7 +183,7 @@ export async function commitStoredPortrait(
   portrait: StoredPortrait,
   operations: PortraitCommitOperations
 ): Promise<boolean> {
-  const normalized = normalizeStoredPortrait(portrait);
+  const normalized = await verifyStoredPortrait(portrait);
   if (!operations.isCurrent()) return false;
   await operations.save(normalized);
   if (!operations.isCurrent()) {

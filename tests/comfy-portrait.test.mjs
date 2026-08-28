@@ -38,6 +38,17 @@ function nodePresent(node) {
   return { [node]: { input: { required: {} } } };
 }
 
+function png(width = 704, height = 704) {
+  const bytes = new Uint8Array(33);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  new DataView(bytes.buffer).setUint32(8, 13, false);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width, false);
+  view.setUint32(20, height, false);
+  return bytes;
+}
+
 test('exposes only the compatible model assets and zimage LoRAs', async () => {
   const replies = [
     nodeInfo('UNETLoader', 'unet_name', ['z_image_turbo_int8_convrot.safetensors', 'flux-2-klein-9b-fp8.safetensors']),
@@ -89,7 +100,7 @@ test('verifies the Jenna reference bytes before queuing the FLUX.2 Klein 9B iden
     aspectRatio: '1:1',
     megapixels: 0.5
   });
-  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const outputPng = png();
   const observed = [];
   const fetcher = async (input, init) => {
     const url = String(input);
@@ -104,7 +115,7 @@ test('verifies the Jenna reference bytes before queuing the FLUX.2 Klein 9B iden
         outputs: { '18': { images: [{ filename: 'portrait-reference_00001_.png', subfolder: 'mullet', type: 'output' }] } }
       }
     });
-    if (url.includes('/view?')) return new Response(png, { headers: { 'content-type': 'image/png' } });
+    if (url.includes('/view?')) return new Response(outputPng, { headers: { 'content-type': 'image/png' } });
     throw new Error(`unexpected URL ${url}`);
   };
   const result = await runComfyPortrait(fetcher, 'http://comfy', referenceRequest, 19790213);
@@ -124,7 +135,7 @@ test('verifies the Jenna reference bytes before queuing the FLUX.2 Klein 9B iden
 
 test('queues, polls, and proxies only the fixed portrait output', async () => {
   const observed = [];
-  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const outputPng = png();
   const fetcher = async (input, init) => {
     const url = String(input);
     observed.push({ url, init });
@@ -135,7 +146,7 @@ test('queues, polls, and proxies only the fixed portrait output', async () => {
         outputs: { '10': { images: [{ filename: 'portrait_00001_.png', subfolder: 'mullet', type: 'output' }] } }
       }
     });
-    if (url.includes('/view?')) return new Response(png, { headers: { 'content-type': 'image/png' } });
+    if (url.includes('/view?')) return new Response(outputPng, { headers: { 'content-type': 'image/png' } });
     throw new Error(`unexpected URL ${url}`);
   };
   const result = await runComfyPortrait(fetcher, 'http://comfy/', request, 17);
@@ -145,7 +156,23 @@ test('queues, polls, and proxies only the fixed portrait output', async () => {
   assert.equal(queued.prompt['8'].inputs.seed, 17);
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait_00001_.png&subfolder=mullet&type=output');
   assert.equal(result.contentType, 'image/png');
-  assert.deepEqual(result.bytes, png);
+  assert.deepEqual(result.bytes, outputPng);
+});
+
+test('rejects a Comfy portrait whose PNG IHDR is not the requested fixed square', async () => {
+  const fetcher = async (input) => {
+    const url = String(input);
+    if (url.endsWith('/prompt')) return Response.json({ prompt_id: '11111111-1111-4111-8111-111111111111' });
+    if (url.includes('/history/')) return Response.json({
+      '11111111-1111-4111-8111-111111111111': {
+        status: { completed: true, status_str: 'success' },
+        outputs: { '10': { images: [{ filename: 'portrait_00001_.png', subfolder: 'mullet', type: 'output' }] } }
+      }
+    });
+    if (url.includes('/view?')) return new Response(png(704, 1056), { headers: { 'content-type': 'image/png' } });
+    throw new Error(`unexpected URL ${url}`);
+  };
+  await assert.rejects(runComfyPortrait(fetcher, 'http://comfy', request, 17), /dimensions do not match/);
 });
 
 test('rejects a history result outside the fixed output location', async () => {

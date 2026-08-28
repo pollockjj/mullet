@@ -149,6 +149,7 @@
     loadStoredPortrait,
     normalizeStoredPortrait,
     saveStoredPortrait,
+    verifyStoredPortrait,
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
@@ -1730,7 +1731,7 @@
     try {
       const stored = await loadStoredPortrait();
       if (stored) {
-        const normalized = normalizeStoredPortrait(stored);
+        const normalized = await verifyStoredPortrait(stored);
         if (normalized.conversationId === conversationId) await installGeneratedPortrait(normalized, true);
         else await clearStoredPortrait();
       }

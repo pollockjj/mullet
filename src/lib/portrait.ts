@@ -143,6 +143,7 @@ const REFERENCE_IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const aspectMap = new Map(PORTRAIT_ASPECT_RATIOS.map((ratio) => [ratio.id, ratio]));
 const megapixelSet = new Set<number>(PORTRAIT_MEGAPIXELS);
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -178,6 +179,34 @@ export function portraitDimensions(
   const width = ratio.width * scale;
   const height = ratio.height * scale;
   return { width, height, pixels: width * height };
+}
+
+export function validatePortraitPngDimensions(
+  bytes: Uint8Array,
+  expectedWidth: number,
+  expectedHeight: number
+): void {
+  if (!Number.isSafeInteger(expectedWidth) || expectedWidth < 1 || expectedWidth > 8192
+    || !Number.isSafeInteger(expectedHeight) || expectedHeight < 1 || expectedHeight > 8192) {
+    throw new Error('portrait PNG expected dimensions are invalid');
+  }
+  if (
+    !(bytes instanceof Uint8Array)
+    || bytes.byteLength < 33
+    || PNG_SIGNATURE.some((value, index) => bytes[index] !== value)
+    || bytes[8] !== 0
+    || bytes[9] !== 0
+    || bytes[10] !== 0
+    || bytes[11] !== 13
+    || bytes[12] !== 0x49
+    || bytes[13] !== 0x48
+    || bytes[14] !== 0x44
+    || bytes[15] !== 0x52
+  ) throw new Error('portrait output has an invalid PNG signature or IHDR');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(16, false) !== expectedWidth || view.getUint32(20, false) !== expectedHeight) {
+    throw new Error('portrait output dimensions do not match its request');
+  }
 }
 
 export function buildPortraitRequest(

@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { STORED_PORTRAIT_SPEC, commitStoredPortrait, loadStoredPortrait, normalizeStoredPortrait } from '../src/lib/portrait-storage.ts';
+import {
+  STORED_PORTRAIT_SPEC,
+  commitStoredPortrait,
+  loadStoredPortrait,
+  normalizeStoredPortrait,
+  verifyStoredPortrait
+} from '../src/lib/portrait-storage.ts';
+
+function png(width = 704, height = 704) {
+  const bytes = new Uint8Array(33);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  new DataView(bytes.buffer).setUint32(8, 13, false);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width, false);
+  view.setUint32(20, height, false);
+  return bytes;
+}
 
 function stored(overrides = {}) {
   return {
@@ -21,7 +38,7 @@ function stored(overrides = {}) {
     width: 704,
     height: 704,
     generatedAt: 1,
-    image: new Blob([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }),
+    image: new Blob([png()], { type: 'image/png' }),
     ...overrides
   };
 }
@@ -37,6 +54,13 @@ test('rejects portraits for another conversation, non-image results, or non-1:1 
   assert.throws(() => normalizeStoredPortrait(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredPortrait(stored({ image: new Blob(['no'], { type: 'text/plain' }) })), /image is invalid/);
   assert.throws(() => normalizeStoredPortrait(stored({ width: 704, height: 1056 })), /supported 1:1 expression size/);
+});
+
+test('rejects a stored portrait whose PNG IHDR contradicts its fixed-square metadata', async () => {
+  await assert.rejects(
+    verifyStoredPortrait(stored({ image: new Blob([png(704, 1056)], { type: 'image/png' }) })),
+    /dimensions do not match/
+  );
 });
 
 test('ignores the legacy stored portrait v1 instead of rendering its old portrait geometry', async () => {

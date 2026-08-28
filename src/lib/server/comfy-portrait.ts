@@ -7,6 +7,8 @@ import {
   Z_IMAGE_TURBO_TEMPLATE,
   buildFlux2Klein9BReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
+  portraitDimensions,
+  validatePortraitPngDimensions,
   type PortraitCapabilities,
   type PortraitRequest
 } from '../portrait.ts';
@@ -221,9 +223,8 @@ export async function runComfyPortrait(
   const contentType = imageResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
   if (contentType !== 'image/png') throw new Error('ComfyUI portrait output is not a PNG');
   const bytes = new Uint8Array(await imageResponse.arrayBuffer());
-  if (bytes.byteLength < 8 || bytes.byteLength > 20 * 1024 * 1024) throw new Error('ComfyUI portrait output has an invalid size');
-  if (bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) {
-    throw new Error('ComfyUI portrait output has an invalid PNG signature');
-  }
+  if (bytes.byteLength < 33 || bytes.byteLength > 20 * 1024 * 1024) throw new Error('ComfyUI portrait output has an invalid size');
+  const dimensions = portraitDimensions(request.aspectRatio, request.megapixels);
+  validatePortraitPngDimensions(bytes, dimensions.width, dimensions.height);
   return { bytes, contentType, promptId: id, filename: image.filename };
 }
