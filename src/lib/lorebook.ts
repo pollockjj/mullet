@@ -495,10 +495,6 @@ async function matchesKey(
   }
 
   const caseSensitive = entry.caseSensitive ?? settings.caseSensitive;
-  if (entry.useRegex) {
-    return (await regexTest(trimmed, caseSensitive ? '' : 'i', haystack)).matched;
-  }
-
   const transformedHaystack = caseSensitive ? haystack : haystack.toLowerCase();
   const transformedKey = caseSensitive ? trimmed : trimmed.toLowerCase();
   const wholeWords = entry.matchWholeWords ?? settings.matchWholeWords;
@@ -651,21 +647,20 @@ function scanText(
 function characterFilterAllows(entry: NormalizedLoreEntry, options: ScanOptions): boolean {
   const filter = entry.characterFilter;
   if (!filter) return true;
-  const currentNames = new Set([
-    options.card?.data.name,
-    options.card?.data.nickname,
-    ...(options.characterFilterNames ?? [])
-  ].filter((value): value is string => typeof value === 'string' && value.length > 0));
-  const currentTags = new Set([
-    ...(options.card?.data.tags ?? []),
-    ...(options.characterTags ?? [])
-  ]);
-  const nameIncluded = filter.names.length > 0 && filter.names.some((name) => currentNames.has(name));
-  const tagIncluded = filter.tags.length > 0 && filter.tags.some((tag) => currentTags.has(tag));
-  const hasConfiguredFilter = filter.names.length > 0 || filter.tags.length > 0;
-  const included = nameIncluded || tagIncluded;
-  return !hasConfiguredFilter || (filter.isExclude ? !included : included);
+  const currentNames = new Set(options.characterFilterNames ?? []);
+  const currentTags = new Set(options.characterTags ?? []);
+  if (filter.names.length > 0) {
+    const included = filter.names.some((name) => currentNames.has(name));
+    if (filter.isExclude ? included : !included) return false;
+  }
+  if (filter.tags.length > 0) {
+    const included = filter.tags.some((tag) => currentTags.has(tag));
+    if (filter.isExclude ? included : !included) return false;
+  }
+  return true;
 }
+
+type ScanState = 'initial' | 'recursion' | 'min_activations';
 
 export async function scanLorebooks(
   books: ImportedLorebook[],
@@ -717,8 +712,7 @@ export async function scanLorebooks(
   let allActivatedText = '';
   let budgetOverflowed = false;
   let iteration = 0;
-  let initialScan = true;
-  let minActivationScan = false;
+  let scanState: ScanState = 'initial';
   let scanDepthSkew = 0;
 
   while (true) {
@@ -731,15 +725,16 @@ export async function scanLorebooks(
       if (activated.has(candidate.identity) || failedProbabilityChecks.has(candidate.identity) || !entry.enabled) continue;
       if (entry.triggers.length > 0 && !entry.triggers.includes(generationTrigger)) continue;
       if (!characterFilterAllows(entry, options)) continue;
-      if (initialScan && entry.delayUntilRecursion > 0) continue;
-      if (!initialScan && (entry.excludeRecursion || entry.delayUntilRecursion > currentRecursionDelayLevel)) continue;
+      if (scanState !== 'recursion' && entry.delayUntilRecursion > 0) continue;
+      if (scanState === 'recursion' && entry.delayUntilRecursion > currentRecursionDelayLevel) continue;
+      if (scanState === 'recursion' && settings.recursive && entry.excludeRecursion) continue;
       if (entry.decorators.includes('@@activate')) {
         candidate.score = 0;
         matched.push(candidate);
         continue;
       }
       if (entry.decorators.includes('@@dont_activate')) continue;
-      const haystack = scanText(historyNewestFirst, entry, settings, recursion, scanDepthSkew, !minActivationScan, options);
+      const haystack = scanText(historyNewestFirst, entry, settings, recursion, scanDepthSkew, scanState !== 'min_activations', options);
       if (!await entryMatches(haystack, entry, settings, substitute, regexTest)) continue;
       candidate.score = await entryMatchScore(haystack, entry, settings, substitute, regexTest);
       matched.push(candidate);
@@ -776,27 +771,26 @@ export async function scanLorebooks(
       if (!entry.preventRecursion && content) newRecursion.push(content);
     }
 
-    let continueScanning = settings.recursive && !budgetOverflowed && newRecursion.length > 0;
-    let nextMinActivationScan = false;
-    if (!continueScanning && settings.recursive && !budgetOverflowed && minActivationScan && recursion.length > 0) {
-      continueScanning = true;
+    let nextScanState: ScanState | null = settings.recursive && !budgetOverflowed && newRecursion.length > 0
+      ? 'recursion'
+      : null;
+    if (!nextScanState && settings.recursive && !budgetOverflowed && scanState === 'min_activations' && recursion.length > 0) {
+      nextScanState = 'recursion';
     }
     const scanDepth = settings.scanDepth + scanDepthSkew;
     const minActivationsNotSatisfied = settings.minActivations > 0 && activated.size < settings.minActivations;
     const minActivationDepthAvailable = (settings.minActivationsDepthMax === 0 || scanDepth <= settings.minActivationsDepthMax)
       && scanDepth <= historyNewestFirst.length;
-    if (!continueScanning && !budgetOverflowed && minActivationsNotSatisfied && minActivationDepthAvailable) {
+    if (!nextScanState && !budgetOverflowed && minActivationsNotSatisfied && minActivationDepthAvailable) {
       scanDepthSkew += 1;
-      continueScanning = true;
-      nextMinActivationScan = true;
+      nextScanState = 'min_activations';
     }
-    if (!continueScanning && settings.recursive && !budgetOverflowed && recursionDelayLevels.length > 0) {
+    if (!nextScanState && settings.recursive && !budgetOverflowed && recursionDelayLevels.length > 0) {
       currentRecursionDelayLevel = recursionDelayLevels.shift() ?? currentRecursionDelayLevel;
-      continueScanning = true;
+      nextScanState = 'recursion';
     }
-    initialScan = false;
-    if (!continueScanning) break;
-    minActivationScan = nextMinActivationScan;
+    if (!nextScanState) break;
+    scanState = nextScanState;
     if (newRecursion.length) {
       recursion.push(...newRecursion);
       allActivatedText = `${newRecursion.join('\n')}\n${allActivatedText}`;
