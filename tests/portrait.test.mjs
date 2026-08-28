@@ -5,9 +5,9 @@ import {
   PORTRAIT_REQUEST_SPEC,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
-  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
+  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildMageFlowReferencePortraitWorkflow,
+  buildFlux2Klein9BReferencePortraitWorkflow,
   buildPortraitPrompt,
   buildPortraitRequest,
   buildZImageTurboWorkflow,
@@ -109,7 +109,7 @@ test('compiles the proven Z-Image graph and inserts only compatible LoRAs', () =
   assert.deepEqual(withLora['6'].inputs.model, ['11', 0]);
 });
 
-test('binds Jenna identity provenance and compiles the proven Mage-Flow reference graph', () => {
+test('binds Jenna identity provenance and compiles the official FLUX.2 Klein 9B reference graph', () => {
   const built = referenceRequest();
   assert.equal(built.modelTemplate, PORTRAIT_REFERENCE_TEMPLATE_ID);
   assert.equal(built.source.characterId, 'jenna-stannis');
@@ -119,15 +119,23 @@ test('binds Jenna identity provenance and compiles the proven Mage-Flow referenc
   assert.match(prompt, /supplied canonical reference/);
   assert.match(prompt, /Preserve identity; do not substitute another person/);
 
-  const graph = buildMageFlowReferencePortraitWorkflow(built, 19790213);
-  assert.equal(graph['1'].inputs.unet_name, MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['2'].inputs.type, 'mage');
+  const graph = buildFlux2Klein9BReferencePortraitWorkflow(built, 19790213);
+  assert.equal(graph['1'].inputs.unet_name, FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.clip_name, 'qwen_3_8b_fp8mixed.safetensors');
+  assert.equal(graph['2'].inputs.type, 'flux2');
+  assert.equal(graph['3'].inputs.vae_name, 'full_encoder_small_decoder.safetensors');
   assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(graph['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(graph['5'].inputs.width, 704);
-  assert.equal(graph['5'].inputs.height, 704);
-  assert.equal(graph['6'].inputs.seed, 19790213);
-  assert.deepEqual(graph['8'].inputs.images, ['7', 0]);
+  assert.equal(graph['5'].class_type, 'ImageScaleToTotalPixels');
+  assert.equal(graph['5'].inputs.megapixels, 704 * 704 / (1024 * 1024));
+  assert.equal(graph['6'].class_type, 'VAEEncode');
+  assert.equal(graph['7'].class_type, 'CLIPTextEncode');
+  assert.equal(graph['8'].class_type, 'ConditioningZeroOut');
+  assert.deepEqual(graph['9'].inputs, { conditioning: ['7', 0], latent: ['6', 0] });
+  assert.deepEqual(graph['10'].inputs, { conditioning: ['8', 0], latent: ['6', 0] });
+  assert.deepEqual(graph['11'].inputs, { width: 704, height: 704, batch_size: 1 });
+  assert.equal(graph['12'].inputs.noise_seed, 19790213);
+  assert.deepEqual(graph['15'].inputs, { steps: 4, width: 704, height: 704 });
+  assert.deepEqual(graph['18'].inputs.images, ['17', 0]);
   assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
 });
 

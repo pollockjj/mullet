@@ -13,8 +13,8 @@ import {
   PORTRAIT_VIDEO_MODES,
   PORTRAIT_VIDEO_REQUEST_SPEC,
   PORTRAIT_VIDEO_TEMPLATE_ID,
-  MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
-  buildMageFlowPortraitEndFrameWorkflow,
+  FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
+  buildFlux2Klein9BPortraitEndFrameWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
   buildPortraitEndFramePrompt,
   buildPortraitVideoPrompt,
@@ -89,6 +89,7 @@ test('defaults every portrait request to the identical-frame H3 loop', () => {
   assert.equal(JSON.stringify(built).includes('transcript'), false);
   assert.match(buildPortraitVideoPrompt(built), /identical supplied portrait is the first and final keyframe/);
   assert.match(buildPortraitVideoPrompt(built), /Silent video only/);
+  assert.match(buildPortraitVideoPrompt(built), /no talking, no lip or mouth movement, and no speech gestures/);
 });
 
 test('compiles first-frame-only MiniMax H3 I2V with H.264 video-only output', () => {
@@ -139,27 +140,26 @@ test('compiles the selected five-second loop as 124 identical-frame-conditioned 
   assert.deepEqual(graph['6'].inputs.last_frame, ['5', 0]);
 });
 
-test('compiles Mage-Flow end-frame generation followed by distinct H3 first/last conditioning', () => {
+test('compiles FLUX.2 Klein 9B end-frame generation followed by distinct H3 first/last conditioning', () => {
   const request = buildPortraitVideoRequest(
     portrait(),
     '1:1',
     'a'.repeat(64),
     PORTRAIT_VIDEO_MODE_GENERATED_FLF
   );
-  assert.equal(request.endFrameModelTemplate, MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.id);
+  assert.equal(request.endFrameModelTemplate, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.id);
   assert.equal(portraitVideoEndFrameSeed(42), 43);
   assert.equal(portraitVideoEndFrameSeed(Number.MAX_SAFE_INTEGER), 0);
   assert.match(buildPortraitEndFramePrompt(request), /exact same subject/);
   assert.match(buildPortraitVideoPrompt(request), /distinct final pose/);
 
-  const endGraph = buildMageFlowPortraitEndFrameWorkflow(request, firstInput, 43);
-  assert.equal(endGraph['1'].inputs.unet_name, MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-  assert.equal(endGraph['2'].inputs.type, 'mage');
-  assert.equal(endGraph['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(endGraph['5'].inputs.width, 704);
-  assert.equal(endGraph['5'].inputs.height, 704);
-  assert.equal(endGraph['6'].inputs.seed, 43);
-  assert.deepEqual(endGraph['8'].inputs.images, ['7', 0]);
+  const endGraph = buildFlux2Klein9BPortraitEndFrameWorkflow(request, firstInput, 43);
+  assert.equal(endGraph['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+  assert.equal(endGraph['2'].inputs.type, 'flux2');
+  assert.equal(endGraph['5'].class_type, 'ImageScaleToTotalPixels');
+  assert.deepEqual(endGraph['11'].inputs, { width: 704, height: 704, batch_size: 1 });
+  assert.equal(endGraph['12'].inputs.noise_seed, 43);
+  assert.deepEqual(endGraph['18'].inputs.images, ['17', 0]);
 
   const graph = buildMiniMaxH3PortraitVideoWorkflow(request, firstInput, 42, endInput);
   assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);

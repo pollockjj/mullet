@@ -75,7 +75,7 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   assert.match(portraitProfile.subject, /Jan Chappell portraying Cally/);
   assert.match(portraitProfile.attire, /rust-red and deep maroon Liberator tunic/);
   assert.match(portraitProfile.setting, /Liberator flight deck/);
-  assert.equal(portraitProfile.modelTemplate, 'mage-flow-edit-turbo-reference-v1');
+  assert.equal(portraitProfile.modelTemplate, 'flux2-klein-9b-distilled-reference-v1');
   assert.equal(portraitProfile.referenceImage.name, 'cally-v1.jpg');
   assert.equal(portraitProfile.referenceImage.sha256, '8d61eb6b5218cb76c259f41d848cbc0953500bc133de807e9464db013a0fc962');
   assert.match(portraitProfile.fingerprint, /^[0-9a-f]{8}$/);

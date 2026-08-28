@@ -152,14 +152,14 @@ test('discards obsolete v1/v2/v3/v4 direct values and envelopes for automatic re
 test('requires exact generated end-frame provenance only for generated FLF mode', () => {
   const generatedRequest = request({
     mode: 'flf2v_generated',
-    endFrameModelTemplate: 'mage-flow-edit-turbo-4step-v1'
+    endFrameModelTemplate: 'flux2-klein-9b-distilled-end-frame-v1'
   });
   const generated = stored({
     request: generatedRequest,
     requestKey: portraitVideoRequestKey(generatedRequest),
     mode: generatedRequest.mode,
     endFrame: {
-      modelTemplate: 'mage-flow-edit-turbo-4step-v1',
+      modelTemplate: 'flux2-klein-9b-distilled-end-frame-v1',
       promptId: '33333333-3333-4333-8333-333333333333',
       seed: 43,
       width: 704,
