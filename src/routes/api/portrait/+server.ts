@@ -1,4 +1,3 @@
-import { randomInt } from 'node:crypto';
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { PORTRAIT_TIMEOUT_MS, normalizePortraitRequest, portraitDimensions } from '$lib/portrait';
@@ -8,6 +7,12 @@ import { runtime } from '$lib/server/runtime';
 function configuredComfyBaseUrl(): string {
   if (!runtime.comfyBaseUrl) throw error(503, 'Portrait generation is not configured.');
   return runtime.comfyBaseUrl;
+}
+
+function randomSeed(): number {
+  const words = new Uint32Array(2);
+  crypto.getRandomValues(words);
+  return (words[0] % 65_536) * 2 ** 32 + words[1];
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
@@ -37,7 +42,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     throw error(400, cause instanceof Error ? cause.message : 'invalid portrait request');
   }
 
-  const seed = portraitRequest.seed ?? randomInt(0, 2 ** 48);
+  const seed = portraitRequest.seed ?? randomSeed();
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(PORTRAIT_TIMEOUT_MS)]);
   try {
     const capabilities = await loadPortraitCapabilities(fetch, baseUrl, signal);
@@ -46,7 +51,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
     const result = await runComfyPortrait(fetch, baseUrl, portraitRequest, seed, signal);
     const dimensions = portraitDimensions(portraitRequest.aspectRatio, portraitRequest.megapixels);
-    return new Response(result.bytes, {
+    const imageBody = result.bytes.slice().buffer as ArrayBuffer;
+    return new Response(imageBody, {
       headers: {
         'content-type': result.contentType,
         'cache-control': 'no-store',

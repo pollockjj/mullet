@@ -5,7 +5,7 @@ import {
   buildZImageTurboWorkflow,
   type PortraitCapabilities,
   type PortraitRequest
-} from '$lib/portrait';
+} from '../portrait.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -99,6 +99,7 @@ function outputImage(entry: Record<string, unknown>): { filename: string; subfol
     throw new Error('ComfyUI portrait history omitted the output node');
   }
   const output = entry.outputs[Z_IMAGE_TURBO_TEMPLATE.outputNode];
+  if (!isRecord(output)) throw new Error('ComfyUI portrait history omitted the output node');
   if (!Array.isArray(output.images) || !isRecord(output.images[0])) throw new Error('ComfyUI portrait history omitted the image');
   const image = output.images[0];
   if (typeof image.filename !== 'string' || !/^portrait_\d+_\.png$/.test(image.filename)) {
