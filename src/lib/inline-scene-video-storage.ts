@@ -177,7 +177,8 @@ async function blobSha256(blob: Blob): Promise<string> {
 
 export async function verifyStoredInlineSceneVideo(value: unknown): Promise<StoredInlineSceneVideo> {
   const video = normalizeStoredInlineSceneVideo(value);
-  const signature = new Uint8Array(await video.video.slice(0, 4).arrayBuffer());
+  const bytes = new Uint8Array(await video.video.arrayBuffer());
+  const signature = bytes.subarray(0, 4);
   if (
     signature[0] !== 0x1a
     || signature[1] !== 0x45
