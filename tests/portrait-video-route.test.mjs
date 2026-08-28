@@ -360,6 +360,10 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     fake.reset();
     assert.equal((await post(formFor(request, imageBytes, true))).status, 400);
     assert.equal(fake.state.calls.length, 0);
+
+    fake.reset();
+    assert.equal((await post(formFor({ ...request, mode: 'unsupported' }, imageBytes))).status, 400);
+    assert.equal(fake.state.calls.length, 0);
   });
 
   await context.test('history failure maps to 502 and cancels only its prompt', async () => {

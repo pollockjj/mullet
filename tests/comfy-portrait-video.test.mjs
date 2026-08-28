@@ -203,3 +203,22 @@ test('rejects traversal, wrong animation metadata, MIME, signature, and oversize
     ComfyPortraitVideoOutputTooLargeError
   );
 });
+
+test('rejects output nodes and filename prefixes from the other mode', async () => {
+  const runWith = (selectedRequest, outputs) => runComfyPortraitVideo(async (url) => {
+    const value = String(url);
+    if (value.endsWith('/prompt')) return Response.json({ prompt_id: '33333333-3333-4333-8333-333333333333', node_errors: {} });
+    if (value.includes('/history/')) return Response.json({
+      '33333333-3333-4333-8333-333333333333': {
+        status: { completed: true, status_str: 'success' },
+        outputs
+      }
+    });
+    throw new Error(`unexpected URL ${value}`);
+  }, 'http://comfy', selectedRequest, input, 42);
+  const i2vOutput = { images: [{ filename: 'portrait-motion_00001_.webm', subfolder: 'mullet', type: 'output' }], animated: [true] };
+  const loopOutput = { images: [{ filename: 'portrait-motion-loop-flf_00001_.webm', subfolder: 'mullet', type: 'output' }], animated: [true] };
+  await assert.rejects(runWith(loopRequest, { '31': i2vOutput }), /selected output node/);
+  await assert.rejects(runWith(request, { '31': loopOutput }), /unexpected portrait-video filename/);
+  await assert.rejects(runWith(request, { '35': loopOutput }), /selected output node/);
+});

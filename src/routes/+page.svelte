@@ -1845,6 +1845,7 @@
       !selectedRequest
       || !selectedPortrait
       || !portraitVideoCapabilities
+      || !portraitVideoCapabilities.modes.some(({ id }) => id === selectedRequest.mode)
       || portraitVideoBusy
       || portraitBusy
       || !portraitVideoPersistenceReady
@@ -3221,7 +3222,7 @@
             <select
               bind:value={portraitVideoMode}
               on:change={persistPortraitVideoMode}
-              disabled={portraitVideoBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
+              disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
               aria-label="Portrait video mode"
             >
               {#each portraitVideoCapabilities.modes as mode}<option value={mode.id}>{mode.label}</option>{/each}
@@ -3233,7 +3234,7 @@
               <option value={portraitVideoCapabilities.template.id}>{portraitVideoCapabilities.template.label}</option>
             </select>
           </label>
-          <small>49 frames @ 24 FPS · 2-second motion span · looping VP9 WebM</small>
+          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · 49 frames @ 24 FPS · 2-second motion span · looping VP9 WebM</small>
           {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button
