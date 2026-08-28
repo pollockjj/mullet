@@ -27,7 +27,7 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   const { catalog, entry } = bundledScenario();
   assert.equal(catalog.spec, 'mullet_scenario_catalog_v1');
   assert.equal(entry.id, 'blakes-7-post-gan');
-  assert.equal(entry.version, '1.0.0');
+  assert.equal(entry.version, '1.0.1');
 
   const duplicate = asset('catalog.json');
   duplicate.scenarios.push(structuredClone(duplicate.scenarios[0]));
@@ -64,6 +64,13 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
     assert.ok(cardRaw.data[field].every((value) => typeof value === 'string'), field);
   });
   assert.equal(typeof cardRaw.data.extensions, 'object');
+  assert.equal(cardRaw.data.character_version, '0.1.1');
+  assert.equal(cardRaw.data.extensions.mullet.user_definition, 'female_she_her');
+  assert.equal(lorebookRaw.data.extensions.mullet.user_definition, 'female_she_her');
+  const protagonist = lorebookRaw.data.entries.find((loreEntry) => loreEntry.id === 1);
+  assert.match(protagonist.content, /protagonist is a woman and uses she\/her pronouns/);
+  assert.equal(protagonist.extensions.mullet.user_definition, 'female_she_her');
+  assert.doesNotMatch(protagonist.content, /no predefined[^.]*gender/);
 
   const ids = lorebookRaw.data.entries.map((loreEntry) => String(loreEntry.id));
   assert.equal(new Set(ids).size, ids.length);
@@ -115,7 +122,7 @@ test('activates the scenario timeline and named cast without polluting canonical
   const lore = await scanLorebooks([embedded], history, { recursive: true }, { card, userName: 'You' });
   const names = lore.activated.map((activation) => activation.name);
   assert.ok(names.includes('Timeline gate'));
-  assert.ok(names.includes('Player-character sovereignty'));
+  assert.ok(names.includes('Female player-character sovereignty'));
   assert.ok(names.includes('Immediate dramatic state'));
   assert.ok(names.includes('Roj Blake'));
   assert.ok(names.includes('Kerr Avon'));
@@ -123,7 +130,8 @@ test('activates the scenario timeline and named cast without polluting canonical
 
   const compiled = compileCharacterMessages(card, injectLoreContext(history, lore), 'You', lore);
   assert.match(compiled[0].content, /timeline begins immediately after the failed assault/i);
-  assert.match(compiled[0].content, /player-controlled protagonist has no predefined name/i);
+  assert.match(compiled[0].content, /player-controlled protagonist is a woman and uses she\/her pronouns/i);
+  assert.match(compiled[0].content, /She has no predefined name/i);
   assert.deepEqual(compiled.find((message) => message.role === 'user'), history[0]);
   assert.doesNotMatch(JSON.stringify(compiled), /\bOOC\b|sidecar/i);
 });
