@@ -24,8 +24,8 @@ function request(overrides = {}) {
       portraitPromptId: '11111111-1111-4111-8111-111111111111',
       portraitSeed: 41,
       portraitGeneratedAt: 17,
-      portraitWidth: 768,
-      portraitHeight: 768,
+      portraitWidth: 704,
+      portraitHeight: 704,
       portraitImageSha256: 'a'.repeat(64),
       portraitSource: {
         conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -162,8 +162,8 @@ test('requires exact generated end-frame provenance only for generated FLF mode'
       modelTemplate: 'mage-flow-edit-turbo-4step-v1',
       promptId: '33333333-3333-4333-8333-333333333333',
       seed: 43,
-      width: 768,
-      height: 768,
+      width: 704,
+      height: 704,
       imageSha256: 'c'.repeat(64)
     }
   });

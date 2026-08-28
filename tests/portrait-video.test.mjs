@@ -39,8 +39,8 @@ function portrait(overrides = {}) {
     },
     promptId: '11111111-1111-4111-8111-111111111111',
     seed: 41,
-    width: 768,
-    height: 768,
+    width: 704,
+    height: 704,
     generatedAt: 17,
     ...overrides
   };
@@ -156,8 +156,8 @@ test('compiles Mage-Flow end-frame generation followed by distinct H3 first/last
   assert.equal(endGraph['1'].inputs.unet_name, MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
   assert.equal(endGraph['2'].inputs.type, 'mage');
   assert.equal(endGraph['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(endGraph['5'].inputs.width, 768);
-  assert.equal(endGraph['5'].inputs.height, 768);
+  assert.equal(endGraph['5'].inputs.width, 704);
+  assert.equal(endGraph['5'].inputs.height, 704);
   assert.equal(endGraph['6'].inputs.seed, 43);
   assert.deepEqual(endGraph['8'].inputs.images, ['7', 0]);
 

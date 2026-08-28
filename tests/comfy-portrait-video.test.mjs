@@ -32,8 +32,8 @@ const portrait = {
   },
   promptId: '11111111-1111-4111-8111-111111111111',
   seed: 41,
-  width: 768,
-  height: 768,
+  width: 704,
+  height: 704,
   generatedAt: 17
 };
 
@@ -164,10 +164,10 @@ test('accepts only a PNG with the exact source IHDR dimensions', () => {
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
-  view.setUint32(16, 768, false);
-  view.setUint32(20, 768, false);
-  assert.doesNotThrow(() => validatePortraitVideoPng(png, 768, 768));
-  assert.throws(() => validatePortraitVideoPng(png, 864, 768), /dimensions do not match/);
+  view.setUint32(16, 704, false);
+  view.setUint32(20, 704, false);
+  assert.doesNotThrow(() => validatePortraitVideoPng(png, 704, 704));
+  assert.throws(() => validatePortraitVideoPng(png, 768, 704), /dimensions do not match/);
 });
 
 async function runMode(selectedRequest, filename, selectedEndInput, outputBytes = mp4) {
@@ -249,8 +249,8 @@ test('queues and validates the exact Mage-Flow portrait end-frame PNG', async ()
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
-  view.setUint32(16, 768, false);
-  view.setUint32(20, 768, false);
+  view.setUint32(16, 704, false);
+  view.setUint32(20, 704, false);
   const fetcher = async (url, init) => {
     const value = String(url);
     observed.push({ url: value, init });
