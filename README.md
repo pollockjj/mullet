@@ -4,7 +4,7 @@
 
 MULLET is a local-first scenario workbench for persistent character conversations and interactive media.
 
-The current WIP checkpoint provides a real streaming chat through an OpenAI-compatible local model endpoint. Character-card, lorebook, scenario, and media-sidecar support are developed as continuously playable increments.
+The current WIP checkpoint provides a real streaming chat through an OpenAI-compatible local model endpoint with a server-enforced, user-selectable response token limit. Character-card, lorebook, scenario, and media-sidecar support are developed as continuously playable increments.
 
 ## Development
 

@@ -2,6 +2,7 @@
   import { base } from '$app/paths';
   import { browser } from '$app/environment';
   import { onMount, tick } from 'svelte';
+  import { TOKEN_LIMIT_OPTIONS } from '$lib/token-limit';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -13,8 +14,12 @@
   let draft = '';
   let streaming = false;
   let errorMessage = '';
+  let noticeMessage = '';
+  let tokenLimit = data.defaultMaxTokens;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
+
+  $: tokenOptions = TOKEN_LIMIT_OPTIONS.filter((value) => value <= data.maxTokens);
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -30,6 +35,10 @@
       if (Array.isArray(parsed)) messages = parsed;
     } catch {
       localStorage.removeItem('mullet.checkpoint-one.messages');
+    }
+    const savedTokenLimit = Number(localStorage.getItem('mullet.response-token-limit'));
+    if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 16 && savedTokenLimit <= data.maxTokens) {
+      tokenLimit = savedTokenLimit;
     }
   });
 
@@ -50,7 +59,12 @@
     if (streaming) return;
     messages = [];
     errorMessage = '';
+    noticeMessage = '';
     persist();
+  }
+
+  function persistTokenLimit() {
+    if (browser) localStorage.setItem('mullet.response-token-limit', String(tokenLimit));
   }
 
   function stop() {
@@ -62,6 +76,7 @@
     if (!content || streaming) return;
 
     errorMessage = '';
+    noticeMessage = '';
     draft = '';
     messages = [...messages, { role: 'user', content }, { role: 'assistant', content: '' }];
     streaming = true;
@@ -72,7 +87,7 @@
       const response = await fetch(`${base}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages: messages.slice(0, -1) }),
+        body: JSON.stringify({ messages: messages.slice(0, -1), maxTokens: tokenLimit }),
         signal: controller.signal
       });
 
@@ -84,6 +99,7 @@
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let hitTokenLimit = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -98,6 +114,7 @@
           const payload = line.slice(5).trim();
           if (!payload || payload === '[DONE]') continue;
           const event = JSON.parse(payload);
+          if (event?.choices?.[0]?.finish_reason === 'length') hitTokenLimit = true;
           const token = event?.choices?.[0]?.delta?.content;
           if (typeof token !== 'string' || token.length === 0) continue;
           const last = messages.at(-1);
@@ -110,6 +127,7 @@
       }
 
       persist();
+      if (hitTokenLimit) noticeMessage = `Stopped at the ${tokenLimit}-token response limit.`;
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
         errorMessage = 'Generation stopped.';
@@ -188,6 +206,7 @@
 
       <div class="composer-wrap">
         {#if errorMessage}<div class="error" role="alert">{errorMessage}</div>{/if}
+        {#if noticeMessage}<div class="notice" role="status">{noticeMessage}</div>{/if}
         <div class="composer">
           <textarea
             bind:value={draft}
@@ -203,7 +222,15 @@
             <button class="send" on:click={send} disabled={!draft.trim()}>Send</button>
           {/if}
         </div>
-        <small>Enter sends · Shift+Enter adds a line</small>
+        <div class="composer-meta">
+          <label>
+            Response limit
+            <select bind:value={tokenLimit} on:change={persistTokenLimit} disabled={streaming}>
+              {#each tokenOptions as option}<option value={option}>{option} tokens</option>{/each}
+            </select>
+          </label>
+          <small>Enter sends · Shift+Enter adds a line</small>
+        </div>
       </div>
     </section>
   </main>
@@ -258,8 +285,11 @@
   .send:hover:not(:disabled) { background: #f1b976; }
   .send:disabled { opacity: .35; cursor: default; }
   .stop { color: #f0ddd5; background: #7b4036; }
-  .composer-wrap > small { display: block; max-width: 840px; margin: 7px auto 0; color: #686159; text-align: right; font-size: 10px; }
+  .composer-meta { max-width: 840px; margin: 7px auto 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #686159; font-size: 10px; }
+  .composer-meta label { display: flex; align-items: center; gap: 7px; }
+  .composer-meta select { padding: 4px 7px; border: 1px solid #3c3731; border-radius: 7px; color: #bdb4aa; background: #191613; font-size: 10px; }
   .error { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #7b4036; border-radius: 9px; color: #f0c8bd; background: #321d19; font-size: 12px; white-space: pre-wrap; }
+  .notice { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #5f513d; border-radius: 9px; color: #e9c995; background: #2d251a; font-size: 12px; }
   @keyframes pulse { to { opacity: .35; } }
   @media (max-width: 760px) {
     header { height: 66px; padding: 0 14px; }
@@ -272,4 +302,3 @@
     .empty { margin-top: 8vh; }
   }
 </style>
-

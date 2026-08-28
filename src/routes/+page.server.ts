@@ -3,6 +3,7 @@ import { runtime } from '$lib/server/runtime';
 
 export const load: PageServerLoad = () => ({
   model: runtime.modelId,
-  revision: runtime.revision
+  revision: runtime.revision,
+  maxTokens: runtime.maxTokens,
+  defaultMaxTokens: runtime.defaultMaxTokens
 });
-

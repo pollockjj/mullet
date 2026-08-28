@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runtime } from '$lib/server/runtime';
+import { resolveTokenLimit } from '$lib/token-limit';
 
 type Role = 'system' | 'user' | 'assistant';
 type ChatMessage = { role: Role; content: string };
@@ -38,6 +39,12 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     throw error(400, 'request body must be JSON');
   });
   const messages = validateMessages(body?.messages);
+  let tokenLimit: number;
+  try {
+    tokenLimit = resolveTokenLimit(body?.maxTokens, runtime.maxTokens, runtime.defaultMaxTokens);
+  } catch (cause) {
+    throw error(400, cause instanceof Error ? cause.message : 'invalid maxTokens');
+  }
 
   let upstream: Response;
   try {
@@ -48,7 +55,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         model: runtime.modelId,
         messages,
         stream: true,
-        max_tokens: runtime.maxTokens,
+        max_tokens: tokenLimit,
         temperature: runtime.temperature
       }),
       signal: request.signal
@@ -64,14 +71,16 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     throw error(502, `The local model rejected the request (${upstream.status}).`);
   }
 
+  const headers: Record<string, string> = {
+    'content-type': upstream.headers.get('content-type') ?? 'text/event-stream',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+    'x-mullet-token-limit': String(tokenLimit)
+  };
+
   return new Response(upstream.body, {
     status: 200,
-    headers: {
-      'content-type': upstream.headers.get('content-type') ?? 'text/event-stream',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no'
-    }
+    headers
   });
 };
-
