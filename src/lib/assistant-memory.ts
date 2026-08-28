@@ -408,7 +408,11 @@ function parseTaskOperations(value: unknown, request: AssistantMemoryRequest): T
       && record.operation !== 'reopen'
     ) throw new Error(`assistant-memory task operation ${index} action is invalid`);
     const dueText = boundedText(record.due_text, `assistant-memory task operation ${index} due_text`, 0, 80);
-    if (dueText && !request.turns[0].content.includes(dueText)) {
+    if (
+      (record.operation === 'create' || record.operation === 'update')
+      && dueText
+      && !request.turns[0].content.includes(dueText)
+    ) {
       throw new Error(`assistant-memory task operation ${index} due_text is not a verbatim excerpt from the current user message`);
     }
     return {
