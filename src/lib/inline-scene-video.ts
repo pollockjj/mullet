@@ -6,6 +6,7 @@ import {
   type InlineSceneImageRequest
 } from './inline-scene.ts';
 import { LTX25_PORTRAIT_VIDEO_TEMPLATE } from './portrait-video.ts';
+import { sha256Hex } from './sha256.ts';
 
 export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v1' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-scene-i2v-distilled-v1' as const;
@@ -202,6 +203,10 @@ export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): st
     normalized.aspectRatio,
     normalized.durationSeconds
   ].join('\u001f');
+}
+
+export function inlineSceneVideoSourceRequestSha256(request: InlineSceneVideoRequest): string {
+  return sha256Hex(normalizeInlineSceneVideoRequest(request).source.sceneRequestKey);
 }
 
 export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): string {
