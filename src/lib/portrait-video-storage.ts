@@ -2,16 +2,28 @@ import {
   PORTRAIT_VIDEO_DURATION_SECONDS,
   PORTRAIT_VIDEO_FPS,
   PORTRAIT_VIDEO_FRAMES,
+  PORTRAIT_END_FRAME_TEMPLATE_ID,
+  PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_TEMPLATE_ID,
   normalizePortraitVideoRequest,
   portraitVideoDimensions,
+  portraitVideoEndFrameSeed,
   portraitVideoRequestKey,
   type PortraitVideoMode,
   type PortraitVideoRequest
 } from './portrait-video.ts';
 
-export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v2' as const;
-export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v2' as const;
+export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v3' as const;
+export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v3' as const;
+
+export type PortraitVideoEndFrameProvenance = {
+  modelTemplate: typeof PORTRAIT_END_FRAME_TEMPLATE_ID;
+  promptId: string;
+  seed: number;
+  width: number;
+  height: number;
+  imageSha256: string;
+};
 
 export type StoredPortraitVideo = {
   spec: typeof STORED_PORTRAIT_VIDEO_SPEC;
@@ -29,6 +41,7 @@ export type StoredPortraitVideo = {
   durationSeconds: typeof PORTRAIT_VIDEO_DURATION_SECONDS;
   generatedAt: number;
   inputImageSha256: string;
+  endFrame: PortraitVideoEndFrameProvenance | null;
   videoSha256: string;
   video: Blob;
 };
@@ -84,6 +97,41 @@ function sha256(value: unknown, name: string): string {
   return value;
 }
 
+function normalizeEndFrame(
+  value: unknown,
+  request: PortraitVideoRequest,
+  inputImageSha256: string,
+  videoSeed: number
+): PortraitVideoEndFrameProvenance | null {
+  if (request.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
+    if (value !== null) throw new Error('stored portrait-video end frame is invalid for its mode');
+    return null;
+  }
+  if (!isRecord(value) || value.modelTemplate !== PORTRAIT_END_FRAME_TEMPLATE_ID) {
+    throw new Error('stored portrait-video end-frame template is invalid');
+  }
+  if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) {
+    throw new Error('stored portrait-video end-frame prompt ID is invalid');
+  }
+  const seed = safeInteger(value.seed, 'stored portrait-video end-frame seed', 0, Number.MAX_SAFE_INTEGER);
+  if (seed !== portraitVideoEndFrameSeed(videoSeed)) throw new Error('stored portrait-video end-frame seed does not match its video');
+  const width = safeInteger(value.width, 'stored portrait-video end-frame width', 16, 8192);
+  const height = safeInteger(value.height, 'stored portrait-video end-frame height', 16, 8192);
+  if (width !== request.source.portraitWidth || height !== request.source.portraitHeight) {
+    throw new Error('stored portrait-video end-frame dimensions are invalid');
+  }
+  const imageSha256 = sha256(value.imageSha256, 'stored portrait-video end-frame hash');
+  if (imageSha256 === inputImageSha256) throw new Error('stored portrait-video end-frame hash matches its source');
+  return {
+    modelTemplate: PORTRAIT_END_FRAME_TEMPLATE_ID,
+    promptId: value.promptId,
+    seed,
+    width,
+    height,
+    imageSha256
+  };
+}
+
 export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVideo {
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_SPEC) throw new Error('invalid stored portrait video');
   const request = normalizePortraitVideoRequest(value.request);
@@ -97,6 +145,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
   if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) {
     throw new Error('stored portrait-video prompt ID is invalid');
   }
+  const seed = safeInteger(value.seed, 'stored portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
   const expected = portraitVideoDimensions(request.aspectRatio);
   const width = safeInteger(value.width, 'stored portrait-video width', 16, 8192);
   const height = safeInteger(value.height, 'stored portrait-video height', 16, 8192);
@@ -106,6 +155,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
   }
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored portrait-video input hash');
   if (inputImageSha256 !== request.source.portraitImageSha256) throw new Error('stored portrait-video input hash does not match its request');
+  const endFrame = normalizeEndFrame(value.endFrame, request, inputImageSha256, seed);
   const videoSha256 = sha256(value.videoSha256, 'stored portrait-video output hash');
   if (!(value.video instanceof Blob) || value.video.type !== 'video/webm' || value.video.size < 4 || value.video.size > 64 * 1024 * 1024) {
     throw new Error('stored portrait video is invalid');
@@ -118,7 +168,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     modelTemplate: PORTRAIT_VIDEO_TEMPLATE_ID,
     mode: request.mode,
     promptId: value.promptId,
-    seed: safeInteger(value.seed, 'stored portrait-video seed', 0, Number.MAX_SAFE_INTEGER),
+    seed,
     width,
     height,
     frames: PORTRAIT_VIDEO_FRAMES,
@@ -126,6 +176,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     durationSeconds: PORTRAIT_VIDEO_DURATION_SECONDS,
     generatedAt: safeInteger(value.generatedAt, 'stored portrait-video timestamp', 1, Number.MAX_SAFE_INTEGER),
     inputImageSha256,
+    endFrame,
     videoSha256,
     video: value.video
   };
@@ -135,7 +186,9 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
   if (value === null) return null;
   if (isRecord(value) && (
     value.spec === 'mullet_stored_portrait_video_v1'
+    || value.spec === 'mullet_stored_portrait_video_v2'
     || value.spec === 'mullet_stored_portrait_video_envelope_v1'
+    || value.spec === 'mullet_stored_portrait_video_envelope_v2'
   )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('video' in value)) {
