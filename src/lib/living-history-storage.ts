@@ -233,6 +233,7 @@ export async function restoreLivingHistoryResult(
   operations: LivingHistoryRestoreOperations
 ): Promise<LivingHistoryResult | null> {
   const execute = async () => {
+    if (!operations.isCurrent()) return null;
     const stored = await operations.load();
     if (!operations.isCurrent() || stored === null) return null;
     const normalized = normalizeLivingHistoryResult(stored);

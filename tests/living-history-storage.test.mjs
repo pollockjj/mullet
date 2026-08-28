@@ -211,3 +211,29 @@ test('installs a restored result before releasing the storage lock', async () =>
   assert.equal(restored?.output.revision, 1);
   assert.equal(installedWhileLocked, true);
 });
+
+test('does not migrate legacy storage after losing the epoch while waiting for the lock', async () => {
+  let current = true;
+  let loaded = false;
+  let releaseLock;
+  let reportWaiting;
+  const lockReleased = new Promise((resolve) => { releaseLock = resolve; });
+  const lockWaiting = new Promise((resolve) => { reportWaiting = resolve; });
+  const restoring = restoreLivingHistoryResult({
+    load: async () => { loaded = true; return result(); },
+    isCurrent: () => current,
+    accepts: () => true,
+    install: () => assert.fail('stale legacy restore installed'),
+    exclusive: async (operation) => {
+      reportWaiting();
+      await lockReleased;
+      return operation();
+    }
+  });
+  await lockWaiting;
+  current = false;
+  releaseLock();
+
+  assert.equal(await restoring, null);
+  assert.equal(loaded, false);
+});
