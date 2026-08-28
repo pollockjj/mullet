@@ -1,5 +1,7 @@
 import {
+  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
   PORTRAIT_MEGAPIXELS,
+  buildFlux2Klein9BReferenceEditWorkflow,
   isPortraitSource,
   portraitDimensions,
   type PortraitAspectRatio,
@@ -9,7 +11,7 @@ import {
 export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v5' as const;
 export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v5' as const;
 export const PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
-export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'mage-flow-edit-turbo-4step-v1' as const;
+export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'flux2-klein-9b-distilled-end-frame-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 3 as const;
 export const PORTRAIT_VIDEO_DURATIONS = Object.freeze([3, 5] as const);
@@ -73,32 +75,16 @@ export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, silent video-only output, no cuts'
 } as const);
 
-export const MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
+export const FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
   id: PORTRAIT_END_FRAME_TEMPLATE_ID,
-  label: 'Mage-Flow Edit Turbo',
-  modelFamily: 'mage-flow-edit',
-  workflowRevision: 'b972309e5337293cc003bb19d19aec4681fff623',
-  workflowSha256: '4c011982fda515bf7a3e459785b13277d93d622419de61752072e8717ef5c1f6',
-  modelFiles: {
-    unet: 'mage_flow_edit_turbo_int8_convrot.safetensors',
-    clip: 'qwen3vl_4b_bf16.safetensors',
-    vae: 'mage_flow_vae_bf16.safetensors'
-  },
-  requiredNodes: [
-    'UNETLoader',
-    'CLIPLoader',
-    'VAELoader',
-    'LoadImage',
-    'TextEncodeMageFlowEdit',
-    'KSampler',
-    'VAEDecode',
-    'SaveImage'
-  ],
-  outputNode: '8',
-  steps: 4,
-  cfg: 1,
-  sampler: 'euler',
-  scheduler: 'simple'
+  label: 'FLUX.2 Klein 9B Distilled',
+  modelFamily: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFamily,
+  modelFiles: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles,
+  requiredNodes: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.requiredNodes,
+  outputNode: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.outputNode,
+  steps: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.steps,
+  cfg: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.cfg,
+  sampler: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.sampler
 } as const);
 
 export type PortraitVideoSource = {
@@ -126,7 +112,7 @@ export type PortraitVideoRequest = {
 export type PortraitVideoCapabilities = {
   spec: typeof PORTRAIT_VIDEO_CAPABILITIES_SPEC;
   template: typeof MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
-  endFrameTemplate: typeof MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null;
+  endFrameTemplate: typeof FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE | null;
   modes: readonly PortraitVideoModeDefinition[];
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
   durations: typeof PORTRAIT_VIDEO_DURATIONS;
@@ -320,6 +306,7 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
     `The subject breathes naturally, blinks once, and holds a restrained ${normalized.source.portraitSource.expression} expression.`,
     'Hair and clothing move subtly.',
     loopInstruction,
+    'Ambient idle expression motion only: no talking, no lip or mouth movement, and no speech gestures.',
     'No camera movement, no cuts, no speech, no text, no black frames.',
     'Silent video only; no dialogue, narration, music, room tone, or sound effects.'
   ].join(' ');
@@ -354,7 +341,7 @@ function validatePortraitVideoInputReference(
   ) throw new Error('portrait-video input reference is invalid');
 }
 
-export function buildMageFlowPortraitEndFrameWorkflow(
+export function buildFlux2Klein9BPortraitEndFrameWorkflow(
   request: PortraitVideoRequest,
   portraitInput: PortraitVideoInputReference,
   seed: number
@@ -362,44 +349,14 @@ export function buildMageFlowPortraitEndFrameWorkflow(
   const normalized = normalizePortraitVideoRequest(request);
   if (normalized.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) throw new Error('portrait-video mode does not generate an end frame');
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
-  const validatedSeed = integer(seed, 'portrait end-frame seed', 0, Number.MAX_SAFE_INTEGER);
-  const template = MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
-  return {
-    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'mage', device: 'default' } },
-    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
-    '4': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
-    '5': {
-      class_type: 'TextEncodeMageFlowEdit',
-      inputs: {
-        clip: ['2', 0],
-        prompt: buildPortraitEndFramePrompt(normalized),
-        negative_prompt: '',
-        vae: ['3', 0],
-        'images.image_1': ['4', 0],
-        width: normalized.source.portraitWidth,
-        height: normalized.source.portraitHeight,
-        batch_size: 1
-      }
-    },
-    '6': {
-      class_type: 'KSampler',
-      inputs: {
-        model: ['1', 0],
-        positive: ['5', 0],
-        negative: ['5', 1],
-        latent_image: ['5', 2],
-        seed: validatedSeed,
-        steps: template.steps,
-        cfg: template.cfg,
-        sampler_name: template.sampler,
-        scheduler: template.scheduler,
-        denoise: 1
-      }
-    },
-    '7': { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['3', 0] } },
-    '8': { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'mullet/portrait-generated-end-frame' } }
-  };
+  return buildFlux2Klein9BReferenceEditWorkflow({
+    referencePath: `${portraitInput.subfolder}/${portraitInput.name}`,
+    prompt: buildPortraitEndFramePrompt(normalized),
+    width: normalized.source.portraitWidth,
+    height: normalized.source.portraitHeight,
+    seed,
+    filenamePrefix: 'mullet/portrait-generated-end-frame'
+  });
 }
 
 export function buildMiniMaxH3PortraitVideoWorkflow(
@@ -493,7 +450,7 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     template: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
-    endFrameTemplate: hasGeneratedEndFrame ? MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE : null,
+    endFrameTemplate: hasGeneratedEndFrame ? FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE : null,
     modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
     durations: PORTRAIT_VIDEO_DURATIONS

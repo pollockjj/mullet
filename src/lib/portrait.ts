@@ -8,7 +8,7 @@ import {
 export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v3' as const;
 export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v3' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
-export const PORTRAIT_REFERENCE_TEMPLATE_ID = 'mage-flow-edit-turbo-reference-v1' as const;
+export const PORTRAIT_REFERENCE_TEMPLATE_ID = 'flux2-klein-9b-distilled-reference-v1' as const;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
@@ -41,22 +41,40 @@ export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
   shift: 3
 } as const);
 
-export const MAGE_FLOW_EDIT_REFERENCE_TEMPLATE = Object.freeze({
+export const FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE = Object.freeze({
   id: PORTRAIT_REFERENCE_TEMPLATE_ID,
-  label: 'Mage-Flow Edit Turbo · identity reference',
-  modelFamily: 'mage-flow-edit',
+  label: 'FLUX.2 Klein 9B Distilled · identity reference',
+  modelFamily: 'flux2-klein',
   promptGuide: 'preserve the supplied canonical identity exactly; edit only expression, attire, setting, and fixed head-and-chest framing; photorealistic fiction still; no text or watermark',
   modelFiles: {
-    unet: 'mage_flow_edit_turbo_int8_convrot.safetensors',
-    clip: 'qwen3vl_4b_bf16.safetensors',
-    vae: 'mage_flow_vae_bf16.safetensors'
+    unet: 'flux-2-klein-9b-fp8.safetensors',
+    clip: 'qwen_3_8b_fp8mixed.safetensors',
+    vae: 'full_encoder_small_decoder.safetensors'
   },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'ImageScaleToTotalPixels',
+    'VAEEncode',
+    'CLIPTextEncode',
+    'ConditioningZeroOut',
+    'ReferenceLatent',
+    'EmptyFlux2LatentImage',
+    'RandomNoise',
+    'CFGGuider',
+    'KSamplerSelect',
+    'Flux2Scheduler',
+    'SamplerCustomAdvanced',
+    'VAEDecode',
+    'SaveImage'
+  ],
   multiple: 16,
-  outputNode: '8',
+  outputNode: '18',
   steps: 4,
   cfg: 1,
-  sampler: 'euler',
-  scheduler: 'simple'
+  sampler: 'euler'
 } as const);
 
 export type PortraitReferenceImage = {
@@ -111,7 +129,7 @@ export type PortraitRequest = {
 export type PortraitCapabilities = {
   spec: typeof PORTRAIT_CAPABILITIES_SPEC;
   template: typeof Z_IMAGE_TURBO_TEMPLATE;
-  referenceTemplate: typeof MAGE_FLOW_EDIT_REFERENCE_TEMPLATE | null;
+  referenceTemplate: typeof FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE | null;
   aspectRatios: typeof PORTRAIT_ASPECT_RATIOS;
   megapixels: typeof PORTRAIT_MEGAPIXELS;
   loras: string[];
@@ -319,7 +337,7 @@ export function buildPortraitPrompt(request: PortraitRequest): string {
     normalized.attire ? `wearing ${normalized.attire}` : '',
     normalized.setting ? `in ${normalized.setting}` : '',
     normalized.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
-      ? MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.promptGuide
+      ? FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.promptGuide
       : Z_IMAGE_TURBO_TEMPLATE.promptGuide
   ];
   const description = clauses.filter(Boolean).join(', ');
@@ -376,51 +394,78 @@ export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number)
   return graph;
 }
 
-export function buildMageFlowReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('Mage-Flow reference workflow requires a reference-conditioned portrait');
+type Flux2Klein9BReferenceEditSettings = {
+  referencePath: string;
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  filenamePrefix: 'mullet/portrait-reference' | 'mullet/portrait-generated-end-frame';
+};
+
+export function buildFlux2Klein9BReferenceEditWorkflow(
+  settings: Flux2Klein9BReferenceEditSettings
+): Record<string, unknown> {
+  const template = FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE;
+  const validatedSeed = integer(settings.seed, 'FLUX.2 Klein edit seed', 0, Number.MAX_SAFE_INTEGER);
+  const width = integer(settings.width, 'FLUX.2 Klein edit width', 16, 8192);
+  const height = integer(settings.height, 'FLUX.2 Klein edit height', 16, 8192);
+  if (width % template.multiple !== 0 || height % template.multiple !== 0) {
+    throw new Error(`FLUX.2 Klein edit dimensions must be divisible by ${template.multiple}`);
   }
-  const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
-  const template = MAGE_FLOW_EDIT_REFERENCE_TEMPLATE;
-  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
+  if (!/^mullet\/(?:identity|motion-inputs)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(settings.referencePath)) {
+    throw new Error('FLUX.2 Klein edit reference path is invalid');
+  }
+  const prompt = textField(settings.prompt, 'FLUX.2 Klein edit prompt', 1, 2000);
+  const referenceMegapixels = (width * height) / (1024 * 1024);
   return {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'mage', device: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'flux2', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
-    '4': { class_type: 'LoadImage', inputs: { image: referencePath } },
-    '5': {
-      class_type: 'TextEncodeMageFlowEdit',
-      inputs: {
-        clip: ['2', 0],
-        prompt: buildPortraitPrompt(normalized),
-        negative_prompt: '',
-        vae: ['3', 0],
-        'images.image_1': ['4', 0],
-        width,
-        height,
-        batch_size: 1
-      }
-    },
-    '6': {
-      class_type: 'KSampler',
-      inputs: {
-        model: ['1', 0],
-        positive: ['5', 0],
-        negative: ['5', 1],
-        latent_image: ['5', 2],
-        seed: validatedSeed,
-        steps: template.steps,
-        cfg: template.cfg,
-        sampler_name: template.sampler,
-        scheduler: template.scheduler,
-        denoise: 1
-      }
-    },
-    '7': { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['3', 0] } },
-    '8': { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'mullet/portrait-reference' } }
+    '4': { class_type: 'LoadImage', inputs: { image: settings.referencePath } },
+    '5': { class_type: 'ImageScaleToTotalPixels', inputs: {
+      image: ['4', 0],
+      upscale_method: 'nearest-exact',
+      megapixels: referenceMegapixels,
+      resolution_steps: 1
+    } },
+    '6': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
+    '7': { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['2', 0] } },
+    '8': { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['7', 0] } },
+    '9': { class_type: 'ReferenceLatent', inputs: { conditioning: ['7', 0], latent: ['6', 0] } },
+    '10': { class_type: 'ReferenceLatent', inputs: { conditioning: ['8', 0], latent: ['6', 0] } },
+    '11': { class_type: 'EmptyFlux2LatentImage', inputs: { width, height, batch_size: 1 } },
+    '12': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
+    '13': { class_type: 'CFGGuider', inputs: { model: ['1', 0], positive: ['9', 0], negative: ['10', 0], cfg: template.cfg } },
+    '14': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '15': { class_type: 'Flux2Scheduler', inputs: { steps: template.steps, width, height } },
+    '16': { class_type: 'SamplerCustomAdvanced', inputs: {
+      noise: ['12', 0],
+      guider: ['13', 0],
+      sampler: ['14', 0],
+      sigmas: ['15', 0],
+      latent_image: ['11', 0]
+    } },
+    '17': { class_type: 'VAEDecode', inputs: { samples: ['16', 0], vae: ['3', 0] } },
+    '18': { class_type: 'SaveImage', inputs: { images: ['17', 0], filename_prefix: settings.filenamePrefix } }
   };
+}
+
+export function buildFlux2Klein9BReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('FLUX.2 Klein reference workflow requires a reference-conditioned portrait');
+  }
+  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
+  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
+  return buildFlux2Klein9BReferenceEditWorkflow({
+    referencePath,
+    prompt: buildPortraitPrompt(normalized),
+    width,
+    height,
+    seed,
+    filenamePrefix: 'mullet/portrait-reference'
+  });
 }
 
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {
@@ -436,7 +481,7 @@ export function normalizePortraitCapabilities(value: unknown): PortraitCapabilit
   return {
     spec: PORTRAIT_CAPABILITIES_SPEC,
     template: Z_IMAGE_TURBO_TEMPLATE,
-    referenceTemplate: value.referenceTemplate === null ? null : MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
+    referenceTemplate: value.referenceTemplate === null ? null : FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
     loras: [...new Set(value.loras)].sort()
