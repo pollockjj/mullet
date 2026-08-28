@@ -109,6 +109,21 @@ function outputImage(entry: Record<string, unknown>): { filename: string; subfol
   return { filename: image.filename, subfolder: 'mullet', type: 'output' };
 }
 
+function pollDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const aborted = () => {
+      clearTimeout(timeout);
+      reject(signal?.reason ?? new DOMException('aborted', 'AbortError'));
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', aborted);
+      resolve();
+    }, milliseconds);
+    if (signal?.aborted) aborted();
+    else signal?.addEventListener('abort', aborted, { once: true });
+  });
+}
+
 async function waitForImage(
   fetcher: Fetcher,
   baseUrl: string,
@@ -125,13 +140,7 @@ async function waitForImage(
       const image = outputImage(entry);
       if (image) return image;
     }
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(resolve, 250);
-      signal?.addEventListener('abort', () => {
-        clearTimeout(timeout);
-        reject(signal.reason);
-      }, { once: true });
-    });
+    await pollDelay(250, signal);
   }
 }
 
