@@ -2823,9 +2823,12 @@
         ? extractPngCharacterCard(await file.arrayBuffer())
         : parseCharacterCardJson(await file.text());
       const nextPortrait = isPng ? await portraitFromPng(file) : '';
+      const switchingFromAssistant = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT;
       const replaceOpeningGreeting = activeCard ? containsOnlyOpeningGreeting(activeCard) : false;
-      const seedGreeting = messages.length === 0 || replaceOpeningGreeting;
+      const seedGreeting = switchingFromAssistant || messages.length === 0 || replaceOpeningGreeting;
 
+      conversationMode = CONVERSATION_MODE_FICTION;
+      persistConversationMode();
       activeCard = imported;
       cardSourceIdentifier = characterSourceIdentifier(file.name);
       portraitDataUrl = nextPortrait;
