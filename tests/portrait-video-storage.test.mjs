@@ -13,13 +13,15 @@ import {
 
 function request(overrides = {}) {
   return {
-    spec: 'mullet_portrait_video_request_v2',
-    modelTemplate: 'ltx-2.5-distilled-portrait-v2',
+    spec: 'mullet_portrait_video_request_v3',
+    modelTemplate: 'ltx-2.5-distilled-portrait-v3',
+    endFrameModelTemplate: null,
     mode: 'i2v',
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       portraitRequestKey: 'opaque-portrait-request-key',
       portraitPromptId: '11111111-1111-4111-8111-111111111111',
+      portraitSeed: 41,
       portraitGeneratedAt: 17,
       portraitWidth: 768,
       portraitHeight: 1152,
@@ -56,6 +58,7 @@ function stored(overrides = {}) {
     durationSeconds: 2,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
+    endFrame: null,
     videoSha256: 'b'.repeat(64),
     video: new Blob([Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' }),
     ...overrides
@@ -68,6 +71,7 @@ test('normalizes a provenance-bound WebM without canonical transcript text', () 
   assert.equal(result.frames, 49);
   assert.equal(result.fps, 24);
   assert.equal(result.mode, 'i2v');
+  assert.equal(result.endFrame, null);
   assert.equal(result.requestKey, portraitVideoRequestKey(result.request));
   assert.equal(JSON.stringify(result).includes('assistant'), false);
   assert.equal(JSON.stringify(result).includes('transcript'), false);
@@ -94,13 +98,52 @@ test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
   assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
 });
 
-test('discards obsolete v1 direct values and envelopes for automatic regeneration', () => {
+test('discards obsolete v1/v2 direct values and envelopes for automatic regeneration', () => {
   assert.equal(unwrapStoredPortraitVideo({ spec: 'mullet_stored_portrait_video_v1' }), null);
   assert.equal(unwrapStoredPortraitVideo({
     spec: 'mullet_stored_portrait_video_envelope_v1',
     writeId: 'legacy-writer',
     video: { spec: 'mullet_stored_portrait_video_v1' }
   }), null);
+  assert.equal(unwrapStoredPortraitVideo({ spec: 'mullet_stored_portrait_video_v2' }), null);
+  assert.equal(unwrapStoredPortraitVideo({
+    spec: 'mullet_stored_portrait_video_envelope_v2',
+    writeId: 'legacy-writer',
+    video: { spec: 'mullet_stored_portrait_video_v2' }
+  }), null);
+});
+
+test('requires exact generated end-frame provenance only for generated FLF mode', () => {
+  const generatedRequest = request({
+    mode: 'flf2v_generated',
+    endFrameModelTemplate: 'qwen-image-edit-2511-lightning-4step-v1'
+  });
+  const generated = stored({
+    request: generatedRequest,
+    requestKey: portraitVideoRequestKey(generatedRequest),
+    mode: generatedRequest.mode,
+    endFrame: {
+      modelTemplate: 'qwen-image-edit-2511-lightning-4step-v1',
+      promptId: '33333333-3333-4333-8333-333333333333',
+      seed: 43,
+      width: 768,
+      height: 1152,
+      imageSha256: 'c'.repeat(64)
+    }
+  });
+  const normalized = normalizeStoredPortraitVideo(generated);
+  assert.equal(normalized.endFrame?.seed, 43);
+  assert.equal(normalized.endFrame?.imageSha256, 'c'.repeat(64));
+  assert.throws(() => normalizeStoredPortraitVideo({ ...generated, endFrame: null }), /end-frame template/);
+  assert.throws(() => normalizeStoredPortraitVideo({
+    ...generated,
+    endFrame: { ...generated.endFrame, seed: 44 }
+  }), /seed does not match/);
+  assert.throws(() => normalizeStoredPortraitVideo({
+    ...generated,
+    endFrame: { ...generated.endFrame, imageSha256: 'a'.repeat(64) }
+  }), /hash matches/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ endFrame: generated.endFrame })), /invalid for its mode/);
 });
 
 test('rolls back a write that becomes stale before installation', async () => {
