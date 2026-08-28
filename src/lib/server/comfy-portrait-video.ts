@@ -1,27 +1,29 @@
 import {
-  LTX25_PORTRAIT_VIDEO_TEMPLATE,
+  MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
   PORTRAIT_VIDEO_CAPABILITIES_SPEC,
   PORTRAIT_VIDEO_DIMENSIONS,
   PORTRAIT_VIDEO_DURATION_SECONDS,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
-  buildLtx25PortraitVideoWorkflow,
+  buildMiniMaxH3PortraitVideoWorkflow,
   buildQwenPortraitEndFrameWorkflow,
   portraitVideoOutputNode,
   type PortraitVideoCapabilities,
   type PortraitVideoInputReference,
   type PortraitVideoRequest
 } from '../portrait-video.ts';
+import { validateH264AacMp4 } from '../mp4.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ComfyPortraitVideo = {
   bytes: Uint8Array;
-  contentType: 'video/webm';
+  contentType: 'video/mp4';
   promptId: string;
   filename: string;
   sha256: string;
+  durationSeconds: number;
 };
 
 export type ComfyPortraitEndFrame = {
@@ -57,11 +59,30 @@ function nodeInfo(value: unknown, nodeName: string): Record<string, unknown> {
   return value[nodeName];
 }
 
-function requiredInput(info: Record<string, unknown>, nodeName: string, inputName: string): unknown[] {
-  if (!isRecord(info.input) || !isRecord(info.input.required) || !Array.isArray(info.input.required[inputName])) {
+function inputDefinition(
+  info: Record<string, unknown>,
+  nodeName: string,
+  section: 'required' | 'optional',
+  inputName: string
+): unknown[] {
+  if (!isRecord(info.input) || !isRecord(info.input[section]) || !Array.isArray(info.input[section][inputName])) {
     throw new Error(`ComfyUI returned invalid ${nodeName}.${inputName} metadata`);
   }
-  return info.input.required[inputName] as unknown[];
+  return info.input[section][inputName] as unknown[];
+}
+
+function requiredInput(info: Record<string, unknown>, nodeName: string, inputName: string): unknown[] {
+  return inputDefinition(info, nodeName, 'required', inputName);
+}
+
+function dynamicOptionKeys(input: unknown[], nodeName: string, inputName: string): string[] {
+  if (
+    input[0] !== 'COMFY_DYNAMICCOMBO_V3'
+    || !isRecord(input[1])
+    || !Array.isArray(input[1].options)
+    || !input[1].options.every((item) => isRecord(item) && typeof item.key === 'string')
+  ) throw new Error(`ComfyUI returned invalid ${nodeName}.${inputName} dynamic options`);
+  return input[1].options.map((item) => (item as Record<string, unknown>).key as string);
 }
 
 function optionList(info: Record<string, unknown>, nodeName: string, inputName: string): string[] {
@@ -82,25 +103,37 @@ export async function loadPortraitVideoCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<PortraitVideoCapabilities> {
-  const pairs = await Promise.all(LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes.map(async (nodeName) => {
+  const template = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
+  const pairs = await Promise.all(template.requiredNodes.map(async (nodeName) => {
     const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
     const body = await responseJson(response, 'portrait-video capability query');
     return [nodeName, nodeInfo(body, nodeName)] as const;
   }));
   const info = Object.fromEntries(pairs) as Record<string, Record<string, unknown>>;
-  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet, 'the LTX 2.5 diffusion model');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip, 'the LTX 2.5 text encoder');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'ltxv', 'the ltxv text-encoder mode');
+  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the MiniMax H3 FL2VA diffusion model');
+  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the MiniMax H3 Qwen3-VL encoder');
+  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'minimax', 'the MiniMax text-encoder mode');
   const vaes = optionList(info.VAELoader, 'VAELoader', 'vae_name');
-  requireOption(vaes, LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.videoVae, 'the LTX 2.5 video VAE');
-  requireOption(vaes, LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.audioVae, 'the LTX 2.5 audio VAE');
+  requireOption(vaes, template.modelFiles.videoVae, 'the MiniMax H3 video VAE');
+  requireOption(vaes, template.modelFiles.audioVae, 'the MiniMax H3 audio VAE');
+  requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.turboLora, 'the MiniMax H3 four-step Turbo LoRA');
+  requireOption(optionList(info.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), template.sampler, 'the res_multistep sampler');
+  requireOption(optionList(info.BasicScheduler, 'BasicScheduler', 'scheduler'), template.scheduler, 'the simple scheduler');
   requireOption(
-    optionList(info.LatentUpscaleModelLoader, 'LatentUpscaleModelLoader', 'model_name'),
-    LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.latentUpscaler,
-    'the LTX 2.5 latent upscaler'
+    dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+    template.format,
+    'the automatic MP4 output format'
   );
-  requireOption(optionList(info.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler, 'the euler_ancestral sampler');
-  requireOption(optionList(info.SaveWEBM, 'SaveWEBM', 'codec'), LTX25_PORTRAIT_VIDEO_TEMPLATE.codec, 'the VP9 WebM encoder');
+  requireOption(
+    dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+    template.codec,
+    'the automatic H.264 output codec'
+  );
+  const firstFrame = inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'first_frame');
+  const lastFrame = inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'last_frame');
+  if (firstFrame[0] !== 'IMAGE' || lastFrame[0] !== 'IMAGE') {
+    throw new Error('ComfyUI MiniMax H3 first/last-frame conditioning is unavailable');
+  }
   const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
   if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
   let endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null = null;
@@ -128,7 +161,7 @@ export async function loadPortraitVideoCapabilities(
     : PORTRAIT_VIDEO_MODES.filter(({ id }) => id !== PORTRAIT_VIDEO_MODE_GENERATED_FLF);
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
-    template: LTX25_PORTRAIT_VIDEO_TEMPLATE,
+    template,
     endFrameTemplate,
     modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
@@ -229,10 +262,10 @@ function outputVideo(entry: Record<string, unknown>, request: PortraitVideoReque
   }
   const video = output.images[0];
   const filenamePattern = request.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
-    ? /^portrait-motion-generated-flf_\d+_\.webm$/
+    ? /^portrait-motion-generated-flf_\d+_\.mp4$/
     : request.mode === 'flf2v_loop'
-      ? /^portrait-motion-loop-flf_\d+_\.webm$/
-      : /^portrait-motion_\d+_\.webm$/;
+      ? /^portrait-motion-loop-flf_\d+_\.mp4$/
+      : /^portrait-motion_\d+_\.mp4$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait-video filename');
   }
@@ -440,7 +473,7 @@ export async function runComfyPortraitVideo(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildLtx25PortraitVideoWorkflow(request, input, seed, endFrameInput),
+        prompt: buildMiniMaxH3PortraitVideoWorkflow(request, input, seed, endFrameInput),
         client_id: 'mullet-portrait-video'
       }),
       signal
@@ -452,17 +485,25 @@ export async function runComfyPortraitVideo(
     const outputResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
     if (!outputResponse.ok) throw new Error(`ComfyUI portrait-video fetch failed (${outputResponse.status})`);
     const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-    if (contentType !== 'video/webm') throw new Error('ComfyUI portrait-video output is not WebM');
+    if (contentType !== 'video/mp4') throw new Error('ComfyUI portrait-video output is not MP4');
     const bytes = await readBoundedVideo(outputResponse);
-    if (bytes.byteLength < 4 || bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) {
-      throw new Error('ComfyUI portrait-video output has an invalid WebM signature');
+    if (bytes.byteLength < 12 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
+      throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
     }
+    const dimensions = portraitVideoDimensions(request.aspectRatio);
+    const metadata = validateH264AacMp4(bytes, {
+      width: dimensions.width,
+      height: dimensions.height,
+      frames: dimensions.frames,
+      fps: dimensions.fps
+    });
     return {
       bytes,
-      contentType: 'video/webm',
+      contentType: 'video/mp4',
       promptId: id,
       filename: video.filename,
-      sha256: await sha256Hex(bytes)
+      sha256: await sha256Hex(bytes),
+      durationSeconds: metadata.durationSeconds
     };
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
