@@ -9,7 +9,7 @@ import {
 export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v4' as const;
 export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v4' as const;
 export const PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
-export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-lightning-4step-v1' as const;
+export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'mage-flow-edit-turbo-4step-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 3 as const;
 export const PORTRAIT_VIDEO_DURATIONS = Object.freeze([3, 5] as const);
@@ -30,10 +30,7 @@ export type PortraitVideoModeDefinition = (typeof PORTRAIT_VIDEO_MODES)[number];
 export type PortraitVideoDurationSeconds = (typeof PORTRAIT_VIDEO_DURATIONS)[number];
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '2:3', width: 768, height: 1152 },
-  { aspectRatio: '3:4', width: 768, height: 1024 },
-  { aspectRatio: '4:5', width: 768, height: 960 },
-  { aspectRatio: '9:16', width: 768, height: 1344 }
+  { aspectRatio: '2:3', width: 768, height: 1152 }
 ] as const);
 
 export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
@@ -78,40 +75,32 @@ export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, native quiet ambience, no cuts'
 } as const);
 
-export const QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
+export const MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
   id: PORTRAIT_END_FRAME_TEMPLATE_ID,
-  label: 'Qwen Image Edit 2511 Lightning',
-  modelFamily: 'qwen-image-edit-2511',
+  label: 'Mage-Flow Edit Turbo',
+  modelFamily: 'mage-flow-edit',
   workflowRevision: 'b972309e5337293cc003bb19d19aec4681fff623',
-  workflowSha256: 'ca314101ca20bed846292727aa60c75f42499cdb734f5e8b212dcdddb45a43b7',
+  workflowSha256: '4c011982fda515bf7a3e459785b13277d93d622419de61752072e8717ef5c1f6',
   modelFiles: {
-    unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
-    clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
-    vae: 'qwen_image_vae.safetensors',
-    lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+    unet: 'mage_flow_edit_turbo_int8_convrot.safetensors',
+    clip: 'qwen3vl_4b_bf16.safetensors',
+    vae: 'mage_flow_vae_bf16.safetensors'
   },
   requiredNodes: [
     'UNETLoader',
     'CLIPLoader',
     'VAELoader',
     'LoadImage',
-    'FluxKontextImageScale',
-    'ModelSamplingAuraFlow',
-    'CFGNorm',
-    'LoraLoaderModelOnly',
-    'TextEncodeQwenImageEditPlus',
-    'VAEEncode',
+    'TextEncodeMageFlowEdit',
     'KSampler',
     'VAEDecode',
-    'ImageScale',
     'SaveImage'
   ],
-  outputNode: '14',
+  outputNode: '8',
   steps: 4,
   cfg: 1,
   sampler: 'euler',
-  scheduler: 'simple',
-  shift: 3.1
+  scheduler: 'simple'
 } as const);
 
 export type PortraitVideoSource = {
@@ -139,7 +128,7 @@ export type PortraitVideoRequest = {
 export type PortraitVideoCapabilities = {
   spec: typeof PORTRAIT_VIDEO_CAPABILITIES_SPEC;
   template: typeof MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
-  endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null;
+  endFrameTemplate: typeof MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null;
   modes: readonly PortraitVideoModeDefinition[];
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
   durations: typeof PORTRAIT_VIDEO_DURATIONS;
@@ -367,7 +356,7 @@ function validatePortraitVideoInputReference(
   ) throw new Error('portrait-video input reference is invalid');
 }
 
-export function buildQwenPortraitEndFrameWorkflow(
+export function buildMageFlowPortraitEndFrameWorkflow(
   request: PortraitVideoRequest,
   portraitInput: PortraitVideoInputReference,
   seed: number
@@ -376,26 +365,32 @@ export function buildQwenPortraitEndFrameWorkflow(
   if (normalized.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) throw new Error('portrait-video mode does not generate an end frame');
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
   const validatedSeed = integer(seed, 'portrait end-frame seed', 0, Number.MAX_SAFE_INTEGER);
-  const template = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
+  const template = MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
   return {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'qwen_image', device: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'mage', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
     '4': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
-    '5': { class_type: 'FluxKontextImageScale', inputs: { image: ['4', 0] } },
-    '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: template.shift } },
-    '7': { class_type: 'CFGNorm', inputs: { model: ['6', 0], strength: 1, pre_cfg: false } },
-    '8': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['7', 0], lora_name: template.modelFiles.lora, strength_model: 1 } },
-    '9': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: buildPortraitEndFramePrompt(normalized) } },
-    '10': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: '' } },
-    '11': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
-    '12': {
+    '5': {
+      class_type: 'TextEncodeMageFlowEdit',
+      inputs: {
+        clip: ['2', 0],
+        prompt: buildPortraitEndFramePrompt(normalized),
+        negative_prompt: '',
+        vae: ['3', 0],
+        'images.image_1': ['4', 0],
+        width: normalized.source.portraitWidth,
+        height: normalized.source.portraitHeight,
+        batch_size: 1
+      }
+    },
+    '6': {
       class_type: 'KSampler',
       inputs: {
-        model: ['8', 0],
-        positive: ['9', 0],
-        negative: ['10', 0],
-        latent_image: ['11', 0],
+        model: ['1', 0],
+        positive: ['5', 0],
+        negative: ['5', 1],
+        latent_image: ['5', 2],
         seed: validatedSeed,
         steps: template.steps,
         cfg: template.cfg,
@@ -404,18 +399,8 @@ export function buildQwenPortraitEndFrameWorkflow(
         denoise: 1
       }
     },
-    '13': { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['3', 0] } },
-    '14': { class_type: 'SaveImage', inputs: { images: ['15', 0], filename_prefix: 'mullet/portrait-generated-end-frame' } },
-    '15': {
-      class_type: 'ImageScale',
-      inputs: {
-        image: ['13', 0],
-        upscale_method: 'lanczos',
-        width: normalized.source.portraitWidth,
-        height: normalized.source.portraitHeight,
-        crop: 'disabled'
-      }
-    }
+    '7': { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['3', 0] } },
+    '8': { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'mullet/portrait-generated-end-frame' } }
   };
 }
 
@@ -512,7 +497,7 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     template: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
-    endFrameTemplate: hasGeneratedEndFrame ? QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE : null,
+    endFrameTemplate: hasGeneratedEndFrame ? MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE : null,
     modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
     durations: PORTRAIT_VIDEO_DURATIONS
