@@ -463,7 +463,7 @@ test('persists sticky, cooldown, and delay state without polluting chat history'
   assert.deepEqual(regenerated.timedState, { sticky: {}, cooldown: {} });
 
   const stickyExpired = await scanLorebooks([book], sizedHistory(5), { recursive: false }, { timedState: first.timedState });
-  assert.deepEqual(stickyExpired.activated, []);
+  assert.deepEqual(stickyExpired.activated.map((entry) => entry.name), ['Delayed']);
   assert.deepEqual(Object.keys(stickyExpired.timedState.sticky), []);
   assert.deepEqual(Object.values(stickyExpired.timedState.cooldown)[0], {
     fingerprint: Object.values(first.timedState.sticky)[0].fingerprint,

@@ -209,9 +209,9 @@ function normalizeTimedEffects(value: unknown, name: string): Record<string, Lor
     const start = effect.start;
     const end = effect.end;
     if (
-      !Number.isSafeInteger(fingerprint) || fingerprint < 0 ||
-      !Number.isInteger(start) || start < 0 || start > 2_000_000 ||
-      !Number.isInteger(end) || end < start || end > 2_000_000 ||
+      typeof fingerprint !== 'number' || !Number.isSafeInteger(fingerprint) || fingerprint < 0 ||
+      typeof start !== 'number' || !Number.isInteger(start) || start < 0 || start > 2_000_000 ||
+      typeof end !== 'number' || !Number.isInteger(end) || end < start || end > 2_000_000 ||
       typeof effect.protected !== 'boolean'
     ) {
       throw new Error(`invalid loreTimedState.${name} effect`);
