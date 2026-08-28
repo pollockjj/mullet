@@ -32,8 +32,7 @@ test('builds a bounded isolated latest-turn request without mutating canonical m
   const canonical = JSON.stringify(messages);
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   assert.equal(request.spec, LIVING_HISTORY_REQUEST_SPEC);
-  assert.equal(request.turn.user, messages[1].content);
-  assert.equal(request.turn.assistant, messages[2].content);
+  assert.deepEqual(request.turns, messages);
   assert.equal(request.previous.revision, 0);
   assert.deepEqual(normalizeLivingHistoryRequest(request), request);
   assert.equal(JSON.stringify(messages), canonical);
@@ -103,7 +102,12 @@ test('compiles the replacement ledger into one always-active native ST World Inf
 test('rejects a mismatched turn fingerprint and previous history from another conversation', () => {
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   assert.throws(
-    () => normalizeLivingHistoryRequest({ ...request, turn: { ...request.turn, assistant: 'Changed.' } }),
+    () => normalizeLivingHistoryRequest({
+      ...request,
+      turns: request.turns.map((message, index) => index === request.turns.length - 1
+        ? { ...message, content: 'Changed.' }
+        : message)
+    }),
     /turn fingerprint does not match/
   );
   const other = createLivingHistoryResult(
