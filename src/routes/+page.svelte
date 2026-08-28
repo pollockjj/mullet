@@ -650,6 +650,7 @@
     capabilities: InlineSceneCapabilities | null
   ): boolean {
     const selectedLora = inlineSceneLoraDescriptor(capabilities, lora);
+    if (lora && !selectedLora) return false;
     return Boolean(
       scene
       && scene.request.aspectRatio === aspectRatio
@@ -759,8 +760,10 @@
     request: InlineSceneRequest,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    lora: string
+    lora: string,
+    capabilities: InlineSceneCapabilities | null
   ): string {
+    const descriptor = inlineSceneLoraDescriptor(capabilities, lora);
     return [
       request.source.conversationId,
       request.source.messageCount,
@@ -768,7 +771,9 @@
       request.source.turnFingerprint,
       aspectRatio,
       megapixels,
-      lora
+      descriptor?.path ?? '',
+      descriptor?.trigger ?? '',
+      descriptor?.modelHash ?? ''
     ].join('\u001f');
   }
 
@@ -786,7 +791,7 @@
     lora: string
   ) {
     if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current) return;
-    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, lora);
+    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, lora, capabilities);
     if (key === lastInlineSceneAttemptKey) return;
     lastInlineSceneAttemptKey = key;
     void generateInlineScene(request, aspectRatio, megapixels, lora);
@@ -846,7 +851,13 @@
     const epoch = inlineSceneEpoch;
     const selectedLoraDescriptor = inlineSceneLoraDescriptor(inlineSceneCapabilities, selectedLora);
     if (selectedLora && !selectedLoraDescriptor) return;
-    lastInlineSceneAttemptKey = inlineSceneAttemptKey(selectedSidecarRequest, selectedAspectRatio, selectedMegapixels, selectedLora);
+    lastInlineSceneAttemptKey = inlineSceneAttemptKey(
+      selectedSidecarRequest,
+      selectedAspectRatio,
+      selectedMegapixels,
+      selectedLora,
+      inlineSceneCapabilities
+    );
     inlineSceneBusy = true;
     inlineSceneError = '';
     const activeController = new AbortController();
