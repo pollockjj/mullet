@@ -652,6 +652,14 @@
               <span>Maximum depth</span>
               <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivationsDepthMax} on:change={persistLoreSettings} disabled={streaming} />
             </label>
+            <label>
+              <span>Insertion strategy</span>
+              <select bind:value={loreSettings.characterStrategy} on:change={persistLoreSettings} disabled={streaming}>
+                <option value={0}>Sorted Evenly</option>
+                <option value={1}>Character Lore First</option>
+                <option value={2}>Global Lore First</option>
+              </select>
+            </label>
           </div>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={persistLoreSettings} disabled={streaming} /> Recursive scanning</label>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={persistLoreSettings} disabled={streaming} /> Whole-word matching</label>
@@ -796,7 +804,7 @@
   .lore-settings summary { cursor: pointer; }
   .lore-setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 9px 0 7px; }
   .lore-setting-grid label { display: grid; gap: 4px; }
-  .lore-setting-grid input { width: 100%; padding: 5px 6px; border: 1px solid #3c3731; border-radius: 6px; color: #c1b8ae; background: #181512; font-size: 10px; }
+  .lore-setting-grid input, .lore-setting-grid select { width: 100%; padding: 5px 6px; border: 1px solid #3c3731; border-radius: 6px; color: #c1b8ae; background: #181512; font-size: 10px; }
   .check-row { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
   .lore-settings > small { display: block; margin-top: 7px; color: #665f58; }
   .clear { margin-top: auto; padding: 10px; border: 1px solid #3c3731; border-radius: 9px; color: #a9a097; background: transparent; cursor: pointer; }

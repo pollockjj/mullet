@@ -21,6 +21,7 @@ export type LorebookSettings = {
   budgetCap: number;
   maxRecursionSteps: number;
   useGroupScoring: boolean;
+  characterStrategy: 0 | 1 | 2;
 };
 
 export const DEFAULT_LOREBOOK_SETTINGS: LorebookSettings = Object.freeze({
@@ -35,7 +36,8 @@ export const DEFAULT_LOREBOOK_SETTINGS: LorebookSettings = Object.freeze({
   maxContextTokens: 262_144,
   budgetCap: 0,
   maxRecursionSteps: 0,
-  useGroupScoring: false
+  useGroupScoring: false,
+  characterStrategy: 1
 });
 
 export type NormalizedLoreEntry = {
@@ -523,7 +525,14 @@ export function resolveLorebookSettings(
     maxContextTokens: integerSetting(maxContextTokens, 'maxContextTokens', 1, 2_000_000, DEFAULT_LOREBOOK_SETTINGS.maxContextTokens),
     budgetCap: integerSetting(input.budgetCap, 'budgetCap', 0, 65_536, DEFAULT_LOREBOOK_SETTINGS.budgetCap),
     maxRecursionSteps: integerSetting(input.maxRecursionSteps, 'maxRecursionSteps', 0, 10, DEFAULT_LOREBOOK_SETTINGS.maxRecursionSteps),
-    useGroupScoring: booleanSetting(input.useGroupScoring, 'useGroupScoring', DEFAULT_LOREBOOK_SETTINGS.useGroupScoring)
+    useGroupScoring: booleanSetting(input.useGroupScoring, 'useGroupScoring', DEFAULT_LOREBOOK_SETTINGS.useGroupScoring),
+    characterStrategy: integerSetting(
+      input.characterStrategy,
+      'characterStrategy',
+      0,
+      2,
+      DEFAULT_LOREBOOK_SETTINGS.characterStrategy
+    ) as 0 | 1 | 2
   };
 }
 
@@ -884,10 +893,18 @@ export async function scanLorebooks(
     fingerprint: timedFingerprint(book, entry),
     score: 0
   })))
-    .sort((a, b) => b.entry.insertionOrder - a.entry.insertionOrder
-      || (a.book.origin === b.book.origin ? 0 : a.book.origin === 'embedded' ? -1 : 1)
-      || a.bookIndex - b.bookIndex
-      || a.entry.sourceIndex - b.entry.sourceIndex);
+    .sort((a, b) => {
+      const originRank = (candidate: Candidate): number => {
+        if (settings.characterStrategy === 0) return 0;
+        const characterFirst = settings.characterStrategy === 1;
+        const isCharacter = candidate.book.origin === 'embedded';
+        return isCharacter === characterFirst ? 0 : 1;
+      };
+      return originRank(a) - originRank(b)
+        || b.entry.insertionOrder - a.entry.insertionOrder
+        || a.bookIndex - b.bookIndex
+        || a.entry.sourceIndex - b.entry.sourceIndex;
+    });
   let budgetTokens = Math.round(settings.budgetPercent * settings.maxContextTokens / 100) || 1;
   if (settings.budgetCap > 0) budgetTokens = Math.min(budgetTokens, settings.budgetCap);
   const timed = prepareTimedRuntime(candidates, options.timedState, history.length);
