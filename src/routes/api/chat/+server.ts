@@ -160,10 +160,11 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         throw error(400, cause instanceof Error ? cause.message : 'invalid assistantMemory');
       }
     }
-  } else if (loreEnabled) {
+  } else {
     if (body?.assistantMemory !== undefined && body.assistantMemory !== null) {
       throw error(400, 'fiction mode does not accept assistant memory');
     }
+    if (loreEnabled) {
     const requestedLorebooks = body?.lorebooks ?? [];
     if (!Array.isArray(requestedLorebooks) || requestedLorebooks.length > 20) {
       throw error(400, 'lorebooks must be an array containing at most 20 books');
@@ -214,6 +215,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         throw error(502, 'The local model tokenizer is unavailable.');
       }
       throw error(400, message);
+    }
     }
   }
 
