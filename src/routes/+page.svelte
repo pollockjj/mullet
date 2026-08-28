@@ -3577,7 +3577,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
+      <span class:live={streaming || assistantTurnBusy || assistantMemoryBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
@@ -3605,8 +3605,8 @@
         <div class="scenario">
           <span class="eyebrow">Active mode</span>
           <strong>Personal Assistant</strong>
-          <p>A neutral local Gemma channel for planning, drafting, organizing, and analysis. Character cards, fiction lore, expressions, portraits, and scene generators are isolated from this conversation.</p>
-          <div class="card-facts"><span>Local model</span><span>No external tools</span></div>
+          <p>A neutral local Gemma channel with evidence-bound persistent memory for planning, drafting, organizing, and analysis. Character cards, fiction lore, expressions, portraits, and scene generators remain isolated.</p>
+          <div class="card-facts"><span>Local model</span><span>Persistent memory</span><span>No external tools</span></div>
         </div>
       {:else if activeCard}
         <div class="scenario">
@@ -3625,18 +3625,75 @@
           <p>The clean model channel is active. Load a V1, V2, or V3 character card to condition it.</p>
         </div>
       {/if}
+      {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+        <section class="assistant-memory-panel" aria-label="Persistent assistant memory">
+          <div class="assistant-memory-heading">
+            <div>
+              <span class="eyebrow">Structured lorebook</span>
+              <strong>Assistant memory</strong>
+            </div>
+            <small>rev {assistantMemoryResult?.output.revision ?? 0}</small>
+          </div>
+          <p>{assistantMemoryStatusText()}</p>
+          <div class="assistant-memory-counts">
+            <span>{assistantMemoryResult?.output.facts.filter((record) => record.status === 'active').length ?? 0} facts</span>
+            <span>{assistantMemoryResult?.output.preferences.filter((record) => record.status === 'active').length ?? 0} preferences</span>
+            <span>{assistantMemoryResult?.output.tasks.filter((record) => record.status === 'open').length ?? 0} open tasks</span>
+          </div>
+          {#if assistantMemoryResult?.output.facts.some((record) => record.status === 'active')}
+            <details>
+              <summary>Facts</summary>
+              <ul>
+                {#each assistantMemoryResult.output.facts.filter((record) => record.status === 'active') as fact}
+                  <li><strong>{fact.key}</strong><span>{fact.value}</span></li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if assistantMemoryResult?.output.preferences.some((record) => record.status === 'active')}
+            <details>
+              <summary>Preferences</summary>
+              <ul>
+                {#each assistantMemoryResult.output.preferences.filter((record) => record.status === 'active') as preference}
+                  <li><strong>{preference.key}</strong><span>{preference.value}</span></li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if assistantMemoryResult?.output.tasks.some((record) => record.status === 'open')}
+            <details>
+              <summary>Open tasks</summary>
+              <ul>
+                {#each assistantMemoryResult.output.tasks.filter((record) => record.status === 'open') as task}
+                  <li><strong>{task.key}</strong><span>{task.text}{task.dueText ? ` · ${task.dueText}` : ''}</span></li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if assistantMemoryError}<div class="sidecar-error" role="alert">{assistantMemoryError}</div>{/if}
+          <div class="assistant-memory-actions">
+            {#if assistantMemoryPending && !assistantMemoryBusy}
+              <button class="retry" on:click={() => void retryAssistantMemory()} disabled={assistantTurnBusy}>Retry update</button>
+            {/if}
+            <button on:click={() => void clearAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable}>Clear memory</button>
+          </div>
+          <small class:active={lastAssistantMemoryActive === true} class="assistant-memory-fired">
+            {lastAssistantMemoryActive === null ? 'No assistant chat sent yet.' : lastAssistantMemoryActive ? 'Stored memory was injected into the last chat.' : 'The last chat preceded the first stored record.'}
+          </small>
+        </section>
+      {/if}
       <section class="mode-picker" aria-label="Conversation mode">
         <span class="eyebrow">Workspace mode</span>
         <div>
           <button
             class:active={conversationMode === CONVERSATION_MODE_FICTION}
             on:click={() => void startFictionWorkspace()}
-            disabled={streaming || conversationMode === CONVERSATION_MODE_FICTION}
+            disabled={streaming || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || conversationMode === CONVERSATION_MODE_FICTION}
           >Fiction</button>
           <button
             class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
             on:click={() => void startPersonalAssistant()}
-            disabled={streaming || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+            disabled={streaming || assistantTurnBusy || assistantMemoryBusy || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
           >Assistant</button>
         </div>
       </section>
@@ -4143,7 +4200,7 @@
           disabled={streaming}
         ></textarea>
       </label>
-      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || messages.length === 0}>
+      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || messages.length === 0}>
         {conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Reset assistant chat' : 'Clear conversation'}
       </button>
     </aside>
@@ -4154,7 +4211,7 @@
           <div class="empty">
             <span class="eyebrow">Real local model · clean channel</span>
             <h2>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'What are we working on?' : 'Start the story.'}</h2>
-            <p>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Plan, organize, draft, or analyze with a neutral local assistant. This first slice does not claim external tools or actions.' : 'Talk directly to the local model, or import a SillyTavern-compatible character card from the left.'}</p>
+            <p>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Plan, organize, draft, or analyze with a neutral local assistant. Facts, explicit preferences, and unfinished tasks are updated after every completed turn without claiming external tools or actions.' : 'Talk directly to the local model, or import a SillyTavern-compatible character card from the left.'}</p>
             <div class="starters">
               {#each starters as starter}
                 <button on:click={() => chooseStarter(starter)}>{starter}</button>
@@ -4211,7 +4268,7 @@
             on:keydown={composerKeydown}
             placeholder={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Ask, plan, or assign something…' : 'Write the next turn…'}
             rows="2"
-            disabled={streaming}
+            disabled={streaming || assistantTurnBusy}
             aria-label="Message"
           ></textarea>
           {#if streaming}
@@ -4220,7 +4277,7 @@
             <button
               class="send"
               on:click={send}
-              disabled={!draft.trim() || !lorePersistenceReady || !livingHistoryReadyForChat(conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled, livingHistoryPersistenceReady)}
+              disabled={!draft.trim() || !lorePersistenceReady || !livingHistoryReadyForChat(conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled, livingHistoryPersistenceReady) || !assistantMemoryReadyForSend(conversationMode, assistantMemoryPersistenceReady, assistantMemoryPersistenceAvailable, streaming || assistantTurnBusy, assistantMemoryBusy, assistantMemoryPending)}
             >Send</button>
           {/if}
         </div>
@@ -4234,7 +4291,7 @@
               step="1"
               bind:value={tokenLimit}
               on:change={persistTokenLimit}
-              disabled={streaming}
+              disabled={streaming || assistantTurnBusy}
               aria-label="Maximum response tokens"
             />
             <span>tokens</span>
