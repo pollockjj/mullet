@@ -8,6 +8,7 @@ import {
   injectLoreContext,
   injectLoreDepth,
   lorePromptContextTokens,
+  normalizeLoreTimedState,
   normalizeLorebook,
   resolveLorebookSettings,
   scanLorebooks
@@ -435,6 +436,7 @@ test('advances open delayed-recursion levels even when global recursive scanning
 });
 
 test('persists sticky, cooldown, and delay state without polluting chat history', async () => {
+  assert.throws(() => normalizeLoreTimedState({ sticky: { bad: { fingerprint: 'bad' } } }), /invalid loreTimedState.sticky effect/);
   const book = nativeBook([
     nativeEntry({ uid: 0, comment: 'Timed', key: ['alpha'], content: 'TIMED', probability: 50, sticky: 4, cooldown: 3 }),
     nativeEntry({ uid: 1, comment: 'Delayed', key: ['alpha'], content: 'DELAYED', delay: 3 })

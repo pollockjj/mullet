@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { runtime } from '$lib/server/runtime';
 import { countModelTokens, getModelContextTokens } from '$lib/server/model-tokenizer';
 import { RegexSandbox } from '$lib/server/regex-sandbox';
+import { prependSseMetadata } from '$lib/server/sse-metadata';
 import { resolveTokenLimit } from '$lib/token-limit';
 import {
   characterDepthPrompt,
@@ -140,6 +141,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
             characterDepthPrompt: characterCard ? characterDepthPrompt(characterCard, userName.trim())?.content ?? '' : '',
             characterFilterNames,
             characterTags: characterTagIds,
+            timedState: body?.loreTimedState,
             tokenCount: (content) => countModelTokens(fetch, runtime.modelBaseUrl, content, request.signal),
             regexTest: (source, flags, haystack) => regexSandbox.test(source, flags, haystack),
             generationTrigger: 'normal'
@@ -211,9 +213,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     headers['x-mullet-lore-budget'] = String(loreResult.budgetTokens);
     headers['x-mullet-lore-tokens'] = String(loreResult.usedTokens);
     headers['x-mullet-lore-entries'] = encodeURIComponent(JSON.stringify(headerEntries));
+    headers['x-mullet-lore-sticky'] = String(Object.keys(loreResult.timedState.sticky).length);
+    headers['x-mullet-lore-cooldown'] = String(Object.keys(loreResult.timedState.cooldown).length);
   }
 
-  return new Response(upstream.body, {
+  const responseBody = loreResult
+    ? prependSseMetadata(upstream.body, { loreTimedState: loreResult.timedState })
+    : upstream.body;
+  return new Response(responseBody, {
     status: 200,
     headers
   });

@@ -11,12 +11,15 @@
   } from '$lib/character-card';
   import {
     DEFAULT_LOREBOOK_SETTINGS,
+    emptyLoreTimedState,
     normalizeLorebook,
+    normalizeLoreTimedState,
     parseLorebookJson,
     resolveLorebookSettings,
     type ImportedLorebook,
     type LoreActivation,
     type LorebookSettings
+    , type LoreTimedState
   } from '$lib/lorebook';
   import { extractPngCharacterCard, MAX_CHARACTER_CARD_PNG_BYTES } from '$lib/png-character-card';
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
@@ -48,6 +51,7 @@
   let lorePersistenceReady = false;
   let lorePersistenceBusy = false;
   let lorePersistenceAvailable = true;
+  let loreTimedState: LoreTimedState = emptyLoreTimedState();
   let personaDescription = '';
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
@@ -62,6 +66,7 @@
   const loreEnabledStorageKey = 'mullet.lorebook-enabled';
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
   const personaDescriptionStorageKey = 'mullet.persona-description';
+  const loreTimedStateStorageKey = 'mullet.lore-timed-state';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: activeLorebooks = [
@@ -104,6 +109,16 @@
     void restoreLorebooks();
     loreEnabled = localStorage.getItem(loreEnabledStorageKey) !== 'false';
     personaDescription = localStorage.getItem(personaDescriptionStorageKey) ?? '';
+    const savedLoreTimedState = localStorage.getItem(loreTimedStateStorageKey);
+    if (savedLoreTimedState && messages.length > 0) {
+      try {
+        loreTimedState = normalizeLoreTimedState(JSON.parse(savedLoreTimedState));
+      } catch {
+        localStorage.removeItem(loreTimedStateStorageKey);
+      }
+    } else {
+      localStorage.removeItem(loreTimedStateStorageKey);
+    }
     const savedLoreSettings = localStorage.getItem(loreSettingsStorageKey);
     if (savedLoreSettings) {
       try {
@@ -210,6 +225,8 @@
     noticeMessage = '';
     lastLoreActivations = null;
     lastLoreBudget = 0;
+    loreTimedState = emptyLoreTimedState();
+    localStorage.removeItem(loreTimedStateStorageKey);
     persist();
   }
 
@@ -363,6 +380,13 @@
     lastLoreBudget = 0;
   }
 
+  function persistLoreTimedState() {
+    if (!browser) return;
+    const hasEffects = Object.keys(loreTimedState.sticky).length > 0 || Object.keys(loreTimedState.cooldown).length > 0;
+    if (hasEffects) localStorage.setItem(loreTimedStateStorageKey, JSON.stringify(loreTimedState));
+    else localStorage.removeItem(loreTimedStateStorageKey);
+  }
+
   function readLoreActivations(value: string | null): LoreActivation[] | null {
     if (value === null) return null;
     try {
@@ -405,6 +429,7 @@
         personaDescription,
         characterFilterNames: cardSourceIdentifier ? [cardSourceIdentifier] : [],
         characterTagIds: [],
+        loreTimedState,
         loreEnabled,
         lorebooks: loreEnabled
           ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
@@ -449,6 +474,11 @@
           const payload = line.slice(5).trim();
           if (!payload || payload === '[DONE]') continue;
           const event = JSON.parse(payload);
+          if (event?.mullet?.loreTimedState !== undefined) {
+            loreTimedState = normalizeLoreTimedState(event.mullet.loreTimedState);
+            persistLoreTimedState();
+            continue;
+          }
           if (event?.choices?.[0]?.finish_reason === 'length') hitTokenLimit = true;
           const token = event?.choices?.[0]?.delta?.content;
           if (typeof token !== 'string' || token.length === 0) continue;
