@@ -1,21 +1,20 @@
 import {
   INLINE_SCENE_VIDEO_DIMENSIONS,
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
-  LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
-  buildLtx25InlineSceneVideoWorkflow,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  buildMiniMaxH3InlineSceneVideoWorkflow,
   inlineSceneVideoDimensions,
   type InlineSceneVideoCapabilities,
   type InlineSceneVideoInputReference,
   type InlineSceneVideoRequest
 } from '../inline-scene-video.ts';
-import { validateVp9Webm } from '../webm.ts';
-import { loadPortraitVideoCapabilities } from './comfy-portrait-video.ts';
+import { validateH264AacMp4 } from '../mp4.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ComfyInlineSceneVideo = {
   bytes: Uint8Array;
-  contentType: 'video/webm';
+  contentType: 'video/mp4';
   promptId: string;
   filename: string;
   sha256: string;
@@ -40,6 +39,55 @@ async function responseJson(response: Response, action: string): Promise<unknown
   return response.json();
 }
 
+function nodeInfo(value: unknown, nodeName: string): Record<string, unknown> {
+  if (!isRecord(value) || !isRecord(value[nodeName])) throw new Error('ComfyUI is missing ' + nodeName);
+  return value[nodeName];
+}
+
+function inputDefinition(
+  info: Record<string, unknown>,
+  nodeName: string,
+  section: 'required' | 'optional',
+  inputName: string
+): unknown[] {
+  if (
+    !isRecord(info.input)
+    || !isRecord(info.input[section])
+    || !Array.isArray(info.input[section][inputName])
+  ) throw new Error('ComfyUI returned invalid ' + nodeName + '.' + inputName + ' metadata');
+  return info.input[section][inputName] as unknown[];
+}
+
+function requiredInput(info: Record<string, unknown>, nodeName: string, inputName: string): unknown[] {
+  return inputDefinition(info, nodeName, 'required', inputName);
+}
+
+function optionList(info: Record<string, unknown>, nodeName: string, inputName: string): string[] {
+  const input = requiredInput(info, nodeName, inputName);
+  if (Array.isArray(input[0]) && input[0].every((item) => typeof item === 'string')) return input[0] as string[];
+  if (
+    input[0] === 'COMBO'
+    && isRecord(input[1])
+    && Array.isArray(input[1].options)
+    && input[1].options.every((item) => typeof item === 'string')
+  ) return input[1].options as string[];
+  throw new Error('ComfyUI returned invalid ' + nodeName + '.' + inputName + ' options');
+}
+
+function dynamicOptionKeys(input: unknown[], nodeName: string, inputName: string): string[] {
+  if (
+    input[0] !== 'COMFY_DYNAMICCOMBO_V3'
+    || !isRecord(input[1])
+    || !Array.isArray(input[1].options)
+    || !input[1].options.every((item) => isRecord(item) && typeof item.key === 'string')
+  ) throw new Error('ComfyUI returned invalid ' + nodeName + '.' + inputName + ' dynamic options');
+  return input[1].options.map((item) => (item as Record<string, unknown>).key as string);
+}
+
+function requireOption(options: readonly string[], expected: string, label: string): void {
+  if (!options.includes(expected)) throw new Error('ComfyUI is missing ' + label);
+}
+
 export async function sha256InlineSceneVideoBytes(bytes: Uint8Array): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes.slice().buffer);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -50,10 +98,39 @@ export async function loadInlineSceneVideoCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<InlineSceneVideoCapabilities> {
-  await loadPortraitVideoCapabilities(fetcher, baseUrl, signal);
+  const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const pairs = await Promise.all(template.requiredNodes.map(async (nodeName) => {
+    const response = await fetcher(endpoint(baseUrl, '/object_info/' + encodeURIComponent(nodeName)), { signal });
+    const body = await responseJson(response, 'inline-scene video capability query');
+    return [nodeName, nodeInfo(body, nodeName)] as const;
+  }));
+  const info = Object.fromEntries(pairs) as Record<string, Record<string, unknown>>;
+  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the MiniMax H3 FL2VA diffusion model');
+  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the MiniMax H3 Qwen3-VL encoder');
+  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'minimax', 'the MiniMax text-encoder mode');
+  const vaes = optionList(info.VAELoader, 'VAELoader', 'vae_name');
+  requireOption(vaes, template.modelFiles.videoVae, 'the MiniMax H3 video VAE');
+  requireOption(vaes, template.modelFiles.audioVae, 'the MiniMax H3 audio VAE');
+  requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.turboLora, 'the MiniMax H3 four-step Turbo LoRA');
+  requireOption(optionList(info.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), template.sampler, 'the res_multistep sampler');
+  requireOption(optionList(info.BasicScheduler, 'BasicScheduler', 'scheduler'), template.scheduler, 'the simple scheduler');
+  requireOption(
+    dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+    template.format,
+    'the automatic MP4 output format'
+  );
+  requireOption(
+    dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+    template.codec,
+    'the automatic H.264 output codec'
+  );
+  const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
+  if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) {
+    throw new Error('ComfyUI image upload support is unavailable');
+  }
   return {
-    spec: 'mullet_inline_scene_video_capabilities_v1',
-    template: LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
+    spec: 'mullet_inline_scene_video_capabilities_v2',
+    template,
     modes: ['i2v'],
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
     durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]
@@ -140,9 +217,9 @@ function outputVideo(entry: Record<string, unknown>): { filename: string; subfol
   if (
     !isRecord(entry.outputs)
     || Object.keys(entry.outputs).length !== 1
-    || !isRecord(entry.outputs[LTX25_INLINE_SCENE_VIDEO_TEMPLATE.outputNode])
+    || !isRecord(entry.outputs[MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.outputNode])
   ) throw new Error('ComfyUI inline-scene video history omitted the fixed output node');
-  const output = entry.outputs[LTX25_INLINE_SCENE_VIDEO_TEMPLATE.outputNode];
+  const output = entry.outputs[MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.outputNode];
   if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
     throw new Error('ComfyUI inline-scene video history omitted the video');
   }
@@ -150,7 +227,7 @@ function outputVideo(entry: Record<string, unknown>): { filename: string; subfol
     throw new Error('ComfyUI inline-scene video history did not mark the output animated');
   }
   const video = output.images[0];
-  if (typeof video.filename !== 'string' || !/^scene-motion_\d+_\.webm$/.test(video.filename)) {
+  if (typeof video.filename !== 'string' || !/^scene-motion_\d+_\.mp4$/.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected inline-scene video filename');
   }
   if (video.subfolder !== 'mullet' || video.type !== 'output') {
@@ -248,7 +325,7 @@ export async function runComfyInlineSceneVideo(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildLtx25InlineSceneVideoWorkflow(request, input, seed),
+        prompt: buildMiniMaxH3InlineSceneVideoWorkflow(request, input, seed),
         client_id: 'mullet-inline-scene-video'
       }),
       signal
@@ -260,13 +337,19 @@ export async function runComfyInlineSceneVideo(
     const outputResponse = await fetcher(endpoint(baseUrl, '/view?' + query), { signal });
     if (!outputResponse.ok) throw new Error('ComfyUI inline-scene video fetch failed (' + outputResponse.status + ')');
     const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-    if (contentType !== 'video/webm') throw new Error('ComfyUI inline-scene video output is not WebM');
+    if (contentType !== 'video/mp4') throw new Error('ComfyUI inline-scene video output is not MP4');
     const bytes = await readBoundedVideo(outputResponse);
-    if (bytes.byteLength < 4 || bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) {
-      throw new Error('ComfyUI inline-scene video output has an invalid WebM signature');
+    if (
+      bytes.byteLength < 12
+      || bytes[4] !== 0x66
+      || bytes[5] !== 0x74
+      || bytes[6] !== 0x79
+      || bytes[7] !== 0x70
+    ) {
+      throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
     }
     const dimensions = inlineSceneVideoDimensions(request.aspectRatio);
-    validateVp9Webm(bytes, {
+    validateH264AacMp4(bytes, {
       width: dimensions.width,
       height: dimensions.height,
       frames: dimensions.frames,
@@ -274,7 +357,7 @@ export async function runComfyInlineSceneVideo(
     });
     return {
       bytes,
-      contentType: 'video/webm',
+      contentType: 'video/mp4',
       promptId: id,
       filename: video.filename,
       sha256: await sha256InlineSceneVideoBytes(bytes)
