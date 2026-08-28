@@ -220,19 +220,19 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
   assert.throws(() => parseAssistantMemoryResponse('{"facts":[],"preferences":[],"tasks":[],"extra":true}', request), /invalid schema/);
   assert.throws(() => parseAssistantMemoryResponse(JSON.stringify({
     facts: [{
-      operation: 'create', key: 'Bad_Key', value: 'x',
+      operation: 'create', key: 'Bad_Key', value: 'I work on Atlas',
       evidence: { message_index: 0, text: 'I work on Atlas' }
     }], preferences: [], tasks: []
   }), request), /lowercase kebab-case/);
   assert.throws(() => parseAssistantMemoryResponse(JSON.stringify({
     facts: [{
-      operation: 'create', key: 'invented', value: 'x',
+      operation: 'create', key: 'invented', value: 'I work on Atlas',
       evidence: { message_index: 1, text: 'keep reports concise' }
     }], preferences: [], tasks: []
   }), request), /not a verbatim excerpt/);
   assert.throws(() => parseAssistantMemoryResponse(JSON.stringify({
     facts: [], preferences: [], tasks: [{
-      operation: 'create', key: 'invented-deadline', text: 'Do something.', due_text: 'Monday',
+      operation: 'create', key: 'invented-deadline', text: 'I work on Atlas', due_text: 'Monday',
       evidence: { message_index: 0, text: 'I work on Atlas' }
     }]
   }), request), /due_text is not a verbatim excerpt/);
@@ -243,7 +243,7 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
     }], preferences: [], tasks: []
   }), request), /value is not a verbatim excerpt/);
   const duplicate = {
-    operation: 'create', key: 'same-key', value: 'x',
+    operation: 'create', key: 'same-key', value: 'I work on Atlas',
     evidence: { message_index: 0, text: 'I work on Atlas' }
   };
   assert.throws(() => parseAssistantMemoryResponse(JSON.stringify({
@@ -263,12 +263,24 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
     preferences: Array.from({ length: 8 }, (_unused, index) => preference(index)),
     tasks: Array.from({ length: 9 }, (_unused, index) => task(index))
   }), request), /at most 24 operations/);
+  const oversizedValue = 'x'.repeat(240);
+  const oversizedRequest = buildAssistantMemoryRequest(memoryId, crypto.randomUUID(), [
+    { role: 'user', content: oversizedValue },
+    { role: 'assistant', content: 'I will retain only bounded memory.' }
+  ], null);
   const bounded = parseAssistantMemoryResponse(JSON.stringify({
-    facts: Array.from({ length: 16 }, (_unused, index) => ({ ...fact(index), value: messages[0].content })),
-    preferences: Array.from({ length: 8 }, (_unused, index) => ({ ...preference(index), value: messages[0].content })),
+    facts: Array.from({ length: 16 }, (_unused, index) => ({
+      ...fact(index), value: oversizedValue, evidence: { message_index: 0, text: 'xxx' }
+    })),
+    preferences: Array.from({ length: 8 }, (_unused, index) => ({
+      ...preference(index), value: oversizedValue, evidence: { message_index: 0, text: 'xxx' }
+    })),
     tasks: []
-  }), request);
-  assert.throws(() => createAssistantMemoryResult(request, 'gemma-4-ortenzya', bounded), /exceeds 3200 state characters/);
+  }), oversizedRequest);
+  assert.throws(
+    () => createAssistantMemoryResult(oversizedRequest, 'gemma-4-ortenzya', bounded),
+    /exceeds 3200 state characters/
+  );
 });
 
 test('rejects stale ancestry and transcript tampering', () => {
@@ -279,6 +291,10 @@ test('rejects stale ancestry and transcript tampering', () => {
   const badTurn = structuredClone(request);
   badTurn.turns[0].content = 'A substituted user instruction.';
   assert.throws(() => normalizeAssistantMemoryRequest(badTurn), /source does not match the supplied turn/);
+  assert.throws(
+    () => normalizeAssistantMemoryRequest({ ...request, extra: true }),
+    /invalid schema/
+  );
   const result = firstResult();
   const staleResult = structuredClone(result);
   staleResult.source.fingerprint = `sha256:${'1'.repeat(64)}`;
