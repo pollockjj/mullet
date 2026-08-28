@@ -5,8 +5,9 @@ import {
   type ExpressionSidecarResult
 } from './sidecar.ts';
 
-export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v1' as const;
+export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v2' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
+export const PORTRAIT_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
@@ -20,6 +21,7 @@ export const PORTRAIT_MEGAPIXELS = Object.freeze([0.5, 0.75, 0.9, 1, 1.5, 2] as 
 
 export type PortraitAspectRatio = (typeof PORTRAIT_ASPECT_RATIOS)[number]['id'];
 export type PortraitMegapixels = (typeof PORTRAIT_MEGAPIXELS)[number];
+export type PortraitModelTemplate = typeof PORTRAIT_TEMPLATE_ID | typeof PORTRAIT_REFERENCE_TEMPLATE_ID;
 
 export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
   id: PORTRAIT_TEMPLATE_ID,
@@ -41,12 +43,41 @@ export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
   shift: 3
 } as const);
 
+export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
+  id: PORTRAIT_REFERENCE_TEMPLATE_ID,
+  label: 'Qwen Image Edit 2511 · identity reference',
+  modelFamily: 'qwen-image-edit-2511',
+  promptGuide: 'preserve the supplied canonical identity exactly, photorealistic fiction still, coherent anatomy, natural skin texture, no text, no watermark',
+  modelFiles: {
+    unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
+    clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+    vae: 'qwen_image_vae.safetensors',
+    lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+  },
+  multiple: 16,
+  outputNode: '14',
+  steps: 4,
+  cfg: 1,
+  sampler: 'euler',
+  scheduler: 'simple',
+  shift: 3.1
+} as const);
+
+export type PortraitReferenceImage = {
+  name: string;
+  subfolder: 'mullet/identity';
+  type: 'input';
+  sha256: string;
+};
+
 export type PortraitSource = {
   conversationId: string;
   messageCount: number;
   messageIndex: number;
   fingerprint: string;
   expression: ExpressionLabel;
+  characterId?: string;
+  profileFingerprint?: string;
 };
 
 export function isPortraitSource(value: unknown): value is PortraitSource {
@@ -59,32 +90,43 @@ export function isPortraitSource(value: unknown): value is PortraitSource {
     && Number(value.messageIndex) === Number(value.messageCount) - 1
     && typeof value.fingerprint === 'string'
     && FINGERPRINT_PATTERN.test(value.fingerprint)
-    && isExpressionLabel(value.expression);
+    && isExpressionLabel(value.expression)
+    && ((value.characterId === undefined && value.profileFingerprint === undefined)
+      || (typeof value.characterId === 'string'
+        && PROFILE_ID_PATTERN.test(value.characterId)
+        && typeof value.profileFingerprint === 'string'
+        && PROFILE_FINGERPRINT_PATTERN.test(value.profileFingerprint)));
 }
 
 export type PortraitRequest = {
   spec: typeof PORTRAIT_REQUEST_SPEC;
-  modelTemplate: typeof PORTRAIT_TEMPLATE_ID;
+  modelTemplate: PortraitModelTemplate;
   source: PortraitSource;
   subject: string;
   setting: string;
   attire: string;
   lora: string | null;
+  referenceImage: PortraitReferenceImage | null;
   aspectRatio: PortraitAspectRatio;
   megapixels: PortraitMegapixels;
   seed?: number;
 };
 
 export type PortraitCapabilities = {
-  spec: 'mullet_portrait_capabilities_v1';
+  spec: 'mullet_portrait_capabilities_v2';
   template: typeof Z_IMAGE_TURBO_TEMPLATE;
+  referenceTemplate: typeof QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE | null;
   aspectRatios: typeof PORTRAIT_ASPECT_RATIOS;
   megapixels: typeof PORTRAIT_MEGAPIXELS;
   loras: string[];
 };
 
 const FINGERPRINT_PATTERN = /^\d+:[0-9a-f]{8}$/;
+const PROFILE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const PROFILE_FINGERPRINT_PATTERN = /^[0-9a-f]{8}$/;
 const LORA_PATTERN = /^zimage\/[A-Za-z0-9][A-Za-z0-9._ -]*\.safetensors$/;
+const REFERENCE_IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const aspectMap = new Map(PORTRAIT_ASPECT_RATIOS.map((ratio) => [ratio.id, ratio]));
 const megapixelSet = new Set<number>(PORTRAIT_MEGAPIXELS);
 
@@ -126,26 +168,42 @@ export function portraitDimensions(
 
 export function buildPortraitRequest(
   expression: ExpressionSidecarResult,
-  settings: Omit<PortraitRequest, 'spec' | 'modelTemplate' | 'source'>
+  settings: Omit<PortraitRequest, 'spec' | 'modelTemplate' | 'source' | 'referenceImage'> & {
+    modelTemplate?: PortraitModelTemplate;
+    referenceImage?: PortraitReferenceImage | null;
+    characterId?: string;
+    profileFingerprint?: string;
+  }
 ): PortraitRequest {
   return normalizePortraitRequest({
     spec: PORTRAIT_REQUEST_SPEC,
-    modelTemplate: PORTRAIT_TEMPLATE_ID,
+    modelTemplate: settings.modelTemplate ?? PORTRAIT_TEMPLATE_ID,
     source: {
       conversationId: expression.source.conversationId,
       messageCount: expression.source.messageCount,
       messageIndex: expression.source.messageIndex,
       fingerprint: expression.source.fingerprint,
-      expression: expression.output.expression
+      expression: expression.output.expression,
+      ...(settings.characterId === undefined ? {} : { characterId: settings.characterId }),
+      ...(settings.profileFingerprint === undefined ? {} : { profileFingerprint: settings.profileFingerprint })
     },
-    ...settings
+    subject: settings.subject,
+    setting: settings.setting,
+    attire: settings.attire,
+    lora: settings.lora,
+    referenceImage: settings.referenceImage ?? null,
+    aspectRatio: settings.aspectRatio,
+    megapixels: settings.megapixels,
+    ...(settings.seed === undefined ? {} : { seed: settings.seed })
   });
 }
 
 export function normalizePortraitRequest(value: unknown): PortraitRequest {
   if (!isRecord(value)) throw new Error('portrait request must be an object');
   if (value.spec !== PORTRAIT_REQUEST_SPEC) throw new Error(`portrait spec must be ${PORTRAIT_REQUEST_SPEC}`);
-  if (value.modelTemplate !== PORTRAIT_TEMPLATE_ID) throw new Error('unsupported portrait model template');
+  if (value.modelTemplate !== PORTRAIT_TEMPLATE_ID && value.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID) {
+    throw new Error('unsupported portrait model template');
+  }
   if (!isRecord(value.source)) throw new Error('portrait source must be an object');
   if (!isSidecarConversationId(value.source.conversationId)) throw new Error('portrait source conversationId must be a UUID');
   const messageCount = integer(value.source.messageCount, 'portrait source messageCount', 1, 1000);
@@ -155,6 +213,22 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
     throw new Error('portrait source fingerprint is invalid');
   }
   if (!isExpressionLabel(value.source.expression)) throw new Error('portrait source expression is invalid');
+  const hasCharacterId = value.source.characterId !== undefined;
+  const hasProfileFingerprint = value.source.profileFingerprint !== undefined;
+  if (hasCharacterId !== hasProfileFingerprint) throw new Error('portrait source profile binding is incomplete');
+  let profileBinding: { characterId: string; profileFingerprint: string } | null = null;
+  if (hasCharacterId) {
+    if (typeof value.source.characterId !== 'string' || !PROFILE_ID_PATTERN.test(value.source.characterId)) {
+      throw new Error('portrait source characterId is invalid');
+    }
+    if (typeof value.source.profileFingerprint !== 'string' || !PROFILE_FINGERPRINT_PATTERN.test(value.source.profileFingerprint)) {
+      throw new Error('portrait source profile fingerprint is invalid');
+    }
+    profileBinding = {
+      characterId: value.source.characterId,
+      profileFingerprint: value.source.profileFingerprint
+    };
+  }
   const aspectRatio = value.aspectRatio;
   if (typeof aspectRatio !== 'string' || !aspectMap.has(aspectRatio as PortraitAspectRatio)) {
     throw new Error('unsupported portrait aspect ratio');
@@ -165,6 +239,33 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
   if (value.lora !== null && value.lora !== undefined && value.lora !== '') {
     if (typeof value.lora !== 'string' || !LORA_PATTERN.test(value.lora)) throw new Error('portrait LoRA is invalid');
     lora = value.lora;
+  }
+  let referenceImage: PortraitReferenceImage | null = null;
+  if (value.referenceImage !== null && value.referenceImage !== undefined) {
+    if (!isRecord(value.referenceImage)
+      || typeof value.referenceImage.name !== 'string'
+      || !REFERENCE_IMAGE_PATTERN.test(value.referenceImage.name)
+      || value.referenceImage.subfolder !== 'mullet/identity'
+      || value.referenceImage.type !== 'input'
+      || typeof value.referenceImage.sha256 !== 'string'
+      || !SHA256_PATTERN.test(value.referenceImage.sha256)) {
+      throw new Error('portrait identity reference is invalid');
+    }
+    referenceImage = {
+      name: value.referenceImage.name,
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: value.referenceImage.sha256
+    };
+  }
+  if (value.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID && referenceImage === null) {
+    throw new Error('reference-conditioned portrait requires an identity reference');
+  }
+  if (value.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID && lora !== null) {
+    throw new Error('reference-conditioned portrait does not accept a Z-Image LoRA');
+  }
+  if (value.modelTemplate === PORTRAIT_TEMPLATE_ID && referenceImage !== null) {
+    throw new Error('Z-Image portrait does not accept an identity reference');
   }
   const seed = value.seed === undefined
     ? undefined
@@ -177,12 +278,14 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
       messageCount,
       messageIndex,
       fingerprint: value.source.fingerprint,
-      expression: value.source.expression
+      expression: value.source.expression,
+      ...(profileBinding ?? {})
     },
     subject: textField(value.subject, 'portrait subject', 1, 500),
     setting: textField(value.setting ?? '', 'portrait setting', 0, 500),
     attire: textField(value.attire ?? '', 'portrait attire', 0, 500),
     lora,
+    referenceImage,
     aspectRatio: aspectRatio as PortraitAspectRatio,
     megapixels: megapixels as PortraitMegapixels,
     ...(seed === undefined ? {} : { seed })
@@ -197,11 +300,15 @@ export function portraitRequestKey(request: PortraitRequest): string {
     normalized.source.messageIndex,
     normalized.source.fingerprint,
     normalized.source.expression,
+    normalized.source.characterId ?? '',
+    normalized.source.profileFingerprint ?? '',
     normalized.modelTemplate,
     normalized.subject,
     normalized.setting,
     normalized.attire,
     normalized.lora ?? '',
+    normalized.referenceImage?.name ?? '',
+    normalized.referenceImage?.sha256 ?? '',
     normalized.aspectRatio,
     normalized.megapixels,
     normalized.seed ?? 'random'
@@ -215,13 +322,19 @@ export function buildPortraitPrompt(request: PortraitRequest): string {
     `${normalized.source.expression} facial expression`,
     normalized.attire ? `wearing ${normalized.attire}` : '',
     normalized.setting ? `in ${normalized.setting}` : '',
-    Z_IMAGE_TURBO_TEMPLATE.promptGuide
+    normalized.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
+      ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.promptGuide
+      : Z_IMAGE_TURBO_TEMPLATE.promptGuide
   ];
-  return clauses.filter(Boolean).join(', ');
+  const description = clauses.filter(Boolean).join(', ');
+  return normalized.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
+    ? `Use the supplied canonical reference as the identity source. Preserve the exact same person, facial structure, eyes, nose, mouth, age, and hairstyle. Create a ${description}. Preserve identity; do not substitute another person. Do not add modern clothing details.`
+    : description;
 }
 
 export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
   const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_TEMPLATE_ID) throw new Error('Z-Image workflow requires the Z-Image template');
   const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
   const modelSource: [string, number] = normalized.lora ? ['11', 0] : ['1', 0];
@@ -267,15 +380,62 @@ export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number)
   return graph;
 }
 
+export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('Qwen reference workflow requires a reference-conditioned portrait');
+  }
+  const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
+  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
+  const template = QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE;
+  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
+  return {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'qwen_image', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
+    '4': { class_type: 'LoadImage', inputs: { image: referencePath } },
+    '5': { class_type: 'FluxKontextImageScale', inputs: { image: ['4', 0] } },
+    '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: template.shift } },
+    '7': { class_type: 'CFGNorm', inputs: { model: ['6', 0], strength: 1, pre_cfg: false } },
+    '8': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['7', 0], lora_name: template.modelFiles.lora, strength_model: 1 } },
+    '9': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: buildPortraitPrompt(normalized) } },
+    '10': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: '' } },
+    '11': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
+    '12': {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['8', 0],
+        positive: ['9', 0],
+        negative: ['10', 0],
+        latent_image: ['11', 0],
+        seed: validatedSeed,
+        steps: template.steps,
+        cfg: template.cfg,
+        sampler_name: template.sampler,
+        scheduler: template.scheduler,
+        denoise: 1
+      }
+    },
+    '13': { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['3', 0] } },
+    '14': { class_type: 'SaveImage', inputs: { images: ['15', 0], filename_prefix: 'mullet/portrait-reference' } },
+    '15': { class_type: 'ImageScale', inputs: { image: ['13', 0], upscale_method: 'lanczos', width, height, crop: 'disabled' } }
+  };
+}
+
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {
-  if (!isRecord(value) || value.spec !== 'mullet_portrait_capabilities_v1') throw new Error('invalid portrait capabilities');
+  if (!isRecord(value) || value.spec !== 'mullet_portrait_capabilities_v2') throw new Error('invalid portrait capabilities');
   if (!isRecord(value.template) || value.template.id !== PORTRAIT_TEMPLATE_ID) throw new Error('invalid portrait template');
+  if (value.referenceTemplate !== null
+    && (!isRecord(value.referenceTemplate) || value.referenceTemplate.id !== PORTRAIT_REFERENCE_TEMPLATE_ID)) {
+    throw new Error('invalid reference portrait template');
+  }
   if (!Array.isArray(value.loras) || value.loras.some((lora) => typeof lora !== 'string' || !LORA_PATTERN.test(lora))) {
     throw new Error('invalid portrait LoRA inventory');
   }
   return {
-    spec: 'mullet_portrait_capabilities_v1',
+    spec: 'mullet_portrait_capabilities_v2',
     template: Z_IMAGE_TURBO_TEMPLATE,
+    referenceTemplate: value.referenceTemplate === null ? null : QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
     loras: [...new Set(value.loras)].sort()
