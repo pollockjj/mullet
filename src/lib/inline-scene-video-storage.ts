@@ -9,10 +9,10 @@ import {
   normalizeInlineSceneVideoRequest,
   type InlineSceneVideoRequest
 } from './inline-scene-video.ts';
-import { validateVp9Webm } from './webm.ts';
+import { validateH264AacMp4 } from './mp4.ts';
 
-export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v1' as const;
-export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v1' as const;
+export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v2' as const;
+export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v2' as const;
 
 export class StoredInlineSceneVideoIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -132,8 +132,8 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
   const videoSha256 = sha256(value.videoSha256, 'stored inline-scene video output hash');
   if (
     !(value.video instanceof Blob)
-    || value.video.type !== 'video/webm'
-    || value.video.size < 4
+    || value.video.type !== 'video/mp4'
+    || value.video.size < 12
     || value.video.size > 64 * 1024 * 1024
   ) throw new Error('stored inline-scene video is invalid');
   return {
@@ -178,18 +178,17 @@ async function blobSha256(blob: Blob): Promise<string> {
 export async function verifyStoredInlineSceneVideo(value: unknown): Promise<StoredInlineSceneVideo> {
   const video = normalizeStoredInlineSceneVideo(value);
   const bytes = new Uint8Array(await video.video.arrayBuffer());
-  const signature = bytes.subarray(0, 4);
   if (
-    signature[0] !== 0x1a
-    || signature[1] !== 0x45
-    || signature[2] !== 0xdf
-    || signature[3] !== 0xa3
-  ) throw new Error('stored inline-scene video has an invalid WebM signature');
+    bytes[4] !== 0x66
+    || bytes[5] !== 0x74
+    || bytes[6] !== 0x79
+    || bytes[7] !== 0x70
+  ) throw new Error('stored inline-scene video has an invalid MP4 signature');
   if (await blobSha256(video.video) !== video.videoSha256) {
     throw new Error('stored inline-scene video hash does not match its bytes');
   }
   const dimensions = inlineSceneVideoDimensions(video.request.aspectRatio);
-  validateVp9Webm(bytes, {
+  validateH264AacMp4(bytes, {
     width: dimensions.width,
     height: dimensions.height,
     frames: dimensions.frames,
