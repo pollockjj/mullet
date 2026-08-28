@@ -6,6 +6,8 @@ export type Mp4VideoMetadata = {
   frameCount: number;
   fps: number;
   durationSeconds: number;
+  audioSampleCount: number;
+  audioDurationSeconds: number;
 };
 
 export type ExpectedMp4Video = {
@@ -189,12 +191,12 @@ function parseTrack(bytes: Uint8Array, trak: Box, budget: ParseBudget): Track {
   const stbl = exactlyOne(minfChildren, 'stbl', 'sample table');
   const sampleChildren = childBoxes(bytes, stbl, budget);
   const codec = sampleDescriptionCodec(bytes, exactlyOne(sampleChildren, 'stsd', 'sample description'), budget);
-  if (handler !== 'vide') {
+  if (handler !== 'vide' && handler !== 'soun') {
     return { handler, codec, ...dimensions, ...timing, sampleCount: 0, sampleDuration: 0 };
   }
   const samples = sampleTiming(bytes, exactlyOne(sampleChildren, 'stts', 'time-to-sample table'));
   const sizeCount = sampleSizeCount(bytes, exactlyOne(sampleChildren, 'stsz', 'sample-size table'));
-  if (sizeCount !== samples.sampleCount) throw new Error('MP4 video sample tables disagree');
+  if (sizeCount !== samples.sampleCount) throw new Error('MP4 media sample tables disagree');
   return { handler, codec, ...dimensions, ...timing, ...samples };
 }
 
@@ -251,6 +253,12 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
   if (Math.abs(durationSeconds - expectedFrames / expectedFps) > 1 / video.timescale) {
     throw new Error('MP4 video duration does not match the request');
   }
+  if (audio.sampleCount < 1) throw new Error('MP4 audio track contains no samples');
+  if (audio.duration !== audio.sampleDuration) throw new Error('MP4 audio duration disagrees with its sample table');
+  const audioDurationSeconds = audio.sampleDuration / audio.timescale;
+  if (Math.abs(audioDurationSeconds - durationSeconds) > 1 / expectedFps) {
+    throw new Error('MP4 audio duration is not synchronized with the video');
+  }
   return {
     videoCodec: video.codec,
     audioCodec: 'mp4a',
@@ -258,6 +266,8 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
     height: video.height,
     frameCount: video.sampleCount,
     fps: expectedFps,
-    durationSeconds
+    durationSeconds,
+    audioSampleCount: audio.sampleCount,
+    audioDurationSeconds
   };
 }

@@ -14,7 +14,9 @@ test('reads H.264 video and AAC audio metadata from MP4 bytes', () => {
     height: 768,
     frameCount: 124,
     fps: 24,
-    durationSeconds: 124 / 24
+    durationSeconds: 124 / 24,
+    audioSampleCount: 161,
+    audioDurationSeconds: 161 * 1_024 / 32_000
   });
 });
 
@@ -24,6 +26,9 @@ test('rejects MP4 with wrong dimensions, frame count, frame rate, codec, or miss
   assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({ fps: 25 }), expected), /frame rate/);
   assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({ videoCodec: 'av01' }), expected), /H\.264/);
   assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({ includeAudio: false }), expected), /audio track/);
+  assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({ includeAudioSamples: false }), expected), /time-to-sample/);
+  assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({ audioHeaderDuration: 1 }), expected), /audio duration disagrees/);
+  assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({ audioFrames: 100 }), expected), /not synchronized/);
   assert.throws(() => validateH264AacMp4(Uint8Array.from([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]), expected), /truncated/);
 });
 

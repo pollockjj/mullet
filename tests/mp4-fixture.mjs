@@ -59,10 +59,10 @@ function sampleSizes(frames) {
   return box('stsz', concat([new Uint8Array(4), uint32(1), uint32(frames)]));
 }
 
-function track({ handlerType, codec, width, height, timescale, duration, frames }) {
+function track({ handlerType, codec, width, height, timescale, duration, frames, sampleDelta, includeSamples = true }) {
   const sampleTableParts = [sampleDescription(codec)];
-  if (handlerType === 'vide') {
-    sampleTableParts.push(timeToSample(frames, duration / frames), sampleSizes(frames));
+  if (includeSamples) {
+    sampleTableParts.push(timeToSample(frames, sampleDelta), sampleSizes(frames));
   }
   const stbl = box('stbl', concat(sampleTableParts));
   const minf = box('minf', stbl);
@@ -76,14 +76,39 @@ export function buildH264AacMp4Fixture({
   frames = 124,
   fps = 24,
   videoCodec = 'avc1',
-  includeAudio = true
+  includeAudio = true,
+  includeAudioSamples = true,
+  audioFrames = 161,
+  audioHeaderDuration
 } = {}) {
   const timescale = 12_288;
   const delta = Math.round(timescale / fps);
   const duration = frames * delta;
   const ftyp = box('ftyp', concat([text('isom'), uint32(0), text('isom'), text('iso2'), text('avc1'), text('mp41')]));
-  const video = track({ handlerType: 'vide', codec: videoCodec, width, height, timescale, duration, frames });
-  const audio = track({ handlerType: 'soun', codec: 'mp4a', width: 0, height: 0, timescale: 48_000, duration: 248_000, frames: 0 });
+  const video = track({
+    handlerType: 'vide',
+    codec: videoCodec,
+    width,
+    height,
+    timescale,
+    duration,
+    frames,
+    sampleDelta: delta
+  });
+  const audioTimescale = 32_000;
+  const audioDelta = 1_024;
+  const audioDuration = audioHeaderDuration ?? audioFrames * audioDelta;
+  const audio = track({
+    handlerType: 'soun',
+    codec: 'mp4a',
+    width: 0,
+    height: 0,
+    timescale: audioTimescale,
+    duration: audioDuration,
+    frames: audioFrames,
+    sampleDelta: audioDelta,
+    includeSamples: includeAudioSamples
+  });
   const moov = box('moov', includeAudio ? concat([video, audio]) : video);
   const mdat = box('mdat', Uint8Array.from([1]));
   return concat([ftyp, moov, mdat]);
