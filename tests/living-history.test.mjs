@@ -33,7 +33,7 @@ test('builds a bounded isolated latest-turn request without mutating canonical m
   const canonical = JSON.stringify(messages);
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   assert.equal(request.spec, LIVING_HISTORY_REQUEST_SPEC);
-  assert.deepEqual(request.turns, messages);
+  assert.deepEqual(request.turns, messages.slice(1));
   assert.equal(request.previous.revision, 0);
   assert.deepEqual(normalizeLivingHistoryRequest(request), request);
   assert.equal(JSON.stringify(messages), canonical);

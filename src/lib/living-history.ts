@@ -332,7 +332,7 @@ export function normalizeLivingHistoryRequest(value: unknown): LivingHistoryRequ
       messageCount: source.messageCount,
       messageIndex: source.messageIndex,
       fingerprint: source.fingerprint,
-      turnFingerprint
+      turnFingerprint: source.turnFingerprint
     },
     previous: { revision, summary, source: previousSource },
     boundaries,
