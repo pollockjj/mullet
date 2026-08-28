@@ -37,11 +37,42 @@
     livingHistoryResultMatchesMessages,
     livingHistoryResultMatchesRequest,
     livingHistorySourceForMessages,
+    livingHistorySourceMatchesMessages,
+    livingHistorySourcesMatch,
+    normalizeLivingHistorySource,
     normalizeLivingHistoryResult,
     type LivingHistoryRequest,
     type LivingHistoryResult,
     type LivingHistorySource
   } from '$lib/living-history';
+  import {
+    INLINE_SCENE_IMAGE_TIMEOUT_MS,
+    INLINE_SCENE_TIMEOUT_MS,
+    buildInlineSceneImageRequest,
+    buildInlineSceneRequest,
+    inlineSceneImageRequestKey,
+    inlineSceneResultMatchesRequest,
+    normalizeInlineSceneCapabilities,
+    normalizeInlineSceneResult,
+    type InlineSceneAspectRatio,
+    type InlineSceneCapabilities,
+    type InlineSceneImageRequest,
+    type InlineSceneMegapixels,
+    type InlineSceneRequest,
+    type InlineSceneResult
+  } from '$lib/inline-scene';
+  import {
+    STORED_INLINE_SCENE_SPEC,
+    clearStoredInlineScene,
+    commitStoredInlineScene,
+    loadStoredInlineScene,
+    normalizeStoredInlineScene,
+    restoreStoredInlineScene,
+    rollbackStoredInlineSceneWrite,
+    runStoredInlineSceneExclusive,
+    saveStoredInlineScene,
+    type StoredInlineScene
+  } from '$lib/inline-scene-storage';
   import {
     MAX_SUPPLEMENTAL_LOREBOOKS,
     appendLivingHistoryBoundary,
@@ -205,6 +236,27 @@
   let livingHistoryController: AbortController | null = null;
   let livingHistoryGeneration = 0;
   let livingHistoryEpoch = '';
+  let inlineScenesEnabled = false;
+  let finalizedInlineSceneSource: LivingHistorySource | null = null;
+  let inlineSceneEpoch = '';
+  let inlineSceneCapabilities: InlineSceneCapabilities | null = null;
+  let inlineSceneCapabilitiesLoading = false;
+  let inlineScenePersistenceReady = false;
+  let inlineScenePersistenceAvailable = true;
+  let inlineScenePersistenceOperations = 0;
+  let inlineSceneBusy = false;
+  let inlineSceneError = '';
+  let inlineSceneAspectRatio: InlineSceneAspectRatio = '16:9';
+  let inlineSceneMegapixels: InlineSceneMegapixels = 1;
+  let inlineSceneLora = '';
+  let inlineSceneSidecarRequest: InlineSceneRequest | null = null;
+  let generatedInlineScene: StoredInlineScene | null = null;
+  let generatedInlineSceneUrl = '';
+  let inlineSceneApplies = false;
+  let inlineSceneCurrent = false;
+  let inlineSceneGeneration = 0;
+  let inlineSceneController: AbortController | null = null;
+  let lastInlineSceneAttemptKey = '';
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let selectedScenarioId = '';
@@ -248,6 +300,11 @@
   const portraitAspectStorageKey = 'mullet.portrait-aspect';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
+  const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
+  const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
+  const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
+  const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
+  const inlineSceneLoraStorageKey = 'mullet.inline-scene-lora';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: livingHistoryApplicable = Boolean(
@@ -300,6 +357,24 @@
     && portraitVideoRequest
     && generatedPortraitVideo.requestKey === portraitVideoRequestKey(portraitVideoRequest)
   );
+  $: inlineSceneSidecarRequest = currentInlineSceneSidecarRequest(
+    conversationId,
+    messages,
+    finalizedInlineSceneSource
+  );
+  $: inlineSceneApplies = inlineSceneAppliesToTranscript(
+    generatedInlineScene,
+    finalizedInlineSceneSource,
+    inlineSceneEpoch,
+    conversationId,
+    messages
+  );
+  $: inlineSceneCurrent = inlineSceneApplies && inlineSceneMatchesSettings(
+    generatedInlineScene,
+    inlineSceneAspectRatio,
+    inlineSceneMegapixels,
+    inlineSceneLora
+  );
   $: scheduleExpressionReconciliation(
     expressionsEnabled,
     sidecarPersistenceReady,
@@ -328,6 +403,19 @@
     portraitVideoBusy,
     portraitVideoRequest,
     portraitVideoCurrent
+  );
+  $: scheduleInlineSceneReconciliation(
+    inlineScenesEnabled,
+    inlineSceneCapabilities,
+    inlineScenePersistenceReady,
+    inlineScenePersistenceAvailable,
+    streaming,
+    inlineSceneBusy,
+    inlineSceneSidecarRequest,
+    inlineSceneCurrent,
+    inlineSceneAspectRatio,
+    inlineSceneMegapixels,
+    inlineSceneLora
   );
   $: scheduleLivingHistoryReconciliation(
     livingHistoryEnabled,
@@ -411,10 +499,15 @@
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
+    inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     restorePortraitSettings();
+    restoreInlineSceneSettings();
+    restoreInlineSceneFinalizedSource();
     void restoreExpressionAndGeneratedMedia();
+    void restoreGeneratedInlineScene();
     void loadPortraitGenerator();
     void loadPortraitVideoGenerator();
+    void loadInlineSceneGenerator();
     void loadScenarioCatalog();
   });
 
@@ -424,8 +517,11 @@
     portraitController?.abort();
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
+    inlineSceneGeneration += 1;
+    inlineSceneController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
+    if (generatedInlineSceneUrl) URL.revokeObjectURL(generatedInlineSceneUrl);
   });
 
   function restorePortraitSettings() {
