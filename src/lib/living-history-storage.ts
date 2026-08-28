@@ -1,4 +1,5 @@
 import {
+  livingHistoryResultsMatch,
   normalizeLivingHistoryResult,
   type LivingHistoryResult
 } from './living-history.ts';
@@ -89,14 +90,7 @@ export async function clearStoredLivingHistoryIfResult(result: LivingHistoryResu
       const request = store.get(ACTIVE_HISTORY_KEY);
       request.onsuccess = () => {
         const candidate = request.result;
-        if (
-          isRecord(candidate)
-          && isRecord(candidate.source)
-          && isRecord(candidate.output)
-          && candidate.source.conversationId === normalized.source.conversationId
-          && candidate.source.fingerprint === normalized.source.fingerprint
-          && candidate.output.revision === normalized.output.revision
-        ) {
+        if (isRecord(candidate) && livingHistoryResultsMatch(candidate, normalized)) {
           store.delete(ACTIVE_HISTORY_KEY);
         }
       };
