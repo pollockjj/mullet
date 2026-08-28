@@ -30,6 +30,7 @@
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
   import {
     LIVING_HISTORY_INTERVAL_MESSAGES,
+    LIVING_HISTORY_CHARACTER_LIMIT,
     LIVING_HISTORY_QUOTE_BANK_LIMIT,
     LIVING_HISTORY_TIMEOUT_MS,
     livingHistoryLorebook,
@@ -116,6 +117,7 @@
     livingHistoryReadyForChat,
     normalizeStoredLivingHistoryBoundaries,
     pendingLivingHistoryMessageCount
+    , parseLivingHistoryActiveHeader
   } from '$lib/living-history-client';
   import {
     clearLivingHistoryAtEpoch,
@@ -126,6 +128,7 @@
     rollbackStoredLivingHistoryWrite,
     runStoredLivingHistoryExclusive,
     saveStoredLivingHistory
+    , LivingHistoryConflictError
   } from '$lib/living-history-storage';
   import {
     PORTRAIT_TIMEOUT_MS,
@@ -270,6 +273,7 @@
   let livingHistoryPersistenceAvailable = true;
   let livingHistoryBusy = false;
   let livingHistoryError = '';
+  let lastLivingHistoryFired: boolean | null = null;
   let lastLivingHistoryAttemptKey = '';
   let livingHistoryController: AbortController | null = null;
   let livingHistoryGeneration = 0;
@@ -2360,7 +2364,12 @@
           exclusive: runStoredLivingHistoryExclusive
         });
       } catch (cause) {
-        disableLivingHistoryPersistence(cause);
+        if (cause instanceof LivingHistoryConflictError) {
+          livingHistoryError = cause.message;
+          await restoreLivingHistory();
+        } else {
+          disableLivingHistoryPersistence(cause);
+        }
       }
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
@@ -2385,6 +2394,7 @@
     livingHistoryBook = null;
     livingHistoryBoundaries = [];
     livingHistoryError = '';
+    lastLivingHistoryFired = null;
     lastLivingHistoryAttemptKey = '';
     persistLivingHistoryBoundaries();
     try {
@@ -2404,12 +2414,12 @@
   }
 
   function livingHistoryStatusText(): string {
-    if (livingHistoryBusy) return 'Updating continuity…';
+    if (livingHistoryBusy) return 'Updating continuity, quotes, and character state…';
     if (livingHistoryResult && !livingHistoryApplicable) return 'Stored history does not match this transcript.';
     if (livingHistoryCurrent) return `Current · revision ${livingHistoryResult?.output.revision ?? 0}`;
     if (livingHistoryPendingMessages >= LIVING_HISTORY_INTERVAL_MESSAGES) return `${livingHistoryPendingMessages} finalized messages ready to summarize.`;
     if (livingHistoryPendingMessages > 0) {
-      return `${LIVING_HISTORY_INTERVAL_MESSAGES - livingHistoryPendingMessages} finalized messages until automatic update.`;
+      return `${LIVING_HISTORY_INTERVAL_MESSAGES - livingHistoryPendingMessages} finalized messages until automatic update · Update now is available.`;
     }
     if (livingHistoryResult) return `Current through ${livingHistoryResult.source.messageCount} canonical messages.`;
     return 'No finalized history yet.';
@@ -2705,6 +2715,7 @@
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
+    lastLivingHistoryFired = null;
     lastLoreBudget = 0;
     loreTimedState = emptyLoreTimedState();
     localStorage.removeItem(loreTimedStateStorageKey);
@@ -2980,6 +2991,7 @@
       }
 
       lastLoreActivations = readLoreActivations(response.headers.get('x-mullet-lore-entries'));
+      lastLivingHistoryFired = parseLivingHistoryActiveHeader(response.headers.get('x-mullet-living-history-active'));
       const loreCount = Number(response.headers.get('x-mullet-lore-active'));
       lastLoreActivationCount = Number.isInteger(loreCount) && loreCount >= 0
         ? loreCount
@@ -3453,6 +3465,32 @@
                 <p>No retained quotes yet.</p>
               {/if}
             </details>
+            <details>
+              <summary>Character stats &amp; bios · {livingHistoryResult.output.characters.length}/{LIVING_HISTORY_CHARACTER_LIMIT}</summary>
+              {#if livingHistoryResult.output.characters.length}
+                <div class="character-state-bank">
+                  {#each livingHistoryResult.output.characters as character}
+                    <article>
+                      <strong>{character.name}</strong>
+                      {#if character.bio}<p><b>Bio</b> · {character.bio}</p>{/if}
+                      {#if character.status}<p><b>Status</b> · {character.status}</p>{/if}
+                      {#if character.location}<p><b>Location</b> · {character.location}</p>{/if}
+                      {#if character.goals}<p><b>Goals</b> · {character.goals}</p>{/if}
+                      {#if character.relationships}<p><b>Relationships</b> · {character.relationships}</p>{/if}
+                      {#if character.possessions}<p><b>Possessions</b> · {character.possessions}</p>{/if}
+                      <small>Evidence · messages {character.evidence.map((item) => item.messageIndex).join(', ')}</small>
+                    </article>
+                  {/each}
+                </div>
+              {:else}
+                <p>No established character state yet.</p>
+              {/if}
+            </details>
+          {/if}
+          {#if lastLivingHistoryFired !== null}
+            <small class:active={lastLivingHistoryFired} class="history-fired">
+              {lastLivingHistoryFired ? 'Living lore fired last turn.' : 'Living lore did not fire last turn.'}
+            </small>
           {/if}
           {#if livingHistoryError}<div class="sidecar-error" role="alert">{livingHistoryError}</div>{/if}
           <div class="history-actions">
@@ -3460,14 +3498,14 @@
               on:click={() => void updateLivingHistory()}
               disabled={streaming || livingHistoryBusy || !livingHistoryEnabled || !livingHistoryRequest || !livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable}
             >
-              {livingHistoryBusy ? 'Updating…' : 'Update now'}
+              {livingHistoryBusy ? 'Updating…' : 'Update stats & history'}
             </button>
             <button
               on:click={() => void clearLivingHistory()}
               disabled={streaming || livingHistoryBusy || !livingHistoryPersistenceReady || (!livingHistoryResult && livingHistoryBoundaries.length === 0)}
             >Clear</button>
           </div>
-          <small>200-word target · {LIVING_HISTORY_QUOTE_BANK_LIMIT} relevance-ranked quote slots · every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>
+          <small>200-word target · {LIVING_HISTORY_QUOTE_BANK_LIMIT} quote slots · {LIVING_HISTORY_CHARACTER_LIMIT} character records · on demand or every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>
         </div>
 
         {#if activeLorebooks.length}
@@ -3749,6 +3787,14 @@
   .quote-bank li { color: #b9c4ba; line-height: 1.4; }
   .quote-bank li small { display: block; color: #718174; }
   .quote-bank q { white-space: pre-wrap; }
+  .character-state-bank { display: grid; max-height: 24em; overflow-y: auto; gap: 8px; margin-top: 7px; }
+  .character-state-bank article { display: grid; gap: 3px; padding: 7px; border: 1px solid #344037; border-radius: 7px; background: #141916; }
+  .character-state-bank article > strong { color: #c4d4c5; font-size: 10px; }
+  .character-state-bank article p { max-height: none; margin: 0; overflow: visible; font-size: 9px; }
+  .character-state-bank article b { color: #829184; font-weight: 700; }
+  .character-state-bank article small { color: #657369; font-size: 8px; }
+  .history-fired { color: #9b8176 !important; }
+  .history-fired.active { color: #83b28a !important; }
   .history-actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
   .history-actions button { padding: 7px 9px; border: 1px solid #49614d; border-radius: 7px; color: #b6d3ba; background: #19221b; font-size: 9px; font-weight: 700; cursor: pointer; }
   .history-actions button:last-child { border-color: #4a4239; color: #a99f95; background: #1b1815; }
