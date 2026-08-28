@@ -1,5 +1,4 @@
 import {
-  livingHistoryResultsMatch,
   normalizeLivingHistoryResult,
   type LivingHistoryResult
 } from './living-history.ts';
@@ -7,11 +6,18 @@ import {
 const DATABASE_NAME = 'mullet-living-history';
 const STORE_NAME = 'state';
 const ACTIVE_HISTORY_KEY = 'active-history';
+export const STORED_LIVING_HISTORY_SPEC = 'mullet_stored_living_history_v1' as const;
+
+type StoredLivingHistoryEnvelope = {
+  spec: typeof STORED_LIVING_HISTORY_SPEC;
+  writeId: string;
+  result: LivingHistoryResult;
+};
 
 export type LivingHistoryCommitOperations = {
-  save: (result: LivingHistoryResult) => Promise<void>;
+  save: (result: LivingHistoryResult) => Promise<string>;
   isCurrent: () => boolean;
-  discard: (result: LivingHistoryResult) => Promise<void>;
+  discard: (writeId: string) => Promise<void>;
   install: (result: LivingHistoryResult) => void;
 };
 
@@ -24,6 +30,14 @@ export type LivingHistoryRestoreOperations = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function unwrapStoredLivingHistory(value: unknown): unknown | null {
+  if (value === null || !isRecord(value) || value.spec !== STORED_LIVING_HISTORY_SPEC) return value;
+  if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('result' in value)) {
+    throw new Error('stored living-history envelope is invalid');
+  }
+  return value.result;
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -47,7 +61,13 @@ export async function loadStoredLivingHistory(): Promise<unknown | null> {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(ACTIVE_HISTORY_KEY);
-      request.onsuccess = () => resolve(request.result ?? null);
+      request.onsuccess = () => {
+        try {
+          resolve(unwrapStoredLivingHistory(request.result ?? null));
+        } catch (cause) {
+          reject(cause);
+        }
+      };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB living-history read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB living-history read aborted'));
     });
@@ -56,17 +76,24 @@ export async function loadStoredLivingHistory(): Promise<unknown | null> {
   }
 }
 
-export async function saveStoredLivingHistory(result: LivingHistoryResult): Promise<void> {
+export async function saveStoredLivingHistory(result: LivingHistoryResult): Promise<string> {
   const normalized = normalizeLivingHistoryResult(result);
+  const writeId = globalThis.crypto.randomUUID();
+  const envelope: StoredLivingHistoryEnvelope = {
+    spec: STORED_LIVING_HISTORY_SPEC,
+    writeId,
+    result: normalized
+  };
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
-      transaction.objectStore(STORE_NAME).put(normalized, ACTIVE_HISTORY_KEY);
+      transaction.objectStore(STORE_NAME).put(envelope, ACTIVE_HISTORY_KEY);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB living-history write failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB living-history write aborted'));
     });
+    return writeId;
   } finally {
     database.close();
   }
@@ -87,8 +114,8 @@ export async function clearStoredLivingHistory(): Promise<void> {
   }
 }
 
-export async function clearStoredLivingHistoryIfResult(result: LivingHistoryResult): Promise<void> {
-  const normalized = normalizeLivingHistoryResult(result);
+export async function clearStoredLivingHistoryIfWriteId(writeId: string): Promise<void> {
+  if (!writeId || writeId.length > 200) throw new Error('living-history write ID is invalid');
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -97,7 +124,11 @@ export async function clearStoredLivingHistoryIfResult(result: LivingHistoryResu
       const request = store.get(ACTIVE_HISTORY_KEY);
       request.onsuccess = () => {
         const candidate = request.result;
-        if (isRecord(candidate) && livingHistoryResultsMatch(candidate, normalized)) {
+        if (
+          isRecord(candidate)
+          && candidate.spec === STORED_LIVING_HISTORY_SPEC
+          && candidate.writeId === writeId
+        ) {
           store.delete(ACTIVE_HISTORY_KEY);
         }
       };
@@ -117,9 +148,9 @@ export async function commitLivingHistoryResult(
 ): Promise<boolean> {
   const normalized = normalizeLivingHistoryResult(result);
   if (!operations.isCurrent()) return false;
-  await operations.save(normalized);
+  const writeId = await operations.save(normalized);
   if (!operations.isCurrent()) {
-    await operations.discard(normalized);
+    await operations.discard(writeId);
     return false;
   }
   operations.install(normalized);

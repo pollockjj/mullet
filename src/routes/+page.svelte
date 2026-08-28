@@ -54,7 +54,7 @@
   } from '$lib/living-history-client';
   import {
     clearStoredLivingHistory,
-    clearStoredLivingHistoryIfResult,
+    clearStoredLivingHistoryIfWriteId,
     commitLivingHistoryResult,
     loadStoredLivingHistory,
     restoreLivingHistoryResult,
@@ -713,7 +713,7 @@
         await commitLivingHistoryResult(result, {
           save: saveStoredLivingHistory,
           isCurrent,
-          discard: clearStoredLivingHistoryIfResult,
+          discard: clearStoredLivingHistoryIfWriteId,
           install: (current) => {
             livingHistoryResult = current;
             livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > current.source.messageCount);
