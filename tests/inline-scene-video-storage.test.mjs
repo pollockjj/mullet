@@ -158,6 +158,34 @@ test('discards corrupt motion inside its restore lock without touching static st
   assert.equal(staticScenePresent, true);
 });
 
+test('discards a malformed writer envelope inside its restore lock', async () => {
+  let lockHeld = false;
+  let discardedInsideLock = false;
+  await assert.rejects(
+    restoreStoredInlineSceneVideo({
+      exclusive: async (operation) => {
+        lockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          lockHeld = false;
+        }
+      },
+      load: async () => ({
+        spec: STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC,
+        writeId: '',
+        video: stored()
+      }),
+      discardInvalid: async () => { discardedInsideLock = lockHeld; },
+      isCurrent: () => true,
+      accepts: () => true,
+      install: () => assert.fail('malformed envelope installed')
+    }),
+    StoredInlineSceneVideoIntegrityError
+  );
+  assert.equal(discardedInsideLock, true);
+});
+
 test('restores only accepted current motion and installs before releasing the lock', async () => {
   let lockHeld = false;
   let installedWhileLocked = false;

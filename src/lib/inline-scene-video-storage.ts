@@ -216,7 +216,7 @@ export async function loadStoredInlineSceneVideo(): Promise<unknown | null> {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(ACTIVE_VIDEO_KEY);
-      request.onsuccess = () => resolve(unwrapStoredInlineSceneVideo(request.result ?? null));
+      request.onsuccess = () => resolve(request.result ?? null);
       request.onerror = () => reject(request.error ?? new Error('IndexedDB inline-scene video read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video read aborted'));
     });
@@ -327,7 +327,7 @@ export async function restoreStoredInlineSceneVideo(
     if (!operations.isCurrent() || stored === null) return null;
     let verified: StoredInlineSceneVideo;
     try {
-      verified = await verifyStoredInlineSceneVideo(stored);
+      verified = await verifyStoredInlineSceneVideo(unwrapStoredInlineSceneVideo(stored));
     } catch (cause) {
       await operations.discardInvalid();
       throw new StoredInlineSceneVideoIntegrityError(cause);
