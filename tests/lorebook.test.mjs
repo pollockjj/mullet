@@ -71,7 +71,8 @@ test('matches the operator SillyTavern lore settings and UI ranges', async () =>
     maxContextTokens: 262_144,
     budgetCap: 0,
     maxRecursionSteps: 0,
-    useGroupScoring: false
+    useGroupScoring: false,
+    characterStrategy: 1
   });
   assert.equal((await scanLorebooks([], [], DEFAULT_LOREBOOK_SETTINGS)).budgetTokens, 65_536);
   const defaultPromptContext = lorePromptContextTokens(262_144, 8_096);
@@ -86,11 +87,35 @@ test('matches the operator SillyTavern lore settings and UI ranges', async () =>
   assert.equal(resolveLorebookSettings({ minActivationsDepthMax: 100 }).minActivationsDepthMax, 100);
   assert.equal(resolveLorebookSettings({ budgetPercent: 1 }).budgetPercent, 1);
   assert.equal(resolveLorebookSettings({ budgetPercent: 100 }).budgetPercent, 100);
+  assert.equal(resolveLorebookSettings({}).characterStrategy, 1);
+  assert.equal(resolveLorebookSettings({ characterStrategy: 0 }).characterStrategy, 0);
+  assert.equal(resolveLorebookSettings({ characterStrategy: 2 }).characterStrategy, 2);
   assert.equal(resolveLorebookSettings({ maxContextTokens: 999 }).maxContextTokens, 262_144);
   assert.throws(() => resolveLorebookSettings({ scanDepth: 1001 }), /between 0 and 1000/);
   assert.throws(() => resolveLorebookSettings({ minActivations: 101 }), /between 0 and 100/);
   assert.throws(() => resolveLorebookSettings({ minActivationsDepthMax: -1 }), /between 0 and 100/);
   assert.throws(() => resolveLorebookSettings({ budgetPercent: 0 }), /between 1 and 100/);
+  assert.throws(() => resolveLorebookSettings({ characterStrategy: -1 }), /between 0 and 2/);
+  assert.throws(() => resolveLorebookSettings({ characterStrategy: 3 }), /between 0 and 2/);
+});
+
+test('matches SillyTavern embedded-character and imported-global insertion strategies', async () => {
+  const embedded = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Character lore', constant: true, group: 'source-choice', order: 10, content: 'CHARACTER' })
+  ], 'Character book', 'embedded');
+  const imported = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Global lore', constant: true, group: 'source-choice', order: 100, content: 'GLOBAL' })
+  ], 'Global book', 'imported');
+  const options = { random: () => 0 };
+
+  const characterFirst = await scanLorebooks([embedded, imported], [], { recursive: false, characterStrategy: 1 }, options);
+  assert.deepEqual(characterFirst.activated.map((entry) => entry.name), ['Character lore']);
+
+  const globalFirst = await scanLorebooks([embedded, imported], [], { recursive: false, characterStrategy: 2 }, options);
+  assert.deepEqual(globalFirst.activated.map((entry) => entry.name), ['Global lore']);
+
+  const evenly = await scanLorebooks([embedded, imported], [], { recursive: false, characterStrategy: 0 }, options);
+  assert.deepEqual(evenly.activated.map((entry) => entry.name), ['Global lore']);
 });
 
 test('normalizes native ST, canonical Character Book, and lorebook_v3 without losing raw fields', () => {
