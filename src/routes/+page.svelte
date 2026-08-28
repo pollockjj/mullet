@@ -506,6 +506,9 @@
     portraitMegapixels
   );
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
+  $: portraitDisplayAspectRatio = expressionsEnabled && generatedPortraitUrl && generatedPortrait
+    ? `${generatedPortrait.width} / ${generatedPortrait.height}`
+    : '3 / 4';
   $: portraitVideoRequest = currentPortraitVideoRequest(
     generatedPortrait,
     portraitCurrent,
@@ -3834,7 +3837,7 @@
 
   <main>
     <aside class:assistant-mode={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}>
-      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || generatedPortraitUrl} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl} class="portrait">
+      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || generatedPortraitUrl} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl} class="portrait" style:--portrait-aspect-ratio={portraitDisplayAspectRatio}>
         {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
           <span class="initial">A</span>
         {:else if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
@@ -4590,7 +4593,7 @@
   aside.assistant-mode > .lore-panel,
   aside.assistant-mode > .persona-field { display: none; }
   aside.assistant-mode .portrait { aspect-ratio: 3 / 1; min-height: 96px; }
-  .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
+  .portrait { aspect-ratio: var(--portrait-aspect-ratio, 3 / 4); flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
   .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
   .portrait.generated { border-color: #49614d; }
