@@ -4342,6 +4342,27 @@
   .scenario p { max-height: 7.75em; overflow-y: auto; margin: 0; color: #968e84; font-size: 12px; line-height: 1.55; }
   .card-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .card-facts span { padding: 4px 7px; border: 1px solid #3d3730; border-radius: 999px; color: #817970; background: #191714; font: 9px/1 ui-monospace, monospace; }
+  .assistant-memory-panel { display: grid; gap: 8px; padding: 11px; border: 1px solid #3b463b; border-radius: 10px; background: #171c18; }
+  .assistant-memory-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .assistant-memory-heading > div { min-width: 0; display: grid; gap: 3px; }
+  .assistant-memory-heading strong { color: #c4d4c5; font-size: 11px; }
+  .assistant-memory-heading > small { color: #829184; font: 9px/1 ui-monospace, monospace; }
+  .assistant-memory-panel > p { margin: 0; color: #829184; font-size: 9px; line-height: 1.45; }
+  .assistant-memory-counts { display: flex; flex-wrap: wrap; gap: 5px; }
+  .assistant-memory-counts span { padding: 4px 6px; border: 1px solid #344037; border-radius: 999px; color: #9daf9f; background: #141916; font: 8px/1 ui-monospace, monospace; }
+  .assistant-memory-panel details { color: #8f9d91; font-size: 9px; }
+  .assistant-memory-panel summary { cursor: pointer; }
+  .assistant-memory-panel ul { display: grid; max-height: 14em; overflow-y: auto; gap: 6px; margin: 7px 0 0; padding: 0; list-style: none; }
+  .assistant-memory-panel li { display: grid; gap: 2px; padding: 6px; border: 1px solid #344037; border-radius: 7px; background: #141916; }
+  .assistant-memory-panel li strong { color: #9daf9f; font: 8px/1.3 ui-monospace, monospace; }
+  .assistant-memory-panel li span { color: #c2ccc3; font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
+  .assistant-memory-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .assistant-memory-actions button { padding: 7px; border: 1px solid #4a4239; border-radius: 7px; color: #a99f95; background: #1b1815; font-size: 9px; font-weight: 700; cursor: pointer; }
+  .assistant-memory-actions button:only-child { grid-column: 1 / -1; }
+  .assistant-memory-actions button.retry { border-color: #49614d; color: #b6d3ba; background: #19221b; }
+  .assistant-memory-actions button:disabled { opacity: .4; cursor: default; }
+  .assistant-memory-fired { color: #8b7770; font-size: 8px; line-height: 1.4; }
+  .assistant-memory-fired.active { color: #83b28a; }
   .eyebrow { color: #d69d5a; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
   .file-input { display: none; }
   .card-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
