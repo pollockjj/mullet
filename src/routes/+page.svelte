@@ -94,6 +94,7 @@
   } from '$lib/sidecar';
   import { loadStoredSidecarState, saveStoredSidecarState } from '$lib/sidecar-storage';
   import { serializeChatRequest } from '$lib/chat-request-size';
+  import { assertFinalizedChatStream, parseChatStreamPayload } from '$lib/chat-stream';
   import {
     isScenarioCard,
     normalizeScenarioCatalog,
@@ -1302,20 +1303,18 @@
           if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
           if (!payload) continue;
-          if (payload === '[DONE]') {
-            terminalEventSeen = true;
-            continue;
-          }
-          const event = JSON.parse(payload);
+          const streamPayload = parseChatStreamPayload(payload);
+          terminalEventSeen ||= streamPayload.terminal;
+          if (streamPayload.done) continue;
+          const event = streamPayload.event as Record<string, any>;
           if (event?.mullet?.loreTimedState !== undefined) {
             loreTimedState = normalizeLoreTimedState(event.mullet.loreTimedState);
             persistLoreTimedState();
             continue;
           }
-          if (typeof event?.choices?.[0]?.finish_reason === 'string') terminalEventSeen = true;
-          if (event?.choices?.[0]?.finish_reason === 'length') hitTokenLimit = true;
-          const token = event?.choices?.[0]?.delta?.content;
-          if (typeof token !== 'string' || token.length === 0) continue;
+          hitTokenLimit ||= streamPayload.hitTokenLimit;
+          const token = streamPayload.token;
+          if (!token) continue;
           const last = messages.at(-1);
           if (last?.role === 'assistant') {
             last.content += token;
@@ -1325,8 +1324,7 @@
         }
       }
 
-      if (!terminalEventSeen) throw new Error('The local model stream ended without a terminal event.');
-      if (messages.at(-1)?.content.trim().length === 0) throw new Error('The local model returned an empty response.');
+      assertFinalizedChatStream(terminalEventSeen, messages.at(-1)?.content ?? '');
       persist();
       completedResponse = true;
       if (hitTokenLimit) noticeMessage = `Stopped at the ${tokenLimit}-token response limit.`;
