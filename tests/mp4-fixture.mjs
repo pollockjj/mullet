@@ -23,13 +23,22 @@ function box(type, payload) {
   return concat([uint32(payload.byteLength + 8), text(type), payload]);
 }
 
-function trackHeader(width, height) {
+function trackHeader(width, height, presentationDuration) {
   const payload = new Uint8Array(84);
   const view = new DataView(payload.buffer);
   view.setUint32(12, 1, false);
+  view.setUint32(20, presentationDuration, false);
   view.setUint32(76, width * 65_536, false);
   view.setUint32(80, height * 65_536, false);
   return box('tkhd', payload);
+}
+
+function movieHeader(timescale, duration) {
+  const payload = new Uint8Array(20);
+  const view = new DataView(payload.buffer);
+  view.setUint32(12, timescale, false);
+  view.setUint32(16, duration, false);
+  return box('mvhd', payload);
 }
 
 function mediaHeader(timescale, duration) {
@@ -78,7 +87,8 @@ function track({
   frames,
   timingEntries,
   sampleSize = 1,
-  includeSamples = true
+  includeSamples = true,
+  presentationDuration
 }) {
   const sampleTableParts = [sampleDescription(codec)];
   if (includeSamples) {
@@ -87,7 +97,7 @@ function track({
   const stbl = box('stbl', concat(sampleTableParts));
   const minf = box('minf', stbl);
   const mdia = box('mdia', concat([mediaHeader(timescale, duration), handler(handlerType), minf]));
-  return box('trak', concat([trackHeader(width, height), mdia]));
+  return box('trak', concat([trackHeader(width, height, presentationDuration), mdia]));
 }
 
 export function buildH264AacMp4Fixture({
@@ -100,11 +110,14 @@ export function buildH264AacMp4Fixture({
   includeAudioSamples = true,
   audioTimingEntries = [{ count: 162, delta: 1_024 }, { count: 1, delta: 470 }],
   audioSampleSize = 1,
-  audioHeaderDuration
+  audioHeaderDuration,
+  audioPresentationDuration
 } = {}) {
   const timescale = 12_288;
   const delta = Math.round(timescale / fps);
   const duration = frames * delta;
+  const movieTimescale = 1_000;
+  const movieDuration = Math.round(frames / fps * movieTimescale);
   const ftyp = box('ftyp', concat([text('isom'), uint32(0), text('isom'), text('iso2'), text('avc1'), text('mp41')]));
   const video = track({
     handlerType: 'vide',
@@ -114,7 +127,8 @@ export function buildH264AacMp4Fixture({
     timescale,
     duration,
     frames,
-    timingEntries: [{ count: frames, delta }]
+    timingEntries: [{ count: frames, delta }],
+    presentationDuration: movieDuration
   });
   const audioTimescale = 32_000;
   const audioFrames = audioTimingEntries.reduce((total, entry) => total + entry.count, 0);
@@ -130,9 +144,13 @@ export function buildH264AacMp4Fixture({
     frames: audioFrames,
     timingEntries: audioTimingEntries,
     sampleSize: audioSampleSize,
-    includeSamples: includeAudioSamples
+    includeSamples: includeAudioSamples,
+    presentationDuration: audioPresentationDuration ?? movieDuration
   });
-  const moov = box('moov', includeAudio ? concat([video, audio]) : video);
+  const moov = box('moov', concat([
+    movieHeader(movieTimescale, movieDuration),
+    ...(includeAudio ? [video, audio] : [video])
+  ]));
   const mdat = box('mdat', Uint8Array.from([1]));
   return concat([ftyp, moov, mdat]);
 }

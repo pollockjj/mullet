@@ -16,7 +16,8 @@ test('reads H.264 video and AAC audio metadata from MP4 bytes', () => {
     fps: 24,
     durationSeconds: 124 / 24,
     audioSampleCount: 163,
-    audioDurationSeconds: 166_358 / 32_000
+    audioDurationSeconds: 166_358 / 32_000,
+    presentationDurationSeconds: 5.167
   });
 });
 
@@ -32,6 +33,9 @@ test('rejects MP4 with wrong dimensions, frame count, frame rate, codec, or miss
   assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({
     audioTimingEntries: [{ count: 100, delta: 1_024 }]
   }), expected), /not synchronized/);
+  assert.throws(() => validateH264AacMp4(buildH264AacMp4Fixture({
+    audioPresentationDuration: 1_000
+  }), expected), /presentation durations/);
   assert.throws(() => validateH264AacMp4(Uint8Array.from([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]), expected), /truncated/);
 });
 

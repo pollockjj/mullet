@@ -8,6 +8,7 @@ export type Mp4VideoMetadata = {
   durationSeconds: number;
   audioSampleCount: number;
   audioDurationSeconds: number;
+  presentationDurationSeconds: number;
 };
 
 export type ExpectedMp4Video = {
@@ -32,6 +33,7 @@ type Track = {
   codec: string;
   width: number;
   height: number;
+  presentationDuration: number;
   timescale: number;
   duration: number;
   sampleCount: number;
@@ -107,24 +109,27 @@ function fullBoxVersion(bytes: Uint8Array, box: Box, name: string): number {
   return bytes[box.dataStart];
 }
 
-function mediaTiming(bytes: Uint8Array, mdhd: Box): { timescale: number; duration: number } {
-  const version = fullBoxVersion(bytes, mdhd, 'media header');
+function fullBoxTiming(bytes: Uint8Array, box: Box, name: string): { timescale: number; duration: number } {
+  const version = fullBoxVersion(bytes, box, name);
   if (version === 0) {
     return {
-      timescale: uint32(bytes, mdhd.dataStart + 12, 'media timescale'),
-      duration: uint32(bytes, mdhd.dataStart + 16, 'media duration')
+      timescale: uint32(bytes, box.dataStart + 12, name + ' timescale'),
+      duration: uint32(bytes, box.dataStart + 16, name + ' duration')
     };
   }
   if (version === 1) {
     return {
-      timescale: uint32(bytes, mdhd.dataStart + 20, 'media timescale'),
-      duration: uint64(bytes, mdhd.dataStart + 24, 'media duration')
+      timescale: uint32(bytes, box.dataStart + 20, name + ' timescale'),
+      duration: uint64(bytes, box.dataStart + 24, name + ' duration')
     };
   }
-  throw new Error('MP4 media header version is unsupported');
+  throw new Error('MP4 ' + name + ' version is unsupported');
 }
 
-function trackDimensions(bytes: Uint8Array, tkhd: Box): { width: number; height: number } {
+function trackHeaderMetadata(
+  bytes: Uint8Array,
+  tkhd: Box
+): { width: number; height: number; presentationDuration: number } {
   const version = fullBoxVersion(bytes, tkhd, 'track header');
   const minimumLength = version === 0 ? 84 : version === 1 ? 96 : 0;
   if (minimumLength === 0 || tkhd.dataEnd - tkhd.dataStart < minimumLength) {
@@ -135,7 +140,11 @@ function trackDimensions(bytes: Uint8Array, tkhd: Box): { width: number; height:
   if (widthFixed % 65_536 !== 0 || heightFixed % 65_536 !== 0) {
     throw new Error('MP4 track dimensions are not integral');
   }
-  return { width: widthFixed / 65_536, height: heightFixed / 65_536 };
+  const presentationDuration = version === 0
+    ? uint32(bytes, tkhd.dataStart + 20, 'track presentation duration')
+    : uint64(bytes, tkhd.dataStart + 28, 'track presentation duration');
+  if (presentationDuration < 1) throw new Error('MP4 track presentation duration is invalid');
+  return { width: widthFixed / 65_536, height: heightFixed / 65_536, presentationDuration };
 }
 
 function sampleDescriptionCodec(bytes: Uint8Array, stsd: Box, budget: ParseBudget): string {
@@ -187,10 +196,10 @@ function sampleSizeCount(bytes: Uint8Array, stsz: Box): number {
 
 function parseTrack(bytes: Uint8Array, trak: Box, budget: ParseBudget): Track {
   const children = childBoxes(bytes, trak, budget);
-  const dimensions = trackDimensions(bytes, exactlyOne(children, 'tkhd', 'track header'));
+  const header = trackHeaderMetadata(bytes, exactlyOne(children, 'tkhd', 'track header'));
   const mdia = exactlyOne(children, 'mdia', 'media box');
   const mediaChildren = childBoxes(bytes, mdia, budget);
-  const timing = mediaTiming(bytes, exactlyOne(mediaChildren, 'mdhd', 'media header'));
+  const timing = fullBoxTiming(bytes, exactlyOne(mediaChildren, 'mdhd', 'media header'), 'media header');
   if (timing.timescale < 1 || timing.duration < 1) throw new Error('MP4 media timing is invalid');
   const hdlr = exactlyOne(mediaChildren, 'hdlr', 'media handler');
   if (hdlr.dataEnd - hdlr.dataStart < 12) throw new Error('MP4 media handler is truncated');
@@ -201,12 +210,12 @@ function parseTrack(bytes: Uint8Array, trak: Box, budget: ParseBudget): Track {
   const sampleChildren = childBoxes(bytes, stbl, budget);
   const codec = sampleDescriptionCodec(bytes, exactlyOne(sampleChildren, 'stsd', 'sample description'), budget);
   if (handler !== 'vide' && handler !== 'soun') {
-    return { handler, codec, ...dimensions, ...timing, sampleCount: 0, sampleDuration: 0 };
+    return { handler, codec, ...header, ...timing, sampleCount: 0, sampleDuration: 0 };
   }
   const samples = sampleTiming(bytes, exactlyOne(sampleChildren, 'stts', 'time-to-sample table'));
   const sizeCount = sampleSizeCount(bytes, exactlyOne(sampleChildren, 'stsz', 'sample-size table'));
   if (sizeCount !== samples.sampleCount) throw new Error('MP4 media sample tables disagree');
-  return { handler, codec, ...dimensions, ...timing, ...samples };
+  return { handler, codec, ...header, ...timing, ...samples };
 }
 
 export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video): Mp4VideoMetadata {
@@ -238,7 +247,10 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
   if (mediaData.length < 1 || mediaData.every((entry) => entry.dataEnd === entry.dataStart)) {
     throw new Error('MP4 contains no media data');
   }
-  const tracks = childBoxes(bytes, moov, budget)
+  const movieChildren = childBoxes(bytes, moov, budget);
+  const movieTiming = fullBoxTiming(bytes, exactlyOne(movieChildren, 'mvhd', 'movie header'), 'movie header');
+  if (movieTiming.timescale < 1 || movieTiming.duration < 1) throw new Error('MP4 movie timing is invalid');
+  const tracks = movieChildren
     .filter((entry) => entry.type === 'trak')
     .map((entry) => parseTrack(bytes, entry, budget));
   const videoTracks = tracks.filter((track) => track.handler === 'vide');
@@ -268,6 +280,14 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
   if (Math.abs(audioDurationSeconds - durationSeconds) > 1 / expectedFps) {
     throw new Error('MP4 audio duration is not synchronized with the video');
   }
+  if (
+    video.presentationDuration !== movieTiming.duration
+    || audio.presentationDuration !== video.presentationDuration
+  ) throw new Error('MP4 track presentation durations are not synchronized');
+  const presentationDurationSeconds = movieTiming.duration / movieTiming.timescale;
+  if (Math.abs(presentationDurationSeconds - durationSeconds) > 1 / movieTiming.timescale) {
+    throw new Error('MP4 presentation duration does not match the video');
+  }
   return {
     videoCodec: video.codec,
     audioCodec: 'mp4a',
@@ -277,6 +297,7 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
     fps: expectedFps,
     durationSeconds,
     audioSampleCount: audio.sampleCount,
-    audioDurationSeconds
+    audioDurationSeconds,
+    presentationDurationSeconds
   };
 }
