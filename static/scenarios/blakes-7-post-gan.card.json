@@ -36,7 +36,7 @@
       "mullet": {
         "kind": "scenario",
         "scenario_id": "blakes-7-post-gan",
-        "scenario_version": "1.0.1",
+        "scenario_version": "1.0.2",
         "mode": "ensemble",
         "canon_gate": "Immediately after Pressure Point",
         "user_definition": "female_she_her",
@@ -65,11 +65,34 @@
         "mullet": {
           "kind": "scenario",
           "scenario_id": "blakes-7-post-gan",
-          "scenario_version": "1.0.1",
+          "scenario_version": "1.0.2",
           "canon_gate": "Immediately after Pressure Point",
           "canon_through": "Pressure Point",
           "spoiler_policy": "Later events are neither known nor inevitable.",
-          "user_definition": "female_she_her"
+          "user_definition": "female_she_her",
+          "portrait_cast_v1": {
+            "spec": "mullet_portrait_cast_v1",
+            "default_profile_id": "jenna-stannis",
+            "profiles": [
+              {
+                "id": "jenna-stannis",
+                "display_name": "Jenna Stannis",
+                "aliases": ["Jenna", "Jenna Stannis", "Stannis"],
+                "visual_profile": {
+                  "subject": "Sally Knyvette portraying Jenna Stannis in the 1979 BBC television series Blake's 7, a British woman aged twenty-eight with an oval face, high cheekbones, pale blue-green eyes, and voluminous shoulder-length honey-blonde feathered 1970s hair",
+                  "attire": "Jenna's fitted burgundy, maroon, and silver-grey leather spaceflight tunic with angular panels, wide lapels, and her sculpted silver necklace",
+                  "setting": "the Liberator flight deck with cream geometric walls, glowing colored control panels, and restrained 1970s BBC retrofuturist production design",
+                  "model_template": "qwen-image-edit-2511-reference-v1",
+                  "reference_image": {
+                    "name": "jenna-stannis-v1.jpg",
+                    "subfolder": "mullet/identity",
+                    "type": "input",
+                    "sha256": "c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8"
+                  }
+                }
+              }
+            ]
+          }
         }
       },
       "entries": [
@@ -149,7 +172,8 @@
           "extensions": {
             "mullet": {
               "kind": "character",
-              "timeline": "post-pressure-point"
+              "timeline": "post-pressure-point",
+              "character_id": "jenna-stannis"
             }
           }
         },
