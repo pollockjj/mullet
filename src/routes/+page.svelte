@@ -147,6 +147,7 @@
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
+    PORTRAIT_VIDEO_MODE_GENERATED_FLF,
     PORTRAIT_VIDEO_MODE_I2V,
     PORTRAIT_VIDEO_MODES,
     PORTRAIT_VIDEO_TIMEOUT_MS,
@@ -1797,6 +1798,10 @@
         throw new Error(detail);
       }
       portraitVideoCapabilities = normalizePortraitVideoCapabilities(payload);
+      if (!portraitVideoCapabilities.modes.some(({ id }) => id === portraitVideoMode)) {
+        portraitVideoMode = PORTRAIT_VIDEO_MODE_I2V;
+        localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
+      }
     } catch (cause) {
       portraitVideoCapabilities = null;
       portraitVideoError = cause instanceof Error ? cause.message : 'Portrait-motion generator is unavailable.';
@@ -1901,6 +1906,34 @@
       }
       const videoSha256 = responseHeaderSha256(response, 'x-mullet-video-sha256');
       if (await blobSha256(video) !== videoSha256) throw new Error('Portrait-motion response hash does not match its video.');
+      const endFrameHeaderNames = [
+        'x-mullet-end-frame-model-template',
+        'x-mullet-end-frame-prompt-id',
+        'x-mullet-end-frame-seed',
+        'x-mullet-end-frame-width',
+        'x-mullet-end-frame-height',
+        'x-mullet-end-frame-sha256'
+      ];
+      const endFrame = selectedRequest.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
+        ? {
+            modelTemplate: response.headers.get('x-mullet-end-frame-model-template') ?? '',
+            promptId: response.headers.get('x-mullet-end-frame-prompt-id') ?? '',
+            seed: responseHeaderInteger(response, 'x-mullet-end-frame-seed', 0, Number.MAX_SAFE_INTEGER),
+            width: responseHeaderInteger(response, 'x-mullet-end-frame-width', 16, 8192),
+            height: responseHeaderInteger(response, 'x-mullet-end-frame-height', 16, 8192),
+            imageSha256: responseHeaderSha256(response, 'x-mullet-end-frame-sha256')
+          }
+        : null;
+      if (endFrame) {
+        if (
+          endFrame.modelTemplate !== selectedRequest.endFrameModelTemplate
+          || endFrame.width !== selectedRequest.source.portraitWidth
+          || endFrame.height !== selectedRequest.source.portraitHeight
+          || endFrame.imageSha256 === inputImageSha256
+        ) throw new Error('Portrait-motion end-frame provenance does not match its request.');
+      } else if (endFrameHeaderNames.some((name) => response.headers.has(name))) {
+        throw new Error('Portrait-motion response included an end frame for the wrong mode.');
+      }
       const stored = normalizeStoredPortraitVideo({
         spec: STORED_PORTRAIT_VIDEO_SPEC,
         conversationId: selectedRequest.source.conversationId,
@@ -1917,6 +1950,7 @@
         durationSeconds: responseHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
         generatedAt: Date.now(),
         inputImageSha256,
+        endFrame,
         videoSha256,
         video
       });
@@ -3204,7 +3238,7 @@
         <div class="portrait-heading">
           <div>
             <span class="eyebrow">Portrait motion</span>
-            <strong>{portraitVideoBusy ? 'Animating…' : portraitVideoError ? 'Static fallback' : portraitVideoCurrent ? 'Current loop' : generatedPortraitVideo ? 'Stale' : 'No loop yet'}</strong>
+            <strong>{portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoError ? 'Static fallback' : portraitVideoCurrent ? 'Current motion' : generatedPortraitVideo ? 'Stale' : 'No motion yet'}</strong>
           </div>
           <label class="toggle">
             <input
@@ -3234,14 +3268,22 @@
               <option value={portraitVideoCapabilities.template.id}>{portraitVideoCapabilities.template.label}</option>
             </select>
           </label>
-          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · 49 frames @ 24 FPS · 2-second motion span · looping VP9 WebM</small>
+          {#if portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && portraitVideoCapabilities.endFrameTemplate}
+            <label>
+              <span>End-frame image model</span>
+              <select value={portraitVideoCapabilities.endFrameTemplate.id} disabled={portraitVideoBusy} aria-label="Portrait end-frame image model">
+                <option value={portraitVideoCapabilities.endFrameTemplate.id}>{portraitVideoCapabilities.endFrameTemplate.label}</option>
+              </select>
+            </label>
+          {/if}
+          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · 49 frames @ 24 FPS · 2-second motion span · {portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'A→B VP9 WebM' : 'looping VP9 WebM'}</small>
           {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button
             on:click={() => void generatePortraitVideo()}
             disabled={portraitVideoBusy || portraitBusy || !portraitVideoRequest || !portraitMotionEnabled || !expressionsEnabled || !portraitVideoPersistenceAvailable}
           >
-            {portraitVideoBusy ? 'Animating…' : portraitVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
+            {portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
           </button>
           {#if !portraitMotionEnabled}<small>Turn on Portrait motion to animate each current expression portrait.</small>{/if}
           {#if portraitMotionEnabled && !generatedPortrait}<small>A current Comfy portrait is required before motion starts.</small>{/if}
