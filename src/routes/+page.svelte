@@ -153,16 +153,18 @@
   } from '$lib/portrait-storage';
   import {
     PORTRAIT_VIDEO_DURATION_SECONDS,
+    PORTRAIT_VIDEO_DURATIONS,
     PORTRAIT_VIDEO_FPS,
-    PORTRAIT_VIDEO_FRAMES,
     PORTRAIT_VIDEO_MODE_GENERATED_FLF,
     PORTRAIT_VIDEO_MODE_LOOP_FLF,
     PORTRAIT_VIDEO_MODES,
     PORTRAIT_VIDEO_TIMEOUT_MS,
     buildPortraitVideoRequest,
     normalizePortraitVideoCapabilities,
+    portraitVideoDimensions,
     portraitVideoRequestKey,
     type PortraitVideoCapabilities,
+    type PortraitVideoDurationSeconds,
     type PortraitVideoMode,
     type PortraitVideoRequest
   } from '$lib/portrait-video';
@@ -292,6 +294,8 @@
   let portraitController: AbortController | null = null;
   let portraitMotionEnabled = false;
   let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
+  let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
+  let portraitVideoTiming = portraitVideoDimensions('2:3', PORTRAIT_VIDEO_DURATION_SECONDS);
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
@@ -436,6 +440,7 @@
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
+  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v4';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
@@ -507,8 +512,10 @@
     portraitImageDigestPromptId,
     portraitImageSha256,
     portraitAspectRatio,
-    portraitVideoMode
+    portraitVideoMode,
+    portraitVideoDurationSeconds
   );
+  $: portraitVideoTiming = portraitVideoDimensions(portraitAspectRatio, portraitVideoDurationSeconds);
   $: portraitVideoCurrent = Boolean(
     generatedPortraitVideo
     && portraitVideoRequest
@@ -699,6 +706,10 @@
     portraitVideoMode = PORTRAIT_VIDEO_MODES.some(({ id }) => id === savedPortraitVideoMode)
       ? savedPortraitVideoMode as PortraitVideoMode
       : PORTRAIT_VIDEO_MODE_LOOP_FLF;
+    const savedPortraitVideoDuration = Number(localStorage.getItem(portraitVideoDurationStorageKey));
+    portraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATIONS.includes(savedPortraitVideoDuration as PortraitVideoDurationSeconds)
+      ? savedPortraitVideoDuration as PortraitVideoDurationSeconds
+      : PORTRAIT_VIDEO_DURATION_SECONDS;
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
     restorePortraitSettings();
@@ -1832,11 +1843,12 @@
     digestPromptId: string,
     imageSha256: string,
     aspectRatio: PortraitAspectRatio,
-    mode: PortraitVideoMode
+    mode: PortraitVideoMode,
+    durationSeconds: PortraitVideoDurationSeconds
   ): PortraitVideoRequest | null {
     if (!portrait || !staticCurrent || digestPromptId !== portrait.promptId || !imageSha256) return null;
     try {
-      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256, mode);
+      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256, mode, durationSeconds);
     } catch {
       return null;
     }
@@ -1855,7 +1867,8 @@
       portraitImageDigestPromptId,
       portraitImageSha256,
       portraitAspectRatio,
-      portraitVideoMode
+      portraitVideoMode,
+      portraitVideoDurationSeconds
     );
     return !signal?.aborted
       && generation === portraitVideoGeneration
@@ -1875,7 +1888,8 @@
       portraitImageDigestPromptId,
       portraitImageSha256,
       portraitAspectRatio,
-      portraitVideoMode
+      portraitVideoMode,
+      portraitVideoDurationSeconds
     );
     const restoredKey = restoredRequest ? portraitVideoRequestKey(restoredRequest) : '';
     try {
@@ -1889,7 +1903,8 @@
             portraitImageDigestPromptId,
             portraitImageSha256,
             portraitAspectRatio,
-            portraitVideoMode
+            portraitVideoMode,
+            portraitVideoDurationSeconds
           );
           return generation === portraitVideoGeneration
             && Boolean(restoredRequest && request && portraitVideoRequestKey(request) === restoredKey);
@@ -1956,6 +1971,10 @@
       if (!portraitVideoCapabilities.modes.some(({ id }) => id === portraitVideoMode)) {
         portraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
         localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
+      }
+      if (!portraitVideoCapabilities.durations.includes(portraitVideoDurationSeconds)) {
+        portraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
+        localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
       }
     } catch (cause) {
       portraitVideoCapabilities = null;
@@ -2150,6 +2169,21 @@
       portraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
     }
     localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoController = null;
+    portraitVideoBusy = false;
+    portraitVideoError = '';
+    lastPortraitVideoAttemptKey = '';
+    removeInstalledPortraitVideo();
+    if (portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
+  }
+
+  function persistPortraitVideoDuration() {
+    if (!PORTRAIT_VIDEO_DURATIONS.includes(portraitVideoDurationSeconds)) {
+      portraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
+    }
+    localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
     portraitVideoController = null;
@@ -4100,6 +4134,17 @@
               <option value={portraitVideoCapabilities.template.id}>{portraitVideoCapabilities.template.label}</option>
             </select>
           </label>
+          <label>
+            <span>Duration</span>
+            <select
+              bind:value={portraitVideoDurationSeconds}
+              on:change={persistPortraitVideoDuration}
+              disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
+              aria-label="Portrait video duration"
+            >
+              {#each portraitVideoCapabilities.durations as duration}<option value={duration}>{duration} seconds</option>{/each}
+            </select>
+          </label>
           {#if portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && portraitVideoCapabilities.endFrameTemplate}
             <label>
               <span>End-frame image model</span>
@@ -4108,7 +4153,7 @@
               </select>
             </label>
           {/if}
-          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · MiniMax H3 FL2VA · {PORTRAIT_VIDEO_FRAMES} frames @ {PORTRAIT_VIDEO_FPS} FPS · {PORTRAIT_VIDEO_DURATION_SECONDS.toFixed(3)}-second first-to-last span · {(PORTRAIT_VIDEO_FRAMES / PORTRAIT_VIDEO_FPS).toFixed(3)}-second H.264/AAC MP4</small>
+          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · MiniMax H3 FL2VA · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s encoded H.264/AAC MP4</small>
           {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button

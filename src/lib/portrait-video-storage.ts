@@ -1,7 +1,5 @@
 import {
-  PORTRAIT_VIDEO_DURATION_SECONDS,
   PORTRAIT_VIDEO_FPS,
-  PORTRAIT_VIDEO_FRAMES,
   PORTRAIT_END_FRAME_TEMPLATE_ID,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_TEMPLATE_ID,
@@ -9,6 +7,7 @@ import {
   portraitVideoDimensions,
   portraitVideoEndFrameSeed,
   portraitVideoRequestKey,
+  type PortraitVideoDurationSeconds,
   type PortraitVideoMode,
   type PortraitVideoRequest
 } from './portrait-video.ts';
@@ -36,9 +35,9 @@ export type StoredPortraitVideo = {
   seed: number;
   width: number;
   height: number;
-  frames: typeof PORTRAIT_VIDEO_FRAMES;
+  frames: number;
   fps: typeof PORTRAIT_VIDEO_FPS;
-  durationSeconds: typeof PORTRAIT_VIDEO_DURATION_SECONDS;
+  durationSeconds: PortraitVideoDurationSeconds;
   encodedDurationSeconds: number;
   generatedAt: number;
   inputImageSha256: string;
@@ -154,18 +153,18 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     throw new Error('stored portrait-video prompt ID is invalid');
   }
   const seed = safeInteger(value.seed, 'stored portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
-  const expected = portraitVideoDimensions(request.aspectRatio);
+  const expected = portraitVideoDimensions(request.aspectRatio, request.durationSeconds);
   const width = safeInteger(value.width, 'stored portrait-video width', 16, 8192);
   const height = safeInteger(value.height, 'stored portrait-video height', 16, 8192);
   if (width !== expected.width || height !== expected.height) throw new Error('stored portrait-video dimensions are invalid');
-  if (value.frames !== PORTRAIT_VIDEO_FRAMES || value.fps !== PORTRAIT_VIDEO_FPS || value.durationSeconds !== PORTRAIT_VIDEO_DURATION_SECONDS) {
+  if (value.frames !== expected.frames || value.fps !== expected.fps || value.durationSeconds !== request.durationSeconds) {
     throw new Error('stored portrait-video timing is invalid');
   }
   const encodedDurationSeconds = finiteNumber(
     value.encodedDurationSeconds,
     'stored portrait-video encoded duration',
-    PORTRAIT_VIDEO_DURATION_SECONDS,
-    PORTRAIT_VIDEO_DURATION_SECONDS + 1
+    request.durationSeconds,
+    request.durationSeconds + 1
   );
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored portrait-video input hash');
   if (inputImageSha256 !== request.source.portraitImageSha256) throw new Error('stored portrait-video input hash does not match its request');
@@ -185,9 +184,9 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     seed,
     width,
     height,
-    frames: PORTRAIT_VIDEO_FRAMES,
+    frames: expected.frames,
     fps: PORTRAIT_VIDEO_FPS,
-    durationSeconds: PORTRAIT_VIDEO_DURATION_SECONDS,
+    durationSeconds: request.durationSeconds,
     encodedDurationSeconds,
     generatedAt: safeInteger(value.generatedAt, 'stored portrait-video timestamp', 1, Number.MAX_SAFE_INTEGER),
     inputImageSha256,

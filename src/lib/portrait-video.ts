@@ -12,6 +12,7 @@ export const PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as cons
 export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-lightning-4step-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 3 as const;
+export const PORTRAIT_VIDEO_DURATIONS = Object.freeze([3, 5] as const);
 export const PORTRAIT_VIDEO_FPS = 24 as const;
 export const PORTRAIT_VIDEO_FRAMES = 73 as const;
 export const PORTRAIT_VIDEO_MODE_I2V = 'i2v' as const;
@@ -26,6 +27,7 @@ export const PORTRAIT_VIDEO_MODES = Object.freeze([
 
 export type PortraitVideoMode = (typeof PORTRAIT_VIDEO_MODES)[number]['id'];
 export type PortraitVideoModeDefinition = (typeof PORTRAIT_VIDEO_MODES)[number];
+export type PortraitVideoDurationSeconds = (typeof PORTRAIT_VIDEO_DURATIONS)[number];
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
   { aspectRatio: '2:3', width: 768, height: 1152 },
@@ -131,7 +133,7 @@ export type PortraitVideoRequest = {
   mode: PortraitVideoMode;
   source: PortraitVideoSource;
   aspectRatio: PortraitAspectRatio;
-  durationSeconds: typeof PORTRAIT_VIDEO_DURATION_SECONDS;
+  durationSeconds: PortraitVideoDurationSeconds;
 };
 
 export type PortraitVideoCapabilities = {
@@ -140,7 +142,7 @@ export type PortraitVideoCapabilities = {
   endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null;
   modes: readonly PortraitVideoModeDefinition[];
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
-  durations: readonly [typeof PORTRAIT_VIDEO_DURATION_SECONDS];
+  durations: typeof PORTRAIT_VIDEO_DURATIONS;
 };
 
 export type PortraitVideoInputPortrait = {
@@ -165,6 +167,10 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const INPUT_IMAGE_PATTERN = /^portrait-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const dimensionMap = new Map(PORTRAIT_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
+const durationFrameMap = new Map<PortraitVideoDurationSeconds, number>([
+  [3, PORTRAIT_VIDEO_FRAMES],
+  [5, 124]
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -184,13 +190,18 @@ function portraitDimensionsMatch(width: number, height: number, aspectRatio: Por
   });
 }
 
-export function portraitVideoDimensions(aspectRatio: PortraitAspectRatio): { width: number; height: number; frames: number; fps: number } {
+export function portraitVideoDimensions(
+  aspectRatio: PortraitAspectRatio,
+  durationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS
+): { width: number; height: number; frames: number; fps: number } {
   const dimensions = dimensionMap.get(aspectRatio);
   if (!dimensions) throw new Error('unsupported portrait-video aspect ratio');
+  const frames = durationFrameMap.get(durationSeconds);
+  if (!frames) throw new Error('unsupported portrait-video duration');
   return {
     width: dimensions.width,
     height: dimensions.height,
-    frames: PORTRAIT_VIDEO_FRAMES,
+    frames,
     fps: PORTRAIT_VIDEO_FPS
   };
 }
@@ -199,7 +210,8 @@ export function buildPortraitVideoRequest(
   portrait: PortraitVideoInputPortrait,
   aspectRatio: PortraitAspectRatio,
   imageSha256: string,
-  mode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF
+  mode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF,
+  durationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS
 ): PortraitVideoRequest {
   return normalizePortraitVideoRequest({
     spec: PORTRAIT_VIDEO_REQUEST_SPEC,
@@ -218,7 +230,7 @@ export function buildPortraitVideoRequest(
     },
     endFrameModelTemplate: mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? PORTRAIT_END_FRAME_TEMPLATE_ID : null,
     aspectRatio,
-    durationSeconds: PORTRAIT_VIDEO_DURATION_SECONDS
+    durationSeconds
   });
 }
 
@@ -256,7 +268,10 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
   if (typeof aspectRatio !== 'string' || !dimensionMap.has(aspectRatio as PortraitAspectRatio)) {
     throw new Error('unsupported portrait-video aspect ratio');
   }
-  if (value.durationSeconds !== PORTRAIT_VIDEO_DURATION_SECONDS) throw new Error('unsupported portrait-video duration');
+  const durationSeconds = value.durationSeconds;
+  if (typeof durationSeconds !== 'number' || !durationFrameMap.has(durationSeconds as PortraitVideoDurationSeconds)) {
+    throw new Error('unsupported portrait-video duration');
+  }
   const portraitWidth = integer(value.source.portraitWidth, 'portrait-video source width', 16, 8192);
   const portraitHeight = integer(value.source.portraitHeight, 'portrait-video source height', 16, 8192);
   if (!portraitDimensionsMatch(portraitWidth, portraitHeight, aspectRatio as PortraitAspectRatio)) {
@@ -279,7 +294,7 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
       portraitSource: value.source.portraitSource
     },
     aspectRatio: aspectRatio as PortraitAspectRatio,
-    durationSeconds: PORTRAIT_VIDEO_DURATION_SECONDS
+    durationSeconds: durationSeconds as PortraitVideoDurationSeconds
   };
 }
 
@@ -413,7 +428,7 @@ export function buildMiniMaxH3PortraitVideoWorkflow(
   const normalized = normalizePortraitVideoRequest(request);
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio);
+  const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio, normalized.durationSeconds);
   let lastFrame: [string, number] | null = null;
   if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF) {
     if (endFrameInput !== undefined) throw new Error('portrait-video loop mode does not accept a separate end frame');
@@ -488,12 +503,17 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   if (hasGeneratedEndFrame !== (isRecord(value.endFrameTemplate) && value.endFrameTemplate.id === PORTRAIT_END_FRAME_TEMPLATE_ID)) {
     throw new Error('invalid portrait-video end-frame template');
   }
+  if (
+    !Array.isArray(value.durations)
+    || value.durations.length !== PORTRAIT_VIDEO_DURATIONS.length
+    || !PORTRAIT_VIDEO_DURATIONS.every((duration, index) => value.durations[index] === duration)
+  ) throw new Error('invalid portrait-video durations');
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     template: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
     endFrameTemplate: hasGeneratedEndFrame ? QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE : null,
     modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
-    durations: [PORTRAIT_VIDEO_DURATION_SECONDS]
+    durations: PORTRAIT_VIDEO_DURATIONS
   };
 }

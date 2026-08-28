@@ -2,8 +2,7 @@ import {
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
   PORTRAIT_VIDEO_CAPABILITIES_SPEC,
   PORTRAIT_VIDEO_DIMENSIONS,
-  PORTRAIT_VIDEO_DURATION_SECONDS,
-  PORTRAIT_VIDEO_FRAMES,
+  PORTRAIT_VIDEO_DURATIONS,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
@@ -162,7 +161,15 @@ export async function loadPortraitVideoCapabilities(
   const maximumHeight = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ height }) => height));
   requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'width', maximumWidth, template.multiple);
   requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, template.multiple);
-  requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'length', PORTRAIT_VIDEO_FRAMES, 17);
+  for (const durationSeconds of PORTRAIT_VIDEO_DURATIONS) {
+    requireIntegerInput(
+      info.MiniMaxH3ImageToVideo,
+      'MiniMaxH3ImageToVideo',
+      'length',
+      portraitVideoDimensions('2:3', durationSeconds).frames,
+      17
+    );
+  }
   const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
   if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
   let endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null = null;
@@ -194,7 +201,7 @@ export async function loadPortraitVideoCapabilities(
     endFrameTemplate,
     modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
-    durations: [PORTRAIT_VIDEO_DURATION_SECONDS]
+    durations: PORTRAIT_VIDEO_DURATIONS
   };
 }
 
@@ -519,7 +526,7 @@ export async function runComfyPortraitVideo(
     if (bytes.byteLength < 12 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
       throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
     }
-    const dimensions = portraitVideoDimensions(request.aspectRatio);
+    const dimensions = portraitVideoDimensions(request.aspectRatio, request.durationSeconds);
     const metadata = validateH264AacMp4(bytes, {
       width: dimensions.width,
       height: dimensions.height,

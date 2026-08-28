@@ -115,7 +115,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       endFrameInput = await uploadPortraitVideoInput(fetch, baseUrl, endFrame.bytes, endFrame.sha256, signal);
     }
     const result = await runComfyPortraitVideo(fetch, baseUrl, portraitVideoRequest, input, seed, signal, endFrameInput);
-    const dimensions = portraitVideoDimensions(portraitVideoRequest.aspectRatio);
+    const dimensions = portraitVideoDimensions(portraitVideoRequest.aspectRatio, portraitVideoRequest.durationSeconds);
     const headers: Record<string, string> = {
       'content-type': result.contentType,
       'cache-control': 'no-store',
