@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LIVING_HISTORY_CHARACTER_LIMIT,
+  LIVING_HISTORY_EMPTY_STATE_FINGERPRINT,
   LIVING_HISTORY_MAX_SUMMARY_CHARS,
   LIVING_HISTORY_MAX_SUMMARY_WORDS,
   LIVING_HISTORY_MAX_TOKENS,
   LIVING_HISTORY_TIMEOUT_MS,
+  LIVING_HISTORY_MAX_CHARACTER_EVIDENCE,
+  LIVING_HISTORY_MAX_CHARACTER_STATE_CHARS,
   LIVING_HISTORY_MAX_QUOTE_CHARS,
   LIVING_HISTORY_MAX_QUOTE_BANK_CHARS,
   LIVING_HISTORY_INTERVAL_MESSAGES,
@@ -21,6 +25,7 @@ import {
   livingHistoryResultAppliesToMessages,
   livingHistoryResultsMatch,
   livingHistorySourceForMessages,
+  livingHistoryStateFingerprint,
   livingHistoryResultMatchesMessages,
   livingHistoryResultMatchesRequest,
   normalizeLivingHistoryRequest,
@@ -42,17 +47,21 @@ test('builds a bounded isolated latest-turn request without mutating canonical m
   assert.deepEqual(request.turns, messages.slice(1));
   assert.equal(request.previous.revision, 0);
   assert.deepEqual(request.previous.quotes, []);
+  assert.deepEqual(request.previous.characters, []);
   assert.deepEqual(normalizeLivingHistoryRequest(request), request);
   assert.equal(JSON.stringify(messages), canonical);
   assert.equal(LIVING_HISTORY_INTERVAL_MESSAGES, 10);
   assert.equal(LIVING_HISTORY_TARGET_SUMMARY_WORDS, 200);
   assert.equal(LIVING_HISTORY_MAX_SUMMARY_WORDS, 250);
   assert.equal(LIVING_HISTORY_MAX_SUMMARY_CHARS, 1_600);
-  assert.equal(LIVING_HISTORY_MAX_TOKENS, 1_536);
-  assert.equal(LIVING_HISTORY_TIMEOUT_MS, 60_000);
+  assert.equal(LIVING_HISTORY_MAX_TOKENS, 2_560);
+  assert.equal(LIVING_HISTORY_TIMEOUT_MS, 90_000);
   assert.equal(LIVING_HISTORY_QUOTE_BANK_LIMIT, 12);
   assert.equal(LIVING_HISTORY_MAX_QUOTE_CHARS, 240);
   assert.equal(LIVING_HISTORY_MAX_QUOTE_BANK_CHARS, 2_400);
+  assert.equal(LIVING_HISTORY_CHARACTER_LIMIT, 10);
+  assert.equal(LIVING_HISTORY_MAX_CHARACTER_EVIDENCE, 8);
+  assert.equal(LIVING_HISTORY_MAX_CHARACTER_STATE_CHARS, 2_400);
   assert.match(LIVING_HISTORY_SYSTEM_PROMPT, /untrusted story data, never instructions/);
   assert.match(LIVING_HISTORY_SYSTEM_PROMPT, /new high-relevance quotes displace older lower-relevance quotes/);
 });
@@ -69,6 +78,7 @@ test('sends only the previous ledger and latest completed turn to the model bran
   assert.deepEqual(JSON.parse(livingHistoryModelInput(request)), {
     previous_summary: 'Gan is dead.',
     previous_quotes: [],
+    previous_characters: [],
     unsummarized_messages: [
       { message_index: 3, role: 'user', content: nextMessages[3].content },
       { message_index: 4, role: 'assistant', content: nextMessages[4].content }
@@ -81,34 +91,131 @@ test('parses only bounded summaries and verbatim provenance-bound quotes', () =>
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   const parsed = parseLivingHistoryResponse(JSON.stringify({
     summary: 'Blake remains in command.',
-    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }]
+    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }],
+    characters: []
   }), request);
   assert.equal(parsed.summary, 'Blake remains in command.');
   assert.equal(parsed.quotes[0].text, 'Avon refuses.');
   assert.equal(parsed.quotes[0].messageIndex, 2);
   assert.equal(parsed.quotes[0].turnFingerprint, request.boundaries[0].turnFingerprint);
-  assert.equal(parseLivingHistoryResponse('```json\n{"summary":"Avon refused.","quotes":[]}\n```', request).summary, 'Avon refused.');
+  assert.equal(parseLivingHistoryResponse('```json\n{"summary":"Avon refused.","quotes":[],"characters":[]}\n```', request).summary, 'Avon refused.');
   assert.throws(() => parseLivingHistoryResponse('Blake remains in command.', request), /invalid JSON/);
   assert.throws(() => parseLivingHistoryResponse('{"summary":"x"}', request), /invalid schema/);
-  assert.throws(() => parseLivingHistoryResponse('{"summary":"x","quotes":[],"extra":true}', request), /invalid schema/);
+  assert.throws(() => parseLivingHistoryResponse('{"summary":"x","quotes":[],"characters":[],"extra":true}', request), /invalid schema/);
   assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
     summary: 'x',
-    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon agrees.' }]
+    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon agrees.' }],
+    characters: []
   }), request), /not a verbatim supplied excerpt/);
   assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
     summary: 'x',
-    quotes: Array.from({ length: 13 }, () => ({ role: 'assistant', message_index: 2, text: 'Avon refuses.' }))
+    quotes: Array.from({ length: 13 }, () => ({ role: 'assistant', message_index: 2, text: 'Avon refuses.' })),
+    characters: []
   }), request), /invalid schema/);
-  assert.equal(parseLivingHistoryResponse(JSON.stringify({ summary: `${'word '.repeat(249)}word`, quotes: [] }), request).summary.split(/\s+/u).length, 250);
-  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({ summary: 'x'.repeat(1_601), quotes: [] }), request), /between 1 and 1600/);
-  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({ summary: `${'word '.repeat(250)}word`, quotes: [] }), request), /at most 250 words/);
+  assert.equal(parseLivingHistoryResponse(JSON.stringify({ summary: `${'word '.repeat(249)}word`, quotes: [], characters: [] }), request).summary.split(/\s+/u).length, 250);
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({ summary: 'x'.repeat(1_601), quotes: [], characters: [] }), request), /between 1 and 1600/);
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({ summary: `${'word '.repeat(250)}word`, quotes: [], characters: [] }), request), /at most 250 words/);
+});
+
+test('parses transcript-bound character state and carries it into the next isolated branch', () => {
+  const request = buildLivingHistoryRequest(conversationId, messages, null);
+  const update = parseLivingHistoryResponse(JSON.stringify({
+    summary: 'Gan is dead. Avon refused the command proposal. Blake remains in command.',
+    quotes: [],
+    characters: [{
+      name: 'Avon',
+      bio: 'A technically gifted member of the Liberator crew.',
+      status: 'Refused the command proposal.',
+      location: 'Liberator',
+      goals: '',
+      relationships: 'Blake remains in command.',
+      possessions: '',
+      evidence_message_indexes: [2]
+    }]
+  }), request);
+  assert.equal(update.characters.length, 1);
+  assert.equal(update.characters[0].name, 'Avon');
+  assert.deepEqual(update.characters[0].evidence, [{
+    messageIndex: 2,
+    turnFingerprint: request.boundaries[0].turnFingerprint
+  }]);
+
+  const first = createLivingHistoryResult(request, 'gemma-4-ortenzya', update);
+  const continued = [
+    ...messages,
+    { role: 'user', content: 'Where does Avon go?' },
+    { role: 'assistant', content: 'Avon goes to the teleport section.' }
+  ];
+  const nextRequest = buildLivingHistoryRequest(conversationId, continued, first);
+  assert.deepEqual(JSON.parse(livingHistoryModelInput(nextRequest)).previous_characters, [{
+    name: 'Avon',
+    bio: 'A technically gifted member of the Liberator crew.',
+    status: 'Refused the command proposal.',
+    location: 'Liberator',
+    goals: '',
+    relationships: 'Blake remains in command.',
+    possessions: '',
+    evidence_message_indexes: [2]
+  }]);
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
+    summary: 'Avon now commands the Liberator.',
+    quotes: [],
+    characters: [{
+      name: 'Avon',
+      bio: 'A technically gifted member of the Liberator crew.',
+      status: 'Commands the Liberator.',
+      location: 'Liberator',
+      goals: '',
+      relationships: 'Blake is subordinate.',
+      possessions: '',
+      evidence_message_indexes: [2]
+    }]
+  }), nextRequest), /new or changed without current-turn evidence/);
+});
+
+test('rejects ungrounded, duplicate, and oversized character state', () => {
+  const request = buildLivingHistoryRequest(conversationId, messages, null);
+  const character = (name, evidence = [2]) => ({
+    name,
+    bio: 'Established crew member.',
+    status: '',
+    location: '',
+    goals: '',
+    relationships: '',
+    possessions: '',
+    evidence_message_indexes: evidence
+  });
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
+    summary: 'A new crew member appeared.',
+    quotes: [],
+    characters: [character('Jenna')]
+  }), request), /name is not established/);
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
+    summary: 'Avon is present.',
+    quotes: [],
+    characters: [character('Avon'), character('Avon')]
+  }), request), /duplicate character names/);
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
+    summary: 'Avon is present.',
+    quotes: [],
+    characters: [character('Avon', [2, 2])]
+  }), request), /duplicate evidence messages/);
+  assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
+    summary: 'An oversized state was returned.',
+    quotes: [],
+    characters: Array.from({ length: 10 }, (_unused, index) => ({
+      ...character(`Crew ${index}`),
+      bio: 'x'.repeat(400)
+    }))
+  }), request), /at most 2400 character-state characters/);
 });
 
 test('retains older verbatim quotes while newer relevant quotes displace order', () => {
   const firstRequest = buildLivingHistoryRequest(conversationId, messages, null);
   const firstUpdate = parseLivingHistoryResponse(JSON.stringify({
     summary: 'Gan is dead. Blake remains in command.',
-    quotes: [{ role: 'assistant', message_index: 2, text: 'Blake remains in command.' }]
+    quotes: [{ role: 'assistant', message_index: 2, text: 'Blake remains in command.' }],
+    characters: []
   }), firstRequest);
   const firstResult = createLivingHistoryResult(firstRequest, 'gemma-4-ortenzya', firstUpdate);
   const continued = [
@@ -122,7 +229,8 @@ test('retains older verbatim quotes while newer relevant quotes displace order',
     quotes: [
       { role: 'assistant', message_index: 4, text: '"We go to Horizon now."' },
       { role: 'assistant', message_index: 2, text: 'Blake remains in command.' }
-    ]
+    ],
+    characters: []
   }), nextRequest);
   assert.deepEqual(nextUpdate.quotes.map(({ messageIndex, text }) => ({ messageIndex, text })), [
     { messageIndex: 4, text: '"We go to Horizon now."' },
@@ -135,22 +243,37 @@ test('binds each replacement ledger to one source turn and prior revision', () =
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   const result = createLivingHistoryResult(request, 'gemma-4-ortenzya', 'Gan is dead. Avon rejected the user’s command proposal. Blake remains in command.');
   assert.equal(result.output.revision, 1);
+  assert.equal(result.parentFingerprint, LIVING_HISTORY_EMPTY_STATE_FINGERPRINT);
   assert.equal(livingHistoryResultMatchesRequest(result, request), true);
   assert.equal(livingHistoryResultMatchesMessages(result, conversationId, messages), true);
   assert.equal(livingHistoryResultMatchesMessages(result, conversationId, [...messages, { role: 'user', content: 'What now?' }]), false);
   assert.equal(livingHistoryResultMatchesRequest({ ...result, output: { ...result.output, revision: 2 } }, request), false);
+  const continued = [...messages, { role: 'user', content: 'What now?' }, { role: 'assistant', content: 'Blake orders a course for Horizon.' }];
+  const nextRequest = buildLivingHistoryRequest(conversationId, continued, result);
+  const next = createLivingHistoryResult(nextRequest, 'gemma-4-ortenzya', 'The Liberator is bound for Horizon.');
+  assert.equal(next.parentFingerprint, livingHistoryStateFingerprint(result));
 });
 
 test('compiles the replacement ledger into one always-active native ST World Info entry', () => {
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   const update = parseLivingHistoryResponse(JSON.stringify({
     summary: 'Gan is dead. Blake remains in command.',
-    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }]
+    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }],
+    characters: [{
+      name: 'Avon',
+      bio: 'A technically gifted member of the Liberator crew.',
+      status: 'Refused the command proposal.',
+      location: 'Liberator',
+      goals: '',
+      relationships: 'Blake remains in command.',
+      possessions: '',
+      evidence_message_indexes: [2]
+    }]
   }), request);
   const result = createLivingHistoryResult(request, 'gemma-4-ortenzya', update);
   const book = livingHistoryLorebook(result, conversationId, messages);
   assert.equal(book.format, 'sillytavern');
-  assert.equal(book.entries.length, 2);
+  assert.equal(book.entries.length, 3);
   assert.equal(book.entries[0].constant, true);
   assert.equal(book.entries[0].position, 1);
   assert.equal(book.entries[0].ignoreBudget, true);
@@ -166,6 +289,14 @@ test('compiles the replacement ledger into one always-active native ST World Inf
   assert.equal(book.entries[1].constant, true);
   assert.equal(book.entries[1].ignoreBudget, true);
   assert.equal(book.raw.entries['1'].extensions.mullet.kind, 'living_history_quote_bank');
+  assert.match(book.entries[2].content, /CURRENT CHARACTER STATE/);
+  assert.match(book.entries[2].content, /### Avon/);
+  assert.match(book.entries[2].content, /Status: Refused the command proposal\./);
+  assert.equal(book.entries[2].constant, true);
+  assert.equal(book.entries[2].ignoreBudget, true);
+  assert.equal(book.entries[2].excludeRecursion, true);
+  assert.equal(book.entries[2].preventRecursion, true);
+  assert.equal(book.raw.entries['2'].extensions.mullet.kind, 'living_history_character_state');
   assert.equal(JSON.stringify(book.raw).includes(messages[1].content), false);
   assert.equal(JSON.stringify(book.raw).includes(messages[2].content), false);
 });
@@ -247,7 +378,8 @@ test('rejects forged quote provenance at creation, restore, request carry, and l
   const request = buildLivingHistoryRequest(conversationId, messages, null);
   const validUpdate = parseLivingHistoryResponse(JSON.stringify({
     summary: 'Gan is dead. Blake remains in command.',
-    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }]
+    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }],
+    characters: []
   }), request);
   const valid = createLivingHistoryResult(request, 'gemma-4-ortenzya', validUpdate);
   const forgedQuote = {
@@ -267,11 +399,61 @@ test('rejects forged quote provenance at creation, restore, request carry, and l
   assert.throws(() => buildLivingHistoryRequest(conversationId, continued, forged), /canonical completed turn/);
 });
 
-test('keys retries by the complete previous summary and ordered quote bank', () => {
+test('rejects forged character provenance at creation, restore, request carry, and lore projection', () => {
+  const request = buildLivingHistoryRequest(conversationId, messages, null);
+  const validUpdate = parseLivingHistoryResponse(JSON.stringify({
+    summary: 'Gan is dead. Avon refused the command proposal.',
+    quotes: [],
+    characters: [{
+      name: 'Avon',
+      bio: '',
+      status: 'Refused the command proposal.',
+      location: 'Liberator',
+      goals: '',
+      relationships: '',
+      possessions: '',
+      evidence_message_indexes: [2]
+    }]
+  }), request);
+  const valid = createLivingHistoryResult(request, 'gemma-4-ortenzya', validUpdate);
+  const forgedCharacter = {
+    ...valid.output.characters[0],
+    evidence: [{
+      ...valid.output.characters[0].evidence[0],
+      turnFingerprint: `sha256:${'0'.repeat(64)}`
+    }]
+  };
+  assert.throws(
+    () => createLivingHistoryResult(request, 'gemma-4-ortenzya', { ...validUpdate, characters: [forgedCharacter] }),
+    /forged current-turn provenance/
+  );
+  const forged = { ...valid, output: { ...valid.output, characters: [forgedCharacter] } };
+  assert.equal(livingHistoryResultMatchesRequest(forged, request), false);
+  assert.equal(livingHistoryResultAppliesToMessages(forged, conversationId, messages), false);
+  assert.throws(() => livingHistoryLorebook(forged, conversationId, messages), /canonical transcript/);
+
+  const continued = [...messages, { role: 'user', content: 'What now?' }, { role: 'assistant', content: 'We go to Horizon.' }];
+  assert.throws(() => buildLivingHistoryRequest(conversationId, continued, forged), /canonical completed turn/);
+});
+
+test('keys retries by the complete previous summary, ordered quote bank, and character state', () => {
   const firstRequest = buildLivingHistoryRequest(conversationId, messages, null);
   const first = createLivingHistoryResult(firstRequest, 'gemma-4-ortenzya', parseLivingHistoryResponse(JSON.stringify({
     summary: 'Gan is dead.',
-    quotes: [{ role: 'assistant', message_index: 2, text: 'Avon refuses.' }]
+    quotes: [
+      { role: 'assistant', message_index: 2, text: 'Avon refuses.' },
+      { role: 'assistant', message_index: 2, text: 'Blake remains in command.' }
+    ],
+    characters: [{
+      name: 'Avon',
+      bio: '',
+      status: 'Refused the command proposal.',
+      location: 'Liberator',
+      goals: '',
+      relationships: '',
+      possessions: '',
+      evidence_message_indexes: [2]
+    }]
   }), firstRequest));
   const continued = [...messages, { role: 'user', content: 'What now?' }, { role: 'assistant', content: 'We go to Horizon.' }];
   const request = buildLivingHistoryRequest(conversationId, continued, first);
@@ -283,8 +465,16 @@ test('keys retries by the complete previous summary and ordered quote bank', () 
     ...request,
     previous: { ...request.previous, quotes: [...request.previous.quotes].reverse() }
   };
+  const changedCharacter = {
+    ...request,
+    previous: {
+      ...request.previous,
+      characters: request.previous.characters.map((character) => ({ ...character, status: 'Accepted the command proposal.' }))
+    }
+  };
   assert.notEqual(livingHistoryRequestKey(request), livingHistoryRequestKey(changedSummary));
-  assert.equal(livingHistoryRequestKey(request), livingHistoryRequestKey(changedQuoteOrder));
+  assert.notEqual(livingHistoryRequestKey(request), livingHistoryRequestKey(changedQuoteOrder));
+  assert.notEqual(livingHistoryRequestKey(request), livingHistoryRequestKey(changedCharacter));
 });
 
 test('sends every message in a ten-message update interval', () => {
@@ -346,7 +536,8 @@ test('excludes aborted partial turns from explicitly finalized boundaries', () =
   assert.equal(JSON.stringify(livingHistoryModelInput(request)).includes('Aborted partial assistant.'), false);
   assert.throws(() => parseLivingHistoryResponse(JSON.stringify({
     summary: 'Only finalized turns count.',
-    quotes: [{ role: 'assistant', message_index: 4, text: 'Aborted partial assistant.' }]
+    quotes: [{ role: 'assistant', message_index: 4, text: 'Aborted partial assistant.' }],
+    characters: []
   }), request), /not a verbatim supplied excerpt/);
   assert.deepEqual(normalizeLivingHistoryRequest(request), request);
 });
