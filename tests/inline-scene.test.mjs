@@ -39,6 +39,26 @@ test('builds a finalized-response sidecar request without mutating the transcrip
   assert.throws(() => buildInlineSceneRequest(conversationId, [...messages, { role: 'assistant', content: 'partial' }], source), /latest finalized/);
 });
 
+test('shrinks an oversized context tail while retaining the exact finalized pair', () => {
+  const transcript = [
+    { role: 'assistant', content: 'Opening greeting.' },
+    { role: 'user', content: 'x'.repeat(61_000) },
+    { role: 'assistant', content: 'An earlier answer.' },
+    ...messages
+  ];
+  const source = livingHistorySourceForMessages(conversationId, transcript);
+  const request = buildInlineSceneRequest(conversationId, transcript, source);
+  assert.deepEqual(request.turns, messages);
+});
+
+test('rejects forged source provenance unrelated to the supplied latest turn', () => {
+  const request = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
+  assert.throws(
+    () => createInlineSceneResult({ ...request, source: { ...request.source, turnFingerprint: `sha256:${'b'.repeat(64)}` } }, 'gemma-4-ortenzya', visualPrompt),
+    /turn fingerprint/
+  );
+});
+
 test('accepts exactly one bounded JSON prompt and rejects prose or extra keys', () => {
   assert.equal(parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt })), visualPrompt);
   assert.equal(parseInlineSceneResponse(`<think>hidden</think>\n\`\`\`json\n${JSON.stringify({ prompt: visualPrompt })}\n\`\`\``), visualPrompt);
@@ -82,15 +102,28 @@ test('builds the second Z-Image graph with landscape prompt, namespace, and opti
   assert.match(plain['4'].inputs.text, /environment visible/);
   assert.equal(plain['11'], undefined);
 
-  const loraRequest = buildInlineSceneImageRequest(result(), { lora: 'zimage/kristi6.safetensors', aspectRatio: '3:2', megapixels: 0.5 });
+  const loraA = { path: 'zimage/kristi6.safetensors', trigger: 'kristibentler', modelHash: 'a'.repeat(64) };
+  const loraRequest = buildInlineSceneImageRequest(result(), { lora: loraA, aspectRatio: '3:2', megapixels: 0.5 });
   const capabilities = {
     spec: 'mullet_inline_scene_capabilities_v1',
     template: Z_IMAGE_TURBO_SCENE_TEMPLATE,
     aspectRatios: [],
     megapixels: [],
-    loras: [{ path: 'zimage/kristi6.safetensors', trigger: 'kristibentler' }]
+    loras: [loraA]
   };
   const withLora = buildZImageTurboSceneWorkflow(loraRequest, 43, capabilities);
   assert.equal(withLora['11'].inputs.lora_name, 'zimage/kristi6.safetensors');
   assert.match(withLora['4'].inputs.text, /^kristibentler,/);
+  const changedTrigger = buildInlineSceneImageRequest(result(), {
+    lora: { ...loraA, trigger: 'replacement-trigger' },
+    aspectRatio: '3:2',
+    megapixels: 0.5
+  });
+  const changedHash = buildInlineSceneImageRequest(result(), {
+    lora: { ...loraA, modelHash: 'b'.repeat(64) },
+    aspectRatio: '3:2',
+    megapixels: 0.5
+  });
+  assert.notEqual(inlineSceneImageRequestKey(loraRequest), inlineSceneImageRequestKey(changedTrigger));
+  assert.notEqual(inlineSceneImageRequestKey(loraRequest), inlineSceneImageRequestKey(changedHash));
 });

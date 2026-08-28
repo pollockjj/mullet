@@ -65,6 +65,8 @@ export type InlineSceneResult = {
   output: { prompt: string };
 };
 
+export type InlineSceneLora = { path: string; trigger: string; modelHash: string };
+
 export type InlineSceneImageRequest = {
   spec: typeof INLINE_SCENE_IMAGE_REQUEST_SPEC;
   modelTemplate: typeof INLINE_SCENE_TEMPLATE_ID;
@@ -73,13 +75,11 @@ export type InlineSceneImageRequest = {
     promptSha256: string;
   };
   prompt: string;
-  lora: string | null;
+  lora: InlineSceneLora | null;
   aspectRatio: InlineSceneAspectRatio;
   megapixels: InlineSceneMegapixels;
   seed?: number;
 };
-
-export type InlineSceneLora = { path: string; trigger: string };
 
 export type InlineSceneCapabilities = {
   spec: 'mullet_inline_scene_capabilities_v1';
@@ -90,6 +90,7 @@ export type InlineSceneCapabilities = {
 };
 
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const RAW_SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const LORA_PATTERN = /^zimage\/[A-Za-z0-9][A-Za-z0-9._ -]*\.safetensors$/;
 const aspectMap = new Map(INLINE_SCENE_ASPECT_RATIOS.map((ratio) => [ratio.id, ratio]));
 const megapixelSet = new Set<number>(INLINE_SCENE_MEGAPIXELS);
@@ -117,11 +118,37 @@ function normalizedTurns(value: unknown): TranscriptMessage[] {
     if (!content || content.length > 100_000) throw new Error(`inline-scene turn ${index} is invalid`);
     return { role: turn.role, content };
   });
-  if (turns.at(-1)?.role !== 'assistant') throw new Error('inline-scene turns must end with an assistant response');
+  if (turns.at(-2)?.role !== 'user' || turns.at(-1)?.role !== 'assistant') {
+    throw new Error('inline-scene turns must end with one completed user-and-assistant turn');
+  }
   if (turns.reduce((total, turn) => total + turn.role.length + turn.content.length, 0) > INLINE_SCENE_MAX_INPUT_CHARS) {
     throw new Error(`inline-scene turns exceed ${INLINE_SCENE_MAX_INPUT_CHARS} characters`);
   }
   return turns;
+}
+
+function boundedInlineSceneTurns(messages: readonly TranscriptMessage[]): TranscriptMessage[] {
+  if (messages.length < 2) throw new Error('inline-scene transcript must contain a completed user-and-assistant turn');
+  let turns = normalizedTurns(messages.slice(-2));
+  const earliest = Math.max(0, messages.length - INLINE_SCENE_MAX_TURNS);
+  for (let index = messages.length - 3; index >= earliest; index -= 1) {
+    try {
+      turns = normalizedTurns([messages[index], ...turns]);
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes(`exceed ${INLINE_SCENE_MAX_INPUT_CHARS}`)) break;
+      throw cause;
+    }
+  }
+  return turns;
+}
+
+function inlineSceneTurnFingerprint(turns: readonly TranscriptMessage[]): string {
+  const user = turns.at(-2);
+  const assistant = turns.at(-1);
+  if (user?.role !== 'user' || assistant?.role !== 'assistant') {
+    throw new Error('inline-scene turns must end with one completed user-and-assistant turn');
+  }
+  return `sha256:${sha256Hex(JSON.stringify([user.content, assistant.content]))}`;
 }
 
 export function buildInlineSceneRequest(
@@ -133,8 +160,7 @@ export function buildInlineSceneRequest(
   if (!livingHistorySourceMatchesMessages(source, conversationId, messages) || source.messageCount !== messages.length) {
     throw new Error('inline-scene source must identify the latest finalized response');
   }
-  const first = Math.max(0, source.messageCount - INLINE_SCENE_MAX_TURNS);
-  const turns = normalizedTurns(messages.slice(first, source.messageCount));
+  const turns = boundedInlineSceneTurns(messages.slice(0, source.messageCount));
   return { spec: INLINE_SCENE_REQUEST_SPEC, kind: 'inline_scene', source, turns };
 }
 
@@ -144,6 +170,9 @@ export function normalizeInlineSceneRequest(value: unknown): InlineSceneRequest 
   }
   const source = normalizeLivingHistorySource(value.source);
   const turns = normalizedTurns(value.turns);
+  if (source.turnFingerprint !== inlineSceneTurnFingerprint(turns)) {
+    throw new Error('inline-scene source turn fingerprint does not match its supplied turns');
+  }
   return { spec: INLINE_SCENE_REQUEST_SPEC, kind: 'inline_scene', source, turns };
 }
 
@@ -254,10 +283,19 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
   }
   const megapixels = Number(value.megapixels);
   if (!megapixelSet.has(megapixels)) throw new Error('unsupported inline-scene megapixel target');
-  let lora: string | null = null;
-  if (value.lora !== null && value.lora !== undefined && value.lora !== '') {
-    if (typeof value.lora !== 'string' || !LORA_PATTERN.test(value.lora)) throw new Error('inline-scene LoRA is invalid');
-    lora = value.lora;
+  let lora: InlineSceneLora | null = null;
+  if (value.lora !== null && value.lora !== undefined) {
+    if (
+      !isRecord(value.lora)
+      || typeof value.lora.path !== 'string'
+      || !LORA_PATTERN.test(value.lora.path)
+      || typeof value.lora.trigger !== 'string'
+      || !value.lora.trigger.trim()
+      || value.lora.trigger.length > 200
+      || typeof value.lora.modelHash !== 'string'
+      || !RAW_SHA256_PATTERN.test(value.lora.modelHash)
+    ) throw new Error('inline-scene LoRA provenance is invalid');
+    lora = { path: value.lora.path, trigger: value.lora.trigger.trim(), modelHash: value.lora.modelHash };
   }
   const seed = value.seed === undefined ? undefined : integer(value.seed, 'inline-scene seed', 0, Number.MAX_SAFE_INTEGER);
   return {
@@ -284,28 +322,24 @@ export function inlineSceneImageRequestKey(request: InlineSceneImageRequest): st
     normalized.source.promptSha256,
     normalized.prompt,
     normalized.modelTemplate,
-    normalized.lora ?? '',
+    normalized.lora?.path ?? '',
+    normalized.lora?.trigger ?? '',
+    normalized.lora?.modelHash ?? '',
     normalized.aspectRatio,
     normalized.megapixels,
     normalized.seed ?? 'random'
   ].join('\u001f');
 }
 
-function selectedLora(request: InlineSceneImageRequest, capabilities?: InlineSceneCapabilities): InlineSceneLora | null {
-  if (!request.lora) return null;
-  return capabilities?.loras.find((lora) => lora.path === request.lora) ?? { path: request.lora, trigger: '' };
-}
-
-export function buildInlineScenePrompt(request: InlineSceneImageRequest, capabilities?: InlineSceneCapabilities): string {
+export function buildInlineScenePrompt(request: InlineSceneImageRequest): string {
   const normalized = normalizeInlineSceneImageRequest(request);
-  const lora = selectedLora(normalized, capabilities);
-  return [lora?.trigger, normalized.prompt, Z_IMAGE_TURBO_SCENE_TEMPLATE.promptGuide].filter(Boolean).join(', ');
+  return [normalized.lora?.trigger, normalized.prompt, Z_IMAGE_TURBO_SCENE_TEMPLATE.promptGuide].filter(Boolean).join(', ');
 }
 
 export function buildZImageTurboSceneWorkflow(
   request: InlineSceneImageRequest,
   seed: number,
-  capabilities?: InlineSceneCapabilities
+  _capabilities?: InlineSceneCapabilities
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneImageRequest(request);
   const validatedSeed = integer(seed, 'inline-scene seed', 0, Number.MAX_SAFE_INTEGER);
@@ -316,7 +350,7 @@ export function buildZImageTurboSceneWorkflow(
     '1': { class_type: 'UNETLoader', inputs: { unet_name: Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.clip, type: 'lumina2', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.vae } },
-    '4': { class_type: 'CLIPTextEncode', inputs: { text: buildInlineScenePrompt(normalized, capabilities), clip: clipSource } },
+    '4': { class_type: 'CLIPTextEncode', inputs: { text: buildInlineScenePrompt(normalized), clip: clipSource } },
     '5': { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['4', 0] } },
     '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: modelSource, shift: Z_IMAGE_TURBO_SCENE_TEMPLATE.shift } },
     '7': { class_type: 'EmptySD3LatentImage', inputs: { width, height, batch_size: 1 } },
@@ -339,7 +373,7 @@ export function buildZImageTurboSceneWorkflow(
     graph['11'] = { class_type: 'LoraLoader', inputs: {
       model: ['1', 0],
       clip: ['2', 0],
-      lora_name: normalized.lora,
+      lora_name: normalized.lora.path,
       strength_model: 1,
       strength_clip: 1
     } };
@@ -352,10 +386,19 @@ export function normalizeInlineSceneCapabilities(value: unknown): InlineSceneCap
   if (!isRecord(value.template) || value.template.id !== INLINE_SCENE_TEMPLATE_ID) throw new Error('invalid inline-scene template');
   if (!Array.isArray(value.loras)) throw new Error('invalid inline-scene LoRA inventory');
   const loras = value.loras.map((entry) => {
-    if (!isRecord(entry) || typeof entry.path !== 'string' || !LORA_PATTERN.test(entry.path) || typeof entry.trigger !== 'string' || entry.trigger.length > 200) {
+    if (
+      !isRecord(entry)
+      || typeof entry.path !== 'string'
+      || !LORA_PATTERN.test(entry.path)
+      || typeof entry.trigger !== 'string'
+      || !entry.trigger.trim()
+      || entry.trigger.length > 200
+      || typeof entry.modelHash !== 'string'
+      || !RAW_SHA256_PATTERN.test(entry.modelHash)
+    ) {
       throw new Error('invalid inline-scene LoRA descriptor');
     }
-    return { path: entry.path, trigger: entry.trigger.trim() };
+    return { path: entry.path, trigger: entry.trigger.trim(), modelHash: entry.modelHash };
   });
   return {
     spec: 'mullet_inline_scene_capabilities_v1',
