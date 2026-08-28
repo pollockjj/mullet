@@ -10,7 +10,8 @@ import {
   livingHistoryAutomaticUpdateDue,
   livingHistoryReadyForChat,
   normalizeStoredLivingHistoryBoundaries,
-  pendingLivingHistoryMessageCount
+  pendingLivingHistoryMessageCount,
+  parseLivingHistoryActiveHeader
 } from '../src/lib/living-history-client.ts';
 import {
   buildLivingHistoryRequest,
@@ -51,6 +52,22 @@ test('fires at five finalized pairs and sends all ten messages', () => {
   const request = currentLivingHistoryRequest(conversationId, fivePairs, null, fiveBoundaries);
   assert.equal(request?.turns.length, 10);
   assert.deepEqual(normalizeStoredLivingHistoryBoundaries(fiveBoundaries, conversationId, fivePairs), fiveBoundaries);
+});
+
+test('allows a manual update after one finalized pair without changing the ten-message cadence', () => {
+  const onePair = transcript(1);
+  const oneBoundary = boundaries(onePair);
+  assert.equal(pendingLivingHistoryMessageCount(oneBoundary, null), 2);
+  assert.equal(livingHistoryAutomaticUpdateDue(2), false);
+  assert.equal(currentLivingHistoryRequest(conversationId, onePair, null, oneBoundary)?.turns.length, 2);
+});
+
+test('parses only exact server activation headers', () => {
+  assert.equal(parseLivingHistoryActiveHeader('1'), true);
+  assert.equal(parseLivingHistoryActiveHeader('0'), false);
+  assert.equal(parseLivingHistoryActiveHeader(null), null);
+  assert.equal(parseLivingHistoryActiveHeader('01'), null);
+  assert.equal(parseLivingHistoryActiveHeader('2'), null);
 });
 
 test('blocks the first chat until enabled history finishes restoring', () => {

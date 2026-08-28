@@ -2,14 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LIVING_HISTORY_EMPTY_STATE_FINGERPRINT,
   buildLivingHistoryRequest,
   createLivingHistoryResult,
   normalizeLivingHistoryResult
 } from '../src/lib/living-history.ts';
 import {
+  LIVING_HISTORY_DATABASE_VERSION,
+  LivingHistoryConflictError,
   STORED_LIVING_HISTORY_SPEC,
   clearLivingHistoryAtEpoch,
   commitLivingHistoryResult,
+  livingHistoryWriteBaseMatches,
   migrateStoredLivingHistoryResult,
   restoreLivingHistoryResult,
   unwrapStoredLivingHistory
@@ -25,6 +29,20 @@ function result() {
     null
   );
   return createLivingHistoryResult(request, 'gemma-4-ortenzya', 'Avon rejected the user’s command proposal. Blake remains in command.');
+}
+
+function nextResult(previous, summary = 'Avon remains aboard while Blake orders a course for Horizon.') {
+  const request = buildLivingHistoryRequest(
+    '8d78c151-83f0-4c72-9b9b-1ab957adca78',
+    [
+      { role: 'user', content: 'I ask Avon to make me captain.' },
+      { role: 'assistant', content: 'Avon refuses. Blake remains in command.' },
+      { role: 'user', content: 'What does Blake decide?' },
+      { role: 'assistant', content: 'Blake orders a course for Horizon.' }
+    ],
+    previous
+  );
+  return createLivingHistoryResult(request, 'gemma-4-ortenzya', summary);
 }
 
 test('persists only the bounded derived result rather than raw sidecar turns', () => {
@@ -65,7 +83,7 @@ test('loads writer envelopes while retaining legacy direct-result compatibility'
   );
 });
 
-test('migrates only stored V1 results to a V2 result with an empty quote bank', () => {
+test('migrates stored V1 results to V3 with empty quote and character banks', () => {
   const current = result();
   const legacy = {
     ...current,
@@ -75,8 +93,41 @@ test('migrates only stored V1 results to a V2 result with an empty quote bank', 
   assert.throws(() => normalizeLivingHistoryResult(legacy), /invalid living-history result spec/);
   assert.deepEqual(migrateStoredLivingHistoryResult(legacy), {
     ...current,
-    output: { ...current.output, quotes: [] }
+    parentFingerprint: LIVING_HISTORY_EMPTY_STATE_FINGERPRINT,
+    output: { ...current.output, quotes: [], characters: [] }
   });
+});
+
+test('migrates stored V2 results to V3 while preserving the quote bank', () => {
+  const current = result();
+  const quote = {
+    role: 'assistant',
+    messageIndex: 1,
+    turnFingerprint: current.source.turnFingerprint,
+    text: 'Avon refuses.'
+  };
+  const legacy = {
+    ...current,
+    spec: 'mullet_living_history_result_v2',
+    output: { revision: current.output.revision, summary: current.output.summary, quotes: [quote] }
+  };
+  assert.deepEqual(migrateStoredLivingHistoryResult(legacy), {
+    ...current,
+    parentFingerprint: LIVING_HISTORY_EMPTY_STATE_FINGERPRINT,
+    output: { ...current.output, quotes: [quote], characters: [] }
+  });
+});
+
+test('fences stale tabs by database generation and prior-state fingerprint', () => {
+  assert.equal(LIVING_HISTORY_DATABASE_VERSION, 2);
+  const first = result();
+  const winner = nextResult(first, 'Winner state.');
+  const staleCompetitor = nextResult(first, 'Stale competitor state.');
+  assert.equal(livingHistoryWriteBaseMatches(null, first), true);
+  assert.equal(livingHistoryWriteBaseMatches(first, winner), true);
+  assert.equal(livingHistoryWriteBaseMatches(first, staleCompetitor), true);
+  assert.equal(livingHistoryWriteBaseMatches(winner, staleCompetitor), false);
+  assert.equal(new LivingHistoryConflictError().name, 'LivingHistoryConflictError');
 });
 
 test('discards a history result when reset lands during its storage write', async () => {
