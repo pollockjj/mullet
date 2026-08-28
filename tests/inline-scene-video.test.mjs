@@ -20,7 +20,8 @@ import {
   inlineSceneVideoReconciliationAllowed,
   inlineSceneVideoRequestKey,
   normalizeInlineSceneVideoRequest,
-  parseInlineSceneVideoIntegerHeader
+  parseInlineSceneVideoIntegerHeader,
+  parseInlineSceneVideoNumberHeader
 } from '../src/lib/inline-scene-video.ts';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
@@ -137,6 +138,17 @@ test('rejects missing, empty, and non-canonical integer provenance headers', () 
     assert.throws(
       () => parseInlineSceneVideoIntegerHeader(value, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
       /omitted x-mullet-seed/
+    );
+  }
+});
+
+test('accepts only a canonical finite encoded-duration header', () => {
+  const duration = 124 / 24;
+  assert.equal(parseInlineSceneVideoNumberHeader(String(duration), 'x-mullet-duration-seconds', 0.001, 3_600), duration);
+  for (const value of [null, '', ' 5', '05', '+5', '5.0', '.5', '5.', '5e0', 'NaN', 'Infinity']) {
+    assert.throws(
+      () => parseInlineSceneVideoNumberHeader(value, 'x-mullet-duration-seconds', 0.001, 3_600),
+      /omitted x-mullet-duration-seconds/
     );
   }
 });

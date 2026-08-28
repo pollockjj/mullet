@@ -287,6 +287,25 @@ export function parseInlineSceneVideoIntegerHeader(
   return parsed;
 }
 
+export function parseInlineSceneVideoNumberHeader(
+  value: string | null,
+  name: string,
+  minimum: number,
+  maximum: number
+): number {
+  if (value === null || !/^(0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
+    throw new Error('Inline-scene motion response omitted ' + name + '.');
+  }
+  const parsed = Number(value);
+  if (
+    !Number.isFinite(parsed)
+    || parsed < minimum
+    || parsed > maximum
+    || String(parsed) !== value
+  ) throw new Error('Inline-scene motion response omitted ' + name + '.');
+  return parsed;
+}
+
 export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): string {
   const normalized = normalizeInlineSceneVideoRequest(request);
   return [

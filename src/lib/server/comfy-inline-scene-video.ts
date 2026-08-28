@@ -18,6 +18,7 @@ export type ComfyInlineSceneVideo = {
   promptId: string;
   filename: string;
   sha256: string;
+  durationSeconds: number;
 };
 
 export class ComfyInlineSceneVideoOutputTooLargeError extends Error {}
@@ -349,7 +350,7 @@ export async function runComfyInlineSceneVideo(
       throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
     }
     const dimensions = inlineSceneVideoDimensions(request.aspectRatio);
-    validateH264AacMp4(bytes, {
+    const metadata = validateH264AacMp4(bytes, {
       width: dimensions.width,
       height: dimensions.height,
       frames: dimensions.frames,
@@ -360,7 +361,8 @@ export async function runComfyInlineSceneVideo(
       contentType: 'video/mp4',
       promptId: id,
       filename: video.filename,
-      sha256: await sha256InlineSceneVideoBytes(bytes)
+      sha256: await sha256InlineSceneVideoBytes(bytes),
+      durationSeconds: metadata.durationSeconds
     };
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);

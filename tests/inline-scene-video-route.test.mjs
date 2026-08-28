@@ -317,7 +317,8 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     assert.equal(response.headers.get('x-mullet-height'), '768');
     assert.equal(response.headers.get('x-mullet-frames'), '124');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
-    assert.equal(response.headers.get('x-mullet-duration-seconds'), '5');
+    assert.equal(request.durationSeconds, 5);
+    assert.equal(response.headers.get('x-mullet-duration-seconds'), String(124 / 24));
     assert.equal(response.headers.get('x-mullet-model-template'), 'minimax-h3-fl2va-i2v-turbo-v1');
     assert.equal(response.headers.get('x-mullet-video-mode'), 'i2v');
     assert.equal(response.headers.get('x-mullet-source-prompt-id'), staticPromptId);

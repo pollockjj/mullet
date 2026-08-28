@@ -63,6 +63,9 @@
     type InlineSceneResult
   } from '$lib/inline-scene';
   import {
+    INLINE_SCENE_VIDEO_DURATION_SECONDS,
+    INLINE_SCENE_VIDEO_FPS,
+    INLINE_SCENE_VIDEO_FRAMES,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     buildInlineSceneVideoRequest,
     inlineSceneVideoReconciliationAllowed,
@@ -70,6 +73,7 @@
     inlineSceneVideoSourceRequestSha256,
     normalizeInlineSceneVideoCapabilities,
     parseInlineSceneVideoIntegerHeader,
+    parseInlineSceneVideoNumberHeader,
     type InlineSceneVideoCapabilities,
     type InlineSceneVideoRequest
   } from '$lib/inline-scene-video';
@@ -1035,6 +1039,15 @@
     return parseInlineSceneVideoIntegerHeader(response.headers.get(name), name, minimum, maximum);
   }
 
+  function inlineSceneVideoHeaderNumber(
+    response: Response,
+    name: string,
+    minimum: number,
+    maximum: number
+  ): number {
+    return parseInlineSceneVideoNumberHeader(response.headers.get(name), name, minimum, maximum);
+  }
+
   async function generateInlineSceneVideo(
     selectedRequest: InlineSceneVideoRequest | null = inlineSceneVideoRequest
   ) {
@@ -1122,7 +1135,7 @@
         height: inlineSceneVideoHeaderInteger(response, 'x-mullet-height', 16, 8192),
         frames: inlineSceneVideoHeaderInteger(response, 'x-mullet-frames', 1, 10_000),
         fps: inlineSceneVideoHeaderInteger(response, 'x-mullet-fps', 1, 1_000),
-        durationSeconds: inlineSceneVideoHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
+        durationSeconds: inlineSceneVideoHeaderNumber(response, 'x-mullet-duration-seconds', 0.001, 3_600),
         generatedAt: Date.now(),
         inputImageSha256,
         videoSha256,
@@ -3261,7 +3274,7 @@
                   <option value={inlineSceneVideoCapabilities.template.id}>{inlineSceneVideoCapabilities.template.label}</option>
                 </select>
               </label>
-              <small>Replay loop · MiniMax H3 FL2VA · 124 frames @ 24 FPS · 5-second span · H.264/AAC MP4</small>
+              <small>Replay loop · MiniMax H3 FL2VA · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {INLINE_SCENE_VIDEO_FRAMES} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(INLINE_SCENE_VIDEO_FRAMES / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
               {#if generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.frames} frames</small>{/if}
               {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
               <button
@@ -3474,7 +3487,7 @@
                   {/if}
                   <figcaption>
                     <span>{inlineSceneVideoVisible ? 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
-                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.durationSeconds} sec</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
+                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>
               {/if}

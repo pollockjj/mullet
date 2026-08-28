@@ -112,7 +112,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         'x-mullet-height': String(dimensions.height),
         'x-mullet-frames': String(dimensions.frames),
         'x-mullet-fps': String(dimensions.fps),
-        'x-mullet-duration-seconds': String(videoRequest.durationSeconds),
+        'x-mullet-duration-seconds': String(result.durationSeconds),
         'x-mullet-model-template': videoRequest.modelTemplate,
         'x-mullet-video-mode': videoRequest.mode,
         'x-mullet-source-prompt-id': videoRequest.source.scenePromptId,

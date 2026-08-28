@@ -73,7 +73,7 @@ function stored(overrides = {}) {
     height: 768,
     frames: 124,
     fps: 24,
-    durationSeconds: 5,
+    durationSeconds: 124 / 24,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     videoSha256,
@@ -95,9 +95,11 @@ test('rejects mismatched source, key, dimensions, timing, hashes, and blobs', as
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ requestKey: 'wrong' })), /request key is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ width: 512 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ frames: 48 })), /timing is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ durationSeconds: Number.NaN })), /encoded duration is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
   await assert.rejects(verifyStoredInlineSceneVideo(stored({ videoSha256: 'd'.repeat(64) })), /hash does not match/);
+  await assert.rejects(verifyStoredInlineSceneVideo(stored({ durationSeconds: 5 })), /encoded duration does not match/);
   const wrongSizeBytes = buildH264AacMp4Fixture({ width: 640 });
   await assert.rejects(
     verifyStoredInlineSceneVideo(stored({

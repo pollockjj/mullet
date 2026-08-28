@@ -162,6 +162,7 @@ test('queues and returns only the fixed H.264/AAC scene-motion MP4', async () =>
   assert.equal(queued.prompt['1'].inputs.unet_name, 'minimax_h3_fl2va_pruned_int8_convrot.safetensors');
   assert.equal(queued.prompt['15'].inputs.filename_prefix, 'mullet/scene-motion');
   assert.equal(result.contentType, 'video/mp4');
+  assert.equal(result.durationSeconds, 124 / 24);
   assert.equal(result.sha256, await sha256InlineSceneVideoBytes(mp4));
 });
 

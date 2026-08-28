@@ -11,8 +11,8 @@ import {
 } from './inline-scene-video.ts';
 import { validateH264AacMp4 } from './mp4.ts';
 
-export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v2' as const;
-export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v2' as const;
+export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v3' as const;
+export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v3' as const;
 
 export class StoredInlineSceneVideoIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -35,7 +35,7 @@ export type StoredInlineSceneVideo = {
   height: number;
   frames: typeof INLINE_SCENE_VIDEO_FRAMES;
   fps: typeof INLINE_SCENE_VIDEO_FPS;
-  durationSeconds: typeof INLINE_SCENE_VIDEO_DURATION_SECONDS;
+  durationSeconds: number;
   generatedAt: number;
   inputImageSha256: string;
   videoSha256: string;
@@ -89,6 +89,13 @@ function safeInteger(value: unknown, name: string, minimum: number, maximum: num
   return Number(value);
 }
 
+function finiteNumber(value: unknown, name: string, minimum: number, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(name + ' is invalid');
+  }
+  return value;
+}
+
 function sha256(value: unknown, name: string): string {
   if (typeof value !== 'string' || !SHA256_PATTERN.test(value)) throw new Error(name + ' is invalid');
   return value;
@@ -123,8 +130,8 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
   if (
     value.frames !== INLINE_SCENE_VIDEO_FRAMES
     || value.fps !== INLINE_SCENE_VIDEO_FPS
-    || value.durationSeconds !== INLINE_SCENE_VIDEO_DURATION_SECONDS
   ) throw new Error('stored inline-scene video timing is invalid');
+  const durationSeconds = finiteNumber(value.durationSeconds, 'stored inline-scene video encoded duration', 0.001, 3_600);
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored inline-scene video input hash');
   if (inputImageSha256 !== request.source.sceneImageSha256) {
     throw new Error('stored inline-scene video input hash does not match its request');
@@ -150,7 +157,7 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     height,
     frames: INLINE_SCENE_VIDEO_FRAMES,
     fps: INLINE_SCENE_VIDEO_FPS,
-    durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
+    durationSeconds,
     generatedAt: safeInteger(value.generatedAt, 'stored inline-scene video timestamp', 1, Number.MAX_SAFE_INTEGER),
     inputImageSha256,
     videoSha256,
@@ -188,12 +195,15 @@ export async function verifyStoredInlineSceneVideo(value: unknown): Promise<Stor
     throw new Error('stored inline-scene video hash does not match its bytes');
   }
   const dimensions = inlineSceneVideoDimensions(video.request.aspectRatio);
-  validateH264AacMp4(bytes, {
+  const metadata = validateH264AacMp4(bytes, {
     width: dimensions.width,
     height: dimensions.height,
     frames: dimensions.frames,
     fps: dimensions.fps
   });
+  if (metadata.durationSeconds !== video.durationSeconds) {
+    throw new Error('stored inline-scene video encoded duration does not match its bytes');
+  }
   return video;
 }
 
