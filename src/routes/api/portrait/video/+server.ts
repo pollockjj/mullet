@@ -114,6 +114,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         'x-mullet-fps': String(dimensions.fps),
         'x-mullet-duration-seconds': String(portraitVideoRequest.durationSeconds),
         'x-mullet-model-template': portraitVideoRequest.modelTemplate,
+        'x-mullet-video-mode': portraitVideoRequest.mode,
         'x-mullet-input-sha256': imageSha256,
         'x-mullet-video-sha256': result.sha256
       }

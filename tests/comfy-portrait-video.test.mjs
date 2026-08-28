@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   LTX25_PORTRAIT_VIDEO_TEMPLATE,
+  PORTRAIT_VIDEO_MODE_LOOP_FLF,
   buildPortraitVideoRequest
 } from '../src/lib/portrait-video.ts';
 import {
@@ -33,6 +34,7 @@ const portrait = {
 const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const imageSha256 = await sha256Hex(imageBytes);
 const request = buildPortraitVideoRequest(portrait, '2:3', imageSha256);
+const loopRequest = buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF);
 const input = {
   name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
   subfolder: 'mullet/motion-inputs',
@@ -69,7 +71,9 @@ test('requires every exact LTX asset, node, sampler, codec, and upload surface',
     return Response.json(capabilityResponse(node));
   };
   const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://comfy');
-  assert.equal(capabilities.template.id, 'ltx-2.5-i2v-distilled-v1');
+  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v2');
+  assert.equal(capabilities.template.id, 'ltx-2.5-distilled-portrait-v2');
+  assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop']);
   assert.equal(capabilities.aspectRatios.length, 4);
 
   await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
@@ -130,6 +134,31 @@ test('queues, polls, and proxies only the fixed animated WebM output', async () 
   assert.equal(result.contentType, 'video/webm');
   assert.deepEqual(result.bytes, webm);
   assert.equal(result.sha256, await sha256Hex(webm));
+});
+
+test('selects and validates the loop-FLF output node and filename', async () => {
+  const observed = [];
+  const webm = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 4, 5, 6]);
+  const fetcher = async (url, init) => {
+    const value = String(url);
+    observed.push({ url: value, init });
+    if (value.endsWith('/prompt')) return Response.json({ prompt_id: '44444444-4444-4444-8444-444444444444', node_errors: {} });
+    if (value.includes('/history/')) return Response.json({
+      '44444444-4444-4444-8444-444444444444': {
+        status: { completed: true, status_str: 'success' },
+        outputs: { '35': { images: [{ filename: 'portrait-motion-loop-flf_00001_.webm', subfolder: 'mullet', type: 'output' }], animated: [true] } }
+      }
+    });
+    if (value.includes('/view?')) return new Response(webm, { headers: { 'content-type': 'video/webm' } });
+    throw new Error(`unexpected URL ${value}`);
+  };
+  const result = await runComfyPortraitVideo(fetcher, 'http://comfy/', loopRequest, input, 42);
+  const queued = JSON.parse(observed[0].init.body);
+  assert.equal(queued.prompt['12'].class_type, 'LTXVAddGuide');
+  assert.equal(queued.prompt['13'].inputs.frame_idx, -1);
+  assert.equal(queued.prompt['35'].class_type, 'SaveWEBM');
+  assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion-loop-flf_00001_.webm&subfolder=mullet&type=output');
+  assert.deepEqual(result.bytes, webm);
 });
 
 test('rejects unsafe history and cancels only the targeted failed job', async () => {

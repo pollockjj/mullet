@@ -28,10 +28,11 @@ function png(width, height) {
   return bytes;
 }
 
-function motionRequest(imageSha256) {
+function motionRequest(imageSha256, mode = 'i2v') {
   return {
-    spec: 'mullet_portrait_video_request_v1',
-    modelTemplate: 'ltx-2.5-i2v-distilled-v1',
+    spec: 'mullet_portrait_video_request_v2',
+    modelTemplate: 'ltx-2.5-distilled-portrait-v2',
+    mode,
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       portraitRequestKey: 'route-test-portrait-request',
@@ -156,12 +157,15 @@ function fakeComfy() {
           });
           return;
         }
+        const loopFlf = Boolean(state.prompts.at(-1)?.prompt?.['35']);
+        const outputNode = loopFlf ? '35' : '31';
+        const filename = loopFlf ? 'portrait-motion-loop-flf_00001_.webm' : 'portrait-motion_00001_.webm';
         responseJson(response, 200, {
           [promptId]: {
             status: { completed: true, status_str: 'success' },
             outputs: {
-              '31': {
-                images: [{ filename: 'portrait-motion_00001_.webm', subfolder: 'mullet', type: 'output' }],
+              [outputNode]: {
+                images: [{ filename, subfolder: 'mullet', type: 'output' }],
                 animated: [true]
               }
             }
@@ -269,8 +273,9 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v1');
-    assert.equal(capabilities.template.id, 'ltx-2.5-i2v-distilled-v1');
+    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v2');
+    assert.equal(capabilities.template.id, 'ltx-2.5-distilled-portrait-v2');
+    assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop']);
     assert.deepEqual(capabilities.aspectRatios, [
       { aspectRatio: '2:3', width: 384, height: 576 },
       { aspectRatio: '3:4', width: 384, height: 512 },
@@ -298,7 +303,8 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.headers.get('x-mullet-frames'), '49');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
     assert.equal(response.headers.get('x-mullet-duration-seconds'), '2');
-    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-i2v-distilled-v1');
+    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-portrait-v2');
+    assert.equal(response.headers.get('x-mullet-video-mode'), 'i2v');
     assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
     assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(webmBytes));
 
@@ -322,6 +328,22 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(queued.prompt['16'].inputs.noise_seed, seed);
     assert.equal(queued.prompt['31'].inputs.codec, 'vp9');
     assert.equal(queued.prompt['31'].inputs.fps, 24);
+  });
+
+  await context.test('POST queues identical first/last-frame loop mode and returns its provenance', async () => {
+    fake.reset();
+    const response = await post(formFor(motionRequest(imageSha256, 'flf2v_loop'), imageBytes));
+    const responseBytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
+    assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_loop');
+    const queued = fake.state.prompts[0];
+    assert.equal(queued.prompt['12'].class_type, 'LTXVAddGuide');
+    assert.equal(queued.prompt['12'].inputs.frame_idx, 0);
+    assert.equal(queued.prompt['13'].inputs.frame_idx, -1);
+    assert.deepEqual(queued.prompt['12'].inputs.image, queued.prompt['13'].inputs.image);
+    assert.equal(queued.prompt['22'].class_type, 'LTXVCropGuides');
+    assert.equal(queued.prompt['33'].class_type, 'LTXVCropGuides');
+    assert.equal(queued.prompt['35'].class_type, 'SaveWEBM');
   });
 
   await context.test('POST rejects mismatched hash, IHDR, and multipart shape before ComfyUI', async () => {

@@ -2,7 +2,9 @@ import {
   LTX25_PORTRAIT_VIDEO_TEMPLATE,
   PORTRAIT_VIDEO_DIMENSIONS,
   PORTRAIT_VIDEO_DURATION_SECONDS,
+  PORTRAIT_VIDEO_MODES,
   buildLtx25PortraitVideoWorkflow,
+  portraitVideoOutputNode,
   type PortraitVideoCapabilities,
   type PortraitVideoInputReference,
   type PortraitVideoRequest
@@ -89,8 +91,9 @@ export async function loadPortraitVideoCapabilities(
   const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
   if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
   return {
-    spec: 'mullet_portrait_video_capabilities_v1',
+    spec: 'mullet_portrait_video_capabilities_v2',
     template: LTX25_PORTRAIT_VIDEO_TEMPLATE,
+    modes: PORTRAIT_VIDEO_MODES,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
     durations: [PORTRAIT_VIDEO_DURATION_SECONDS]
   };
@@ -174,12 +177,13 @@ function historyFailure(entry: Record<string, unknown>): string | null {
   return null;
 }
 
-function outputVideo(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
+function outputVideo(entry: Record<string, unknown>, request: PortraitVideoRequest): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  if (!isRecord(entry.outputs) || Object.keys(entry.outputs).length !== 1 || !isRecord(entry.outputs[LTX25_PORTRAIT_VIDEO_TEMPLATE.outputNode])) {
-    throw new Error('ComfyUI portrait-video history omitted the fixed output node');
+  const outputNode = portraitVideoOutputNode(request);
+  if (!isRecord(entry.outputs) || Object.keys(entry.outputs).length !== 1 || !isRecord(entry.outputs[outputNode])) {
+    throw new Error('ComfyUI portrait-video history omitted the selected output node');
   }
-  const output = entry.outputs[LTX25_PORTRAIT_VIDEO_TEMPLATE.outputNode];
+  const output = entry.outputs[outputNode];
   if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
     throw new Error('ComfyUI portrait-video history omitted the video');
   }
@@ -187,7 +191,10 @@ function outputVideo(entry: Record<string, unknown>): { filename: string; subfol
     throw new Error('ComfyUI portrait-video history did not mark the output animated');
   }
   const video = output.images[0];
-  if (typeof video.filename !== 'string' || !/^portrait-motion_\d+_\.webm$/.test(video.filename)) {
+  const filenamePattern = request.mode === 'flf2v_loop'
+    ? /^portrait-motion-loop-flf_\d+_\.webm$/
+    : /^portrait-motion_\d+_\.webm$/;
+  if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait-video filename');
   }
   if (video.subfolder !== 'mullet' || video.type !== 'output') throw new Error('ComfyUI returned an unexpected portrait-video location');
@@ -213,6 +220,7 @@ async function waitForVideo(
   fetcher: Fetcher,
   baseUrl: string,
   id: string,
+  request: PortraitVideoRequest,
   signal?: AbortSignal
 ): Promise<{ filename: string; subfolder: 'mullet'; type: 'output' }> {
   while (true) {
@@ -222,7 +230,7 @@ async function waitForVideo(
     if (entry) {
       const failure = historyFailure(entry);
       if (failure) throw new Error(failure);
-      const video = outputVideo(entry);
+      const video = outputVideo(entry, request);
       if (video) return video;
     }
     await pollDelay(250, signal);
@@ -289,7 +297,7 @@ export async function runComfyPortraitVideo(
       signal
     });
     id = promptId(await responseJson(queueResponse, 'portrait-video queue submission'));
-    const video = await waitForVideo(fetcher, baseUrl, id, signal);
+    const video = await waitForVideo(fetcher, baseUrl, id, request, signal);
     completed = true;
     const query = new URLSearchParams(video);
     const outputResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
