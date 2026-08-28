@@ -1635,7 +1635,7 @@
           <div class="history-actions">
             <button
               on:click={() => void updateLivingHistory()}
-              disabled={streaming || livingHistoryBusy || !livingHistoryEnabled || !livingHistoryRequest || !livingHistoryPersistenceAvailable}
+              disabled={streaming || livingHistoryBusy || !livingHistoryEnabled || !livingHistoryRequest || !livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable}
             >
               {livingHistoryBusy ? 'Updating…' : 'Update now'}
             </button>
