@@ -54,6 +54,7 @@
     pendingLivingHistoryMessageCount
   } from '$lib/living-history-client';
   import {
+    clearLivingHistoryAtEpoch,
     clearStoredLivingHistory,
     commitLivingHistoryResult,
     loadStoredLivingHistory,
@@ -598,21 +599,26 @@
     livingHistoryError = cause instanceof Error ? cause.message : 'Living-history persistence failed.';
   }
 
-  function handleLivingHistoryEpochChange(event: StorageEvent) {
-    if (event.key !== livingHistoryEpochStorageKey) return;
+  function reconcileLivingHistoryEpochFromStorage(): boolean {
     const authoritativeEpoch = authoritativeLivingHistoryEpoch(
       livingHistoryEpoch,
       localStorage.getItem(livingHistoryEpochStorageKey)
     );
-    if (authoritativeEpoch === livingHistoryEpoch) return;
+    if (authoritativeEpoch === livingHistoryEpoch) return true;
     livingHistoryEpoch = authoritativeEpoch;
     livingHistoryGeneration += 1;
     livingHistoryController?.abort();
     livingHistoryResult = null;
+    livingHistoryBook = null;
     livingHistoryBoundaries = [];
     livingHistoryError = '';
     lastLivingHistoryAttemptKey = '';
     livingHistoryPersistenceReady = true;
+    return false;
+  }
+
+  function handleLivingHistoryEpochChange(event: StorageEvent) {
+    if (event.key === livingHistoryEpochStorageKey) reconcileLivingHistoryEpochFromStorage();
   }
 
   async function restoreLivingHistory(allowLegacy = false) {
@@ -638,7 +644,11 @@
     } catch (cause) {
       disableLivingHistoryPersistence(cause);
     } finally {
-      if (restoreGeneration === livingHistoryGeneration) livingHistoryPersistenceReady = true;
+      if (
+        restoreGeneration === livingHistoryGeneration
+        && restoreEpoch === livingHistoryEpoch
+        && localStorage.getItem(livingHistoryEpochStorageKey) === restoreEpoch
+      ) livingHistoryPersistenceReady = true;
     }
   }
 
@@ -776,16 +786,23 @@
 
   async function clearLivingHistory() {
     livingHistoryGeneration += 1;
-    livingHistoryEpoch = crypto.randomUUID();
-    localStorage.setItem(livingHistoryEpochStorageKey, livingHistoryEpoch);
+    const nextEpoch = crypto.randomUUID();
     livingHistoryController?.abort();
     livingHistoryResult = null;
+    livingHistoryBook = null;
     livingHistoryBoundaries = [];
     livingHistoryError = '';
     lastLivingHistoryAttemptKey = '';
     persistLivingHistoryBoundaries();
     try {
-      await runStoredLivingHistoryExclusive(clearStoredLivingHistory);
+      await clearLivingHistoryAtEpoch(nextEpoch, {
+        exclusive: runStoredLivingHistoryExclusive,
+        publishEpoch: (epoch) => {
+          livingHistoryEpoch = epoch;
+          localStorage.setItem(livingHistoryEpochStorageKey, epoch);
+        },
+        clear: clearStoredLivingHistory
+      });
     } catch (cause) {
       disableLivingHistoryPersistence(cause);
     } finally {
@@ -1284,6 +1301,7 @@
   }
 
   async function send() {
+    if (browser) reconcileLivingHistoryEpochFromStorage();
     const content = draft.trim();
     if (
       !content

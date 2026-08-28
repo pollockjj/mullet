@@ -22,6 +22,12 @@ export type LivingHistoryWriteReceipt = {
 
 export type LivingHistoryExclusiveRunner = <T>(operation: () => Promise<T>) => Promise<T>;
 
+export type LivingHistoryClearOperations = {
+  exclusive: LivingHistoryExclusiveRunner;
+  publishEpoch: (epoch: string) => void;
+  clear: () => Promise<void>;
+};
+
 export type LivingHistoryCommitOperations = {
   save: (result: LivingHistoryResult) => Promise<LivingHistoryWriteReceipt>;
   isCurrent: () => boolean;
@@ -72,6 +78,17 @@ export async function runStoredLivingHistoryExclusive<T>(operation: () => Promis
   const lockManager = globalThis.navigator?.locks;
   if (!lockManager) throw new Error('browser Web Locks are required for living-history persistence');
   return lockManager.request('mullet-living-history-state', { mode: 'exclusive' }, operation);
+}
+
+export async function clearLivingHistoryAtEpoch(
+  nextEpoch: string,
+  operations: LivingHistoryClearOperations
+): Promise<void> {
+  const normalizedEpoch = boundedStorageId(nextEpoch, 'living-history epoch');
+  await operations.exclusive(async () => {
+    operations.publishEpoch(normalizedEpoch);
+    await operations.clear();
+  });
 }
 
 function openDatabase(): Promise<IDBDatabase> {

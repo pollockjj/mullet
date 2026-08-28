@@ -7,6 +7,7 @@ import {
 } from '../src/lib/living-history.ts';
 import {
   STORED_LIVING_HISTORY_SPEC,
+  clearLivingHistoryAtEpoch,
   commitLivingHistoryResult,
   restoreLivingHistoryResult,
   unwrapStoredLivingHistory
@@ -236,4 +237,31 @@ test('does not migrate legacy storage after losing the epoch while waiting for t
 
   assert.equal(await restoring, null);
   assert.equal(loaded, false);
+});
+
+test('publishes a Clear epoch only after acquiring the exclusive storage lock', async () => {
+  const nextEpoch = '33333333-3333-4333-8333-333333333333';
+  const events = [];
+  let releaseLock;
+  let reportWaiting;
+  const lockReleased = new Promise((resolve) => { releaseLock = resolve; });
+  const lockWaiting = new Promise((resolve) => { reportWaiting = resolve; });
+  const clearing = clearLivingHistoryAtEpoch(nextEpoch, {
+    exclusive: async (operation) => {
+      events.push('waiting');
+      reportWaiting();
+      await lockReleased;
+      events.push('locked');
+      const value = await operation();
+      events.push('released');
+      return value;
+    },
+    publishEpoch: (epoch) => { events.push(`epoch:${epoch}`); },
+    clear: async () => { events.push('clear'); }
+  });
+  await lockWaiting;
+  assert.deepEqual(events, ['waiting']);
+  releaseLock();
+  await clearing;
+  assert.deepEqual(events, ['waiting', 'locked', `epoch:${nextEpoch}`, 'clear', 'released']);
 });
