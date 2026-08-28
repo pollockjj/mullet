@@ -241,7 +241,8 @@
   import {
     WORKSPACE_MAX_MESSAGES,
     createStoredWorkspace,
-    normalizeStoredWorkspace,
+    loadStoredWorkspace,
+    saveStoredWorkspace,
     workspaceReadyForCompletedTurn
   } from '$lib/workspace-state';
   import type { PageData } from './$types';
@@ -401,9 +402,6 @@
   let cardInput: HTMLInputElement;
   let loreInput: HTMLInputElement;
 
-  const messagesStorageKey = 'mullet.checkpoint-one.messages';
-  const conversationModeStorageKey = 'mullet.conversation-mode';
-  const workspaceStorageKey = 'mullet.workspace.v1';
   const cardStorageKey = 'mullet.active-character-card';
   const portraitStorageKey = 'mullet.active-character-portrait';
   const cardSourceIdentifierStorageKey = 'mullet.active-character-source';
@@ -415,7 +413,6 @@
   const livingHistoryEnabledStorageKey = 'mullet.living-history-enabled';
   const livingHistoryBoundariesStorageKey = 'mullet.living-history-finalized-boundaries';
   const livingHistoryEpochStorageKey = 'mullet.living-history-epoch';
-  const conversationIdStorageKey = 'mullet.conversation-id';
   const assistantMemoryIdStorageKey = 'mullet.assistant-memory-id';
   const assistantMemoryEpochStorageKey = 'mullet.assistant-memory-epoch';
   const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
@@ -704,56 +701,11 @@
   });
 
   function restoreWorkspaceState() {
-    const stored = localStorage.getItem(workspaceStorageKey);
-    if (stored) {
-      try {
-        const workspace = normalizeStoredWorkspace(JSON.parse(stored));
-        conversationMode = workspace.mode;
-        conversationId = workspace.conversationId;
-        messages = workspace.messages;
-        localStorage.removeItem(conversationModeStorageKey);
-        localStorage.removeItem(conversationIdStorageKey);
-        localStorage.removeItem(messagesStorageKey);
-        return;
-      } catch {
-        localStorage.removeItem(workspaceStorageKey);
-        conversationMode = CONVERSATION_MODE_FICTION;
-        conversationId = crypto.randomUUID();
-        messages = [];
-        errorMessage = 'Stored workspace was invalid and was reset.';
-        persist();
-        return;
-      }
-    }
-
-    try {
-      conversationMode = normalizeConversationMode(localStorage.getItem(conversationModeStorageKey));
-    } catch {
-      conversationMode = CONVERSATION_MODE_FICTION;
-      localStorage.removeItem(conversationModeStorageKey);
-    }
-    const savedConversationId = localStorage.getItem(conversationIdStorageKey);
-    conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
-    let legacyMessages: unknown = [];
-    const savedMessages = localStorage.getItem(messagesStorageKey);
-    if (savedMessages) {
-      try {
-        legacyMessages = JSON.parse(savedMessages);
-      } catch {
-        localStorage.removeItem(messagesStorageKey);
-      }
-    }
-    try {
-      messages = createStoredWorkspace(
-        conversationMode,
-        conversationId,
-        Array.isArray(legacyMessages) ? legacyMessages as Message[] : []
-      ).messages;
-    } catch {
-      messages = [];
-      localStorage.removeItem(messagesStorageKey);
-    }
-    persist();
+    const loaded = loadStoredWorkspace(localStorage, crypto.randomUUID());
+    conversationMode = loaded.workspace.mode;
+    conversationId = loaded.workspace.conversationId;
+    messages = loaded.workspace.messages;
+    if (loaded.disposition === 'reset') errorMessage = 'Stored workspace was invalid and was reset.';
   }
 
   onDestroy(() => {
@@ -3060,10 +3012,7 @@
   function persist() {
     if (!browser) return;
     const workspace = createStoredWorkspace(conversationMode, conversationId, messages);
-    localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace));
-    localStorage.removeItem(conversationModeStorageKey);
-    localStorage.removeItem(conversationIdStorageKey);
-    localStorage.removeItem(messagesStorageKey);
+    saveStoredWorkspace(localStorage, workspace);
   }
 
   function freshConversation(): Message[] {
