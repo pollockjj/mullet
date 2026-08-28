@@ -508,6 +508,7 @@
 
   async function restoreExpressionAndGeneratedMedia() {
     await Promise.all([restoreSidecarState(), restoreGeneratedPortrait()]);
+    await tick();
     await restoreGeneratedPortraitVideo();
   }
 
