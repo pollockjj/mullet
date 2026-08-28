@@ -3398,7 +3398,7 @@
         supplementalLorebooks = assembleSupplementalLorebooks(importedLorebooks, livingHistoryBook);
       } catch (cause) {
         errorMessage = cause instanceof Error ? cause.message : 'Supplemental lorebooks could not be prepared.';
-        return;
+        return false;
       }
     } else {
       supplementalLorebooks = [];
@@ -3426,7 +3426,7 @@
       });
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Chat request could not be prepared.';
-      return;
+      return false;
     }
 
     sidecarController?.abort();
