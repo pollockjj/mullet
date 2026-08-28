@@ -3397,12 +3397,22 @@
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
               {#if inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
                 <figure
-                  class:stale={inlineSceneApplies && !inlineSceneCurrent}
+                  class:stale={inlineSceneApplies && (!inlineSceneCurrent || (inlineSceneMotionEnabled && Boolean(generatedInlineSceneVideo) && !inlineSceneVideoCurrent))}
                   class="scene-card"
-                  aria-busy={inlineSceneBusy}
-                  style={`--scene-ratio: ${generatedInlineScene && inlineSceneApplies ? `${generatedInlineScene.width} / ${generatedInlineScene.height}` : '16 / 9'}`}
+                  aria-busy={inlineSceneBusy || inlineSceneVideoBusy}
+                  style:--scene-ratio={inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.width + ' / ' + generatedInlineSceneVideo.height : generatedInlineScene && inlineSceneApplies ? generatedInlineScene.width + ' / ' + generatedInlineScene.height : '16 / 9'}
                 >
-                  {#if generatedInlineSceneUrl && inlineSceneApplies}
+                  {#if inlineSceneVideoVisible}
+                    <video
+                      src={generatedInlineSceneVideoUrl}
+                      autoplay
+                      muted
+                      loop
+                      playsinline
+                      on:error={handleInlineSceneVideoDecodeError}
+                      aria-label="Generated landscape motion for this finalized response"
+                    ></video>
+                  {:else if generatedInlineSceneUrl && inlineSceneApplies}
                     <img src={generatedInlineSceneUrl} alt="Generated landscape still for this finalized response" />
                   {:else}
                     <div class:error-state={Boolean(inlineSceneError)} class="scene-placeholder">
@@ -3410,8 +3420,8 @@
                     </div>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? 'Current response · static landscape' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
-                    {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
+                    <span>{inlineSceneVideoVisible ? 'Current response · replay-looping I2V' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.durationSeconds} sec</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>
               {/if}
