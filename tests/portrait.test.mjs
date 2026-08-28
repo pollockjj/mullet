@@ -36,8 +36,8 @@ function request(overrides = {}) {
     setting: 'the Liberator flight deck',
     attire: 'a dark leather tunic',
     lora: null,
-    aspectRatio: '2:3',
-    megapixels: 0.9,
+    aspectRatio: '1:1',
+    megapixels: 0.5,
     ...overrides
   });
 }
@@ -57,18 +57,19 @@ function referenceRequest(overrides = {}) {
     },
     characterId: 'jenna-stannis',
     profileFingerprint: '1234abcd',
-    aspectRatio: '2:3',
-    megapixels: 0.9,
+    aspectRatio: '1:1',
+    megapixels: 0.5,
     ...overrides
   });
 }
 
-test('fixes every expression portrait to 2:3 at the model multiple', () => {
-  assert.deepEqual(portraitDimensions('2:3', 0.9), { width: 768, height: 1152, pixels: 884736 });
-  const dimensions = portraitDimensions('2:3', 1);
+test('fixes every expression portrait to 1:1 at the native 0.5 MP default', () => {
+  assert.deepEqual(portraitDimensions('1:1', 0.5), { width: 704, height: 704, pixels: 495616 });
+  const dimensions = portraitDimensions('1:1', 1);
+  assert.equal(dimensions.width, dimensions.height);
   assert.equal(dimensions.width % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
   assert.equal(dimensions.height % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
-  assert.throws(() => portraitDimensions('3:4', 1), /unsupported portrait aspect ratio/);
+  assert.throws(() => portraitDimensions('2:3', 0.5), /unsupported portrait aspect ratio/);
 });
 
 test('binds a portrait request only to an expression result fingerprint', () => {
@@ -96,7 +97,7 @@ test('compiles the proven Z-Image graph and inserts only compatible LoRAs', () =
   assert.equal(plain['1'].inputs.unet_name, 'z_image_turbo_int8_convrot.safetensors');
   assert.equal(plain['2'].inputs.clip_name, 'qwen_3_4b.safetensors');
   assert.equal(plain['3'].inputs.vae_name, 'ae.safetensors');
-  assert.deepEqual(plain['7'].inputs, { width: 768, height: 1152, batch_size: 1 });
+  assert.deepEqual(plain['7'].inputs, { width: 704, height: 704, batch_size: 1 });
   assert.equal(plain['8'].inputs.steps, 8);
   assert.equal(plain['8'].inputs.cfg, 1);
   assert.equal(plain['8'].inputs.seed, 42);
@@ -123,8 +124,8 @@ test('binds Jenna identity provenance and compiles the proven Mage-Flow referenc
   assert.equal(graph['2'].inputs.type, 'mage');
   assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   assert.equal(graph['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(graph['5'].inputs.width, 768);
-  assert.equal(graph['5'].inputs.height, 1152);
+  assert.equal(graph['5'].inputs.width, 704);
+  assert.equal(graph['5'].inputs.height, 704);
   assert.equal(graph['6'].inputs.seed, 19790213);
   assert.deepEqual(graph['8'].inputs.images, ['7', 0]);
   assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
@@ -133,7 +134,7 @@ test('binds Jenna identity provenance and compiles the proven Mage-Flow referenc
 test('rejects arbitrary templates, dimensions, LoRA paths, and stale sources', () => {
   const built = request();
   assert.throws(() => normalizePortraitRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait model/);
-  assert.throws(() => normalizePortraitRequest({ ...built, aspectRatio: '3:4' }), /unsupported portrait aspect ratio/);
+  assert.throws(() => normalizePortraitRequest({ ...built, aspectRatio: '2:3' }), /unsupported portrait aspect ratio/);
   assert.throws(() => normalizePortraitRequest({ ...built, megapixels: 9 }), /unsupported portrait megapixel/);
   assert.throws(() => normalizePortraitRequest({ ...built, lora: '../escape.safetensors' }), /LoRA is invalid/);
   assert.throws(() => normalizePortraitRequest({ ...built, source: { ...built.source, messageIndex: 0 } }), /latest response/);

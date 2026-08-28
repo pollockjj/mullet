@@ -30,7 +30,7 @@ async function close(server) {
   await closed;
 }
 
-test('compiled portrait route rejects a selectable expression aspect before ComfyUI', { timeout: 120_000 }, async (context) => {
+test('compiled portrait route rejects stale selectable expression contracts before ComfyUI', { timeout: 120_000 }, async (context) => {
   execFileSync(process.execPath, [resolve(repositoryRoot, 'node_modules/vite/bin/vite.js'), 'build'], {
     cwd: repositoryRoot,
     env: {
@@ -61,31 +61,42 @@ test('compiled portrait route rejects a selectable expression aspect before Comf
   appServer = createServer(handlerModule.handler);
   const appBaseUrl = await listen(appServer);
 
+  const requestBody = {
+    spec: 'mullet_portrait_request_v3',
+    modelTemplate: 'z-image-turbo-v1',
+    source: {
+      conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
+      messageCount: 2,
+      messageIndex: 1,
+      fingerprint: '4:1234abcd',
+      expression: 'joy'
+    },
+    subject: 'Cally',
+    setting: 'the Liberator flight deck',
+    attire: 'a rust-red and deep maroon Liberator tunic',
+    lora: null,
+    referenceImage: null,
+    aspectRatio: '2:3',
+    megapixels: 0.5
+  };
   const response = await fetch(`${appBaseUrl}/mullet/api/portrait`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       origin: publicOrigin
     },
-    body: JSON.stringify({
-      spec: 'mullet_portrait_request_v2',
-      modelTemplate: 'z-image-turbo-v1',
-      source: {
-        conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
-        messageCount: 2,
-        messageIndex: 1,
-        fingerprint: '4:1234abcd',
-        expression: 'joy'
-      },
-      subject: 'Cally',
-      setting: 'the Liberator flight deck',
-      attire: 'a rust-red and deep maroon Liberator tunic',
-      lora: null,
-      referenceImage: null,
-      aspectRatio: '3:4',
-      megapixels: 0.9
-    })
+    body: JSON.stringify(requestBody)
   });
   assert.equal(response.status, 400, await response.text());
+
+  const legacyResponse = await fetch(`${appBaseUrl}/mullet/api/portrait`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      origin: publicOrigin
+    },
+    body: JSON.stringify({ ...requestBody, spec: 'mullet_portrait_request_v2', aspectRatio: '1:1' })
+  });
+  assert.equal(legacyResponse.status, 400, await legacyResponse.text());
   assert.equal(comfyCalls, 0);
 });

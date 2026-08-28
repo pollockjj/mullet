@@ -22,8 +22,8 @@ const request = buildPortraitRequest({
   setting: 'the Liberator',
   attire: 'flight clothes',
   lora: null,
-  aspectRatio: '2:3',
-  megapixels: 0.9
+  aspectRatio: '1:1',
+  megapixels: 0.5
 });
 
 function nodeInfo(node, input, options) {
@@ -52,7 +52,8 @@ test('exposes only the compatible model assets and zimage LoRAs', async () => {
   let index = 0;
   const capabilities = await loadPortraitCapabilities(async () => Response.json(replies[index++]), 'http://comfy');
   assert.deepEqual(capabilities.loras, ['zimage/kristi6.safetensors']);
-  assert.deepEqual(capabilities.aspectRatios, [{ id: '2:3', width: 2, height: 3, label: '2:3 fixed portrait' }]);
+  assert.deepEqual(capabilities.aspectRatios, [{ id: '1:1', width: 1, height: 1, label: '1:1 fixed expression' }]);
+  assert.equal(capabilities.megapixels[0], 0.5);
   assert.equal(capabilities.referenceTemplate.id, PORTRAIT_REFERENCE_TEMPLATE_ID);
 });
 
@@ -85,8 +86,8 @@ test('verifies the Jenna reference bytes before queuing the Mage-Flow identity g
     },
     characterId: 'jenna-stannis',
     profileFingerprint: '1234abcd',
-    aspectRatio: '2:3',
-    megapixels: 0.9
+    aspectRatio: '1:1',
+    megapixels: 0.5
   });
   const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const observed = [];
@@ -110,8 +111,8 @@ test('verifies the Jenna reference bytes before queuing the Mage-Flow identity g
   const queued = JSON.parse(observed[1].init.body);
   assert.equal(queued.prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   assert.equal(queued.prompt['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(queued.prompt['5'].inputs.width, 768);
-  assert.equal(queued.prompt['5'].inputs.height, 1152);
+  assert.equal(queued.prompt['5'].inputs.width, 704);
+  assert.equal(queued.prompt['5'].inputs.height, 704);
   assert.equal(queued.prompt['6'].inputs.seed, 19790213);
   assert.equal(result.filename, 'portrait-reference_00001_.png');
 
@@ -138,6 +139,7 @@ test('queues, polls, and proxies only the fixed portrait output', async () => {
   const result = await runComfyPortrait(fetcher, 'http://comfy/', request, 17);
   const queued = JSON.parse(observed[0].init.body);
   assert.equal(queued.client_id, 'mullet-portrait');
+  assert.deepEqual(queued.prompt['7'].inputs, { width: 704, height: 704, batch_size: 1 });
   assert.equal(queued.prompt['8'].inputs.seed, 17);
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait_00001_.png&subfolder=mullet&type=output');
   assert.equal(result.contentType, 'image/png');
