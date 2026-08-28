@@ -35,16 +35,16 @@ function portrait(overrides = {}) {
 }
 
 function request(overrides = {}) {
-  const built = buildPortraitVideoRequest(portrait(), '2:3');
+  const built = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64));
   return { ...built, ...overrides };
 }
 
-test('maps every portrait ratio to an exact divisible-by-32 two-second video', () => {
-  assert.deepEqual(portraitVideoDimensions('2:3'), { width: 448, height: 672, frames: 49, fps: 24 });
+test('maps every portrait ratio to an exact rendered divisible-by-64 two-second video', () => {
+  assert.deepEqual(portraitVideoDimensions('2:3'), { width: 384, height: 576, frames: 49, fps: 24 });
   for (const aspectRatio of ['2:3', '3:4', '4:5', '9:16']) {
     const dimensions = portraitVideoDimensions(aspectRatio);
-    assert.equal(dimensions.width % 32, 0);
-    assert.equal(dimensions.height % 32, 0);
+    assert.equal(dimensions.width % 64, 0);
+    assert.equal(dimensions.height % 64, 0);
     assert.equal(dimensions.frames, PORTRAIT_VIDEO_FRAMES);
     assert.equal((dimensions.frames - 1) / PORTRAIT_VIDEO_FPS, PORTRAIT_VIDEO_DURATION_SECONDS);
   }
@@ -71,18 +71,18 @@ test('builds a fixed motion prompt from expression metadata only', () => {
 
 test('compiles the fixed LTX 2.5 distilled I2V workflow', () => {
   const graph = buildLtx25PortraitVideoWorkflow(request(), {
-    promptId: '11111111-1111-4111-8111-111111111111',
-    filename: 'portrait_00017_.png',
-    subfolder: 'mullet',
-    type: 'output'
+    name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: 'a'.repeat(64)
   }, 42);
-  assert.deepEqual(graph['1'].inputs, { image: 'mullet/portrait_00017_.png [output]' });
+  assert.deepEqual(graph['1'].inputs, { image: 'mullet/motion-inputs/portrait-motion-22222222-2222-4222-8222-222222222222.png' });
   assert.equal(graph['3'].inputs.unet_name, 'ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors');
   assert.equal(graph['4'].inputs.clip_name, 'gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors');
   assert.equal(graph['5'].inputs.vae_name, 'ltx-2.5-video-vae-bf16.safetensors');
   assert.equal(graph['6'].inputs.vae_name, 'ltx-2.5-audio-vae-bf16.safetensors');
-  assert.equal(graph['11'].inputs.width, 224);
-  assert.equal(graph['11'].inputs.height, 336);
+  assert.equal(graph['11'].inputs.width, 192);
+  assert.equal(graph['11'].inputs.height, 288);
   assert.equal(graph['11'].inputs.length, 49);
   assert.equal(graph['16'].inputs.noise_seed, 42);
   assert.equal(graph['31'].inputs.codec, 'vp9');
@@ -95,18 +95,19 @@ test('rejects arbitrary templates, durations, paths, and mismatched portrait dim
   assert.throws(() => normalizePortraitVideoRequest({ ...built, durationSeconds: 5 }), /unsupported portrait-video duration/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, source: { ...built.source, portraitWidth: 832 } }), /dimensions do not match/);
   assert.throws(() => buildLtx25PortraitVideoWorkflow(built, {
-    promptId: built.source.portraitPromptId,
-    filename: '../escape.png',
-    subfolder: 'mullet',
-    type: 'output'
+    name: '../escape.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: built.source.portraitImageSha256
   }, 1), /input reference is invalid/);
   assert.throws(() => buildLtx25PortraitVideoWorkflow(built, {
-    promptId: '22222222-2222-4222-8222-222222222222',
-    filename: 'portrait_00017_.png',
-    subfolder: 'mullet',
-    type: 'output'
+    name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: 'b'.repeat(64)
   }, 1), /input reference is invalid/);
-  assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(buildPortraitVideoRequest(portrait({ generatedAt: 18 }), '2:3')));
+  assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(buildPortraitVideoRequest(portrait({ generatedAt: 18 }), '2:3', 'a'.repeat(64))));
+  assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(buildPortraitVideoRequest(portrait(), '2:3', 'b'.repeat(64))));
   assert.notEqual(
     portraitVideoRequestKey(built),
     portraitVideoRequestKey({

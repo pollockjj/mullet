@@ -14,10 +14,10 @@ export const PORTRAIT_VIDEO_FPS = 24 as const;
 export const PORTRAIT_VIDEO_FRAMES = 49 as const;
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '2:3', width: 448, height: 672 },
-  { aspectRatio: '3:4', width: 480, height: 640 },
+  { aspectRatio: '2:3', width: 384, height: 576 },
+  { aspectRatio: '3:4', width: 384, height: 512 },
   { aspectRatio: '4:5', width: 512, height: 640 },
-  { aspectRatio: '9:16', width: 288, height: 512 }
+  { aspectRatio: '9:16', width: 576, height: 1024 }
 ] as const);
 
 export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
@@ -35,7 +35,7 @@ export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
     'UNETLoader',
     'CLIPLoader',
     'VAELoader',
-    'LoadImageOutput',
+    'LoadImage',
     'CLIPTextEncode',
     'LTXVPreprocess',
     'LTXVConditioning',
@@ -55,7 +55,7 @@ export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
     'SaveWEBM'
   ],
   outputNode: '31',
-  multiple: 32,
+  multiple: 64,
   sampler: 'euler_ancestral',
   firstPassSigmas: '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
   secondPassSigmas: '0.85, 0.7250, 0.4219, 0.0',
@@ -71,6 +71,7 @@ export type PortraitVideoSource = {
   portraitGeneratedAt: number;
   portraitWidth: number;
   portraitHeight: number;
+  portraitImageSha256: string;
   portraitSource: PortraitSource;
 };
 
@@ -99,15 +100,16 @@ export type PortraitVideoInputPortrait = {
   generatedAt: number;
 };
 
-export type PortraitOutputReference = {
-  promptId: string;
-  filename: string;
-  subfolder: 'mullet';
-  type: 'output';
+export type PortraitVideoInputReference = {
+  name: string;
+  subfolder: 'mullet/motion-inputs';
+  type: 'input';
+  imageSha256: string;
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const OUTPUT_IMAGE_PATTERN = /^portrait_\d+_\.png$/;
+const INPUT_IMAGE_PATTERN = /^portrait-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const dimensionMap = new Map(PORTRAIT_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
 
 const NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, cluttered background, camera cuts, camera shake, black frames';
@@ -143,7 +145,8 @@ export function portraitVideoDimensions(aspectRatio: PortraitAspectRatio): { wid
 
 export function buildPortraitVideoRequest(
   portrait: PortraitVideoInputPortrait,
-  aspectRatio: PortraitAspectRatio
+  aspectRatio: PortraitAspectRatio,
+  imageSha256: string
 ): PortraitVideoRequest {
   return normalizePortraitVideoRequest({
     spec: PORTRAIT_VIDEO_REQUEST_SPEC,
@@ -155,6 +158,7 @@ export function buildPortraitVideoRequest(
       portraitGeneratedAt: portrait.generatedAt,
       portraitWidth: portrait.width,
       portraitHeight: portrait.height,
+      portraitImageSha256: imageSha256,
       portraitSource: portrait.source
     },
     aspectRatio,
@@ -177,7 +181,9 @@ export function isPortraitVideoSource(value: unknown): value is PortraitVideoSou
     && Number(value.portraitWidth) <= 8192
     && Number.isSafeInteger(value.portraitHeight)
     && Number(value.portraitHeight) >= 16
-    && Number(value.portraitHeight) <= 8192;
+    && Number(value.portraitHeight) <= 8192
+    && typeof value.portraitImageSha256 === 'string'
+    && SHA256_PATTERN.test(value.portraitImageSha256);
 }
 
 export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequest {
@@ -205,6 +211,7 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
       portraitGeneratedAt: Number(value.source.portraitGeneratedAt),
       portraitWidth,
       portraitHeight,
+      portraitImageSha256: value.source.portraitImageSha256,
       portraitSource: value.source.portraitSource
     },
     aspectRatio: aspectRatio as PortraitAspectRatio,
@@ -221,6 +228,7 @@ export function portraitVideoRequestKey(request: PortraitVideoRequest): string {
     normalized.source.portraitGeneratedAt,
     normalized.source.portraitWidth,
     normalized.source.portraitHeight,
+    normalized.source.portraitImageSha256,
     normalized.source.portraitSource.messageCount,
     normalized.source.portraitSource.messageIndex,
     normalized.source.portraitSource.fingerprint,
@@ -244,20 +252,20 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
 
 export function buildLtx25PortraitVideoWorkflow(
   request: PortraitVideoRequest,
-  portraitOutput: PortraitOutputReference,
+  portraitInput: PortraitVideoInputReference,
   seed: number
 ): Record<string, unknown> {
   const normalized = normalizePortraitVideoRequest(request);
   if (
-    portraitOutput.promptId !== normalized.source.portraitPromptId
-    || portraitOutput.subfolder !== 'mullet'
-    || portraitOutput.type !== 'output'
-    || !OUTPUT_IMAGE_PATTERN.test(portraitOutput.filename)
+    portraitInput.subfolder !== 'mullet/motion-inputs'
+    || portraitInput.type !== 'input'
+    || portraitInput.imageSha256 !== normalized.source.portraitImageSha256
+    || !INPUT_IMAGE_PATTERN.test(portraitInput.name)
   ) throw new Error('portrait-video input reference is invalid');
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio);
   return {
-    '1': { class_type: 'LoadImageOutput', inputs: { image: `mullet/${portraitOutput.filename} [output]` } },
+    '1': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
     '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
     '3': { class_type: 'UNETLoader', inputs: { unet_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
     '4': { class_type: 'CLIPLoader', inputs: { clip_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip, type: 'ltxv', device: 'default' } },

@@ -19,6 +19,7 @@ function stored(overrides = {}) {
       portraitGeneratedAt: 17,
       portraitWidth: 768,
       portraitHeight: 1152,
+      portraitImageSha256: 'a'.repeat(64),
       portraitSource: {
         conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
         messageCount: 4,
@@ -31,8 +32,8 @@ function stored(overrides = {}) {
     aspectRatio: '2:3',
     promptId: '22222222-2222-4222-8222-222222222222',
     seed: 42,
-    width: 448,
-    height: 672,
+    width: 384,
+    height: 576,
     frames: 49,
     fps: 24,
     durationSeconds: 2,
