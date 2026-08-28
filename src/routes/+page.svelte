@@ -1,7 +1,7 @@
 <script lang="ts">
   import { base } from '$app/paths';
   import { browser } from '$app/environment';
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import {
     embeddedLoreEntryCount,
     characterSourceIdentifier,
@@ -28,6 +28,24 @@
   import { extractPngCharacterCard, MAX_CHARACTER_CARD_PNG_BYTES } from '$lib/png-character-card';
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
+  import {
+    PORTRAIT_TIMEOUT_MS,
+    buildPortraitRequest,
+    normalizePortraitCapabilities,
+    portraitRequestKey,
+    type PortraitAspectRatio,
+    type PortraitCapabilities,
+    type PortraitMegapixels,
+    type PortraitRequest
+  } from '$lib/portrait';
+  import {
+    STORED_PORTRAIT_SPEC,
+    clearStoredPortrait,
+    loadStoredPortrait,
+    normalizeStoredPortrait,
+    saveStoredPortrait,
+    type StoredPortrait
+  } from '$lib/portrait-storage';
   import {
     buildExpressionSidecarRequest,
     emptySidecarState,
@@ -67,6 +85,24 @@
   let activeCard: ImportedCharacterCard | null = null;
   let cardSourceIdentifier = '';
   let portraitDataUrl = '';
+  let generatedPortraitUrl = '';
+  let generatedPortrait: StoredPortrait | null = null;
+  let portraitCapabilities: PortraitCapabilities | null = null;
+  let portraitCapabilitiesLoading = false;
+  let portraitPersistenceReady = false;
+  let portraitPersistenceAvailable = true;
+  let portraitBusy = false;
+  let portraitError = '';
+  let portraitSubject = 'the central character in the current scene';
+  let portraitSetting = '';
+  let portraitAttire = '';
+  let portraitLora = '';
+  let portraitAspectRatio: PortraitAspectRatio = '2:3';
+  let portraitMegapixels: PortraitMegapixels = 0.9;
+  let portraitRequest: PortraitRequest | null = null;
+  let portraitCurrent = false;
+  let lastPortraitAttemptKey = '';
+  let portraitController: AbortController | null = null;
   let embeddedLorebook: ImportedLorebook | null = null;
   let importedLorebooks: ImportedLorebook[] = [];
   let loreEnabled = true;
@@ -111,6 +147,12 @@
   const loreTimedStateStorageKey = 'mullet.lore-timed-state';
   const conversationIdStorageKey = 'mullet.conversation-id';
   const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
+  const portraitSubjectStorageKey = 'mullet.portrait-subject';
+  const portraitSettingStorageKey = 'mullet.portrait-setting';
+  const portraitAttireStorageKey = 'mullet.portrait-attire';
+  const portraitLoraStorageKey = 'mullet.portrait-lora';
+  const portraitAspectStorageKey = 'mullet.portrait-aspect';
+  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: activeLorebooks = combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard));
@@ -118,6 +160,8 @@
   $: expressionSnapshot = currentExpressionSnapshot(conversationId, messages);
   $: expressionResult = sidecarState?.channels.expression ?? null;
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
+  $: portraitRequest = currentPortraitRequest(expressionResult, expressionCurrent);
+  $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
   $: scheduleExpressionReconciliation(
     expressionsEnabled,
     sidecarPersistenceReady,
@@ -126,6 +170,15 @@
     sidecarBusy,
     expressionSnapshot,
     expressionCurrent
+  );
+  $: schedulePortraitReconciliation(
+    expressionsEnabled,
+    portraitCapabilities,
+    portraitPersistenceReady,
+    portraitPersistenceAvailable,
+    portraitBusy,
+    portraitRequest,
+    portraitCurrent
   );
 
   const starters = [
@@ -191,9 +244,205 @@
     localStorage.setItem(conversationIdStorageKey, conversationId);
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
+    restorePortraitSettings();
     void restoreSidecarState();
+    void restoreGeneratedPortrait();
+    void loadPortraitGenerator();
     void loadScenarioCatalog();
   });
+
+  onDestroy(() => {
+    portraitController?.abort();
+    if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
+  });
+
+  function restorePortraitSettings() {
+    portraitSubject = localStorage.getItem(portraitSubjectStorageKey)?.trim()
+      || (activeCard && !isScenarioCard(activeCard) ? activeCard.data.name : 'the central character in the current scene');
+    portraitSetting = localStorage.getItem(portraitSettingStorageKey) ?? '';
+    portraitAttire = localStorage.getItem(portraitAttireStorageKey) ?? '';
+    portraitLora = localStorage.getItem(portraitLoraStorageKey) ?? '';
+    const savedAspect = localStorage.getItem(portraitAspectStorageKey);
+    if (savedAspect === '2:3' || savedAspect === '3:4' || savedAspect === '4:5' || savedAspect === '9:16') {
+      portraitAspectRatio = savedAspect;
+    }
+    const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
+    if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
+      portraitMegapixels = savedMegapixels;
+    }
+  }
+
+  function persistPortraitSettings() {
+    localStorage.setItem(portraitSubjectStorageKey, portraitSubject.trim());
+    localStorage.setItem(portraitSettingStorageKey, portraitSetting.trim());
+    localStorage.setItem(portraitAttireStorageKey, portraitAttire.trim());
+    if (portraitLora) localStorage.setItem(portraitLoraStorageKey, portraitLora);
+    else localStorage.removeItem(portraitLoraStorageKey);
+    localStorage.setItem(portraitAspectStorageKey, portraitAspectRatio);
+    localStorage.setItem(portraitMegapixelsStorageKey, String(portraitMegapixels));
+    portraitController?.abort();
+    lastPortraitAttemptKey = '';
+    portraitError = '';
+  }
+
+  async function loadPortraitGenerator() {
+    if (portraitCapabilitiesLoading) return;
+    portraitCapabilitiesLoading = true;
+    portraitError = '';
+    try {
+      const response = await fetch(`${base}/api/portrait`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = payload && typeof payload.message === 'string' ? payload.message : `Portrait generator failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      portraitCapabilities = normalizePortraitCapabilities(payload);
+      if (portraitLora && !portraitCapabilities.loras.includes(portraitLora)) {
+        portraitLora = '';
+        localStorage.removeItem(portraitLoraStorageKey);
+      }
+    } catch (cause) {
+      portraitCapabilities = null;
+      portraitError = cause instanceof Error ? cause.message : 'Portrait generator is unavailable.';
+    } finally {
+      portraitCapabilitiesLoading = false;
+    }
+  }
+
+  function installGeneratedPortrait(portrait: StoredPortrait) {
+    if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
+    generatedPortrait = portrait;
+    generatedPortraitUrl = URL.createObjectURL(portrait.image);
+  }
+
+  async function restoreGeneratedPortrait() {
+    try {
+      const stored = await loadStoredPortrait();
+      if (stored) {
+        const normalized = normalizeStoredPortrait(stored);
+        if (normalized.conversationId === conversationId) installGeneratedPortrait(normalized);
+        else await clearStoredPortrait();
+      }
+    } catch (cause) {
+      portraitPersistenceAvailable = false;
+      portraitError = cause instanceof Error ? cause.message : 'Portrait persistence failed.';
+    } finally {
+      portraitPersistenceReady = true;
+    }
+  }
+
+  function currentPortraitRequest(result: ExpressionSidecarResult | null, current: boolean): PortraitRequest | null {
+    if (!result || !current) return null;
+    try {
+      return buildPortraitRequest(result, {
+        subject: portraitSubject,
+        setting: portraitSetting,
+        attire: portraitAttire,
+        lora: portraitLora || null,
+        aspectRatio: portraitAspectRatio,
+        megapixels: portraitMegapixels
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  function schedulePortraitReconciliation(
+    enabled: boolean,
+    capabilities: PortraitCapabilities | null,
+    persistenceReady: boolean,
+    persistenceAvailable: boolean,
+    busy: boolean,
+    request: PortraitRequest | null,
+    current: boolean
+  ) {
+    if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || busy || !request || current) return;
+    const key = portraitRequestKey(request);
+    if (key === lastPortraitAttemptKey) return;
+    lastPortraitAttemptKey = key;
+    void generatePortrait(request);
+  }
+
+  function responseHeaderInteger(response: Response, name: string, minimum: number, maximum: number): number {
+    const value = Number(response.headers.get(name));
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new Error(`Portrait response omitted ${name}.`);
+    return value;
+  }
+
+  async function generatePortrait(selectedRequest: PortraitRequest | null = portraitRequest) {
+    if (!selectedRequest || !portraitCapabilities || portraitBusy || !portraitPersistenceReady || !portraitPersistenceAvailable) return;
+    const key = portraitRequestKey(selectedRequest);
+    lastPortraitAttemptKey = key;
+    portraitBusy = true;
+    portraitError = '';
+    const activeController = new AbortController();
+    portraitController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, PORTRAIT_TIMEOUT_MS + 5_000);
+    try {
+      const response = await fetch(`${base}/api/portrait`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(selectedRequest),
+        signal: activeController.signal
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const detail = payload && typeof payload.message === 'string' ? payload.message : `Portrait generation failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      const image = await response.blob();
+      if (image.type !== 'image/png' || image.size < 8) throw new Error('Portrait generator returned an invalid image.');
+      const liveRequest = currentPortraitRequest(expressionResult, expressionCurrent);
+      if (!liveRequest || portraitRequestKey(liveRequest) !== key) return;
+      const promptId = response.headers.get('x-mullet-prompt-id') ?? '';
+      const stored = normalizeStoredPortrait({
+        spec: STORED_PORTRAIT_SPEC,
+        conversationId: selectedRequest.source.conversationId,
+        requestKey: key,
+        source: selectedRequest.source,
+        modelTemplate: selectedRequest.modelTemplate,
+        promptId,
+        seed: responseHeaderInteger(response, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
+        width: responseHeaderInteger(response, 'x-mullet-width', 16, 8192),
+        height: responseHeaderInteger(response, 'x-mullet-height', 16, 8192),
+        generatedAt: Date.now(),
+        image
+      });
+      await saveStoredPortrait(stored);
+      installGeneratedPortrait(stored);
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        if (timedOut) portraitError = `Portrait generation timed out after ${(PORTRAIT_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+      } else {
+        portraitError = cause instanceof Error ? cause.message : 'Portrait generation failed.';
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (portraitController === activeController) {
+        portraitBusy = false;
+        portraitController = null;
+      }
+    }
+  }
+
+  async function resetPortraitForConversation() {
+    portraitController?.abort();
+    lastPortraitAttemptKey = '';
+    portraitError = '';
+    generatedPortrait = null;
+    if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
+    generatedPortraitUrl = '';
+    try {
+      await clearStoredPortrait();
+    } catch (cause) {
+      portraitPersistenceAvailable = false;
+      portraitError = cause instanceof Error ? cause.message : 'Portrait persistence failed.';
+    }
+  }
 
   function currentExpressionSnapshot(currentConversationId: string, currentMessages: readonly Message[]): ExpressionSidecarRequest | null {
     if (!currentConversationId) return null;
@@ -259,6 +508,7 @@
     lastExpressionAttemptKey = '';
     conversationId = crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
+    await resetPortraitForConversation();
     sidecarState = emptySidecarState(conversationId);
     sidecarError = '';
     if (!sidecarPersistenceAvailable) return;
@@ -274,7 +524,10 @@
     localStorage.setItem(expressionsEnabledStorageKey, String(expressionsEnabled));
     sidecarError = '';
     lastExpressionAttemptKey = '';
-    if (!expressionsEnabled) sidecarController?.abort();
+    if (!expressionsEnabled) {
+      sidecarController?.abort();
+      portraitController?.abort();
+    }
   }
 
   async function determineExpression(selectedSnapshot: ExpressionSidecarRequest | null = null) {
@@ -673,6 +926,7 @@
     if (!content || streaming || !lorePersistenceReady) return;
 
     sidecarController?.abort();
+    portraitController?.abort();
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
@@ -795,15 +1049,18 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || sidecarBusy} class="dot"></span>
+      <span class:live={streaming || sidecarBusy || portraitBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
 
   <main>
     <aside>
-      <div class:active={activeCard} class="portrait">
-        {#if portraitDataUrl && activeCard}
+      <div class:active={activeCard || generatedPortraitUrl} class:generated={expressionsEnabled && generatedPortraitUrl} class="portrait">
+        {#if expressionsEnabled && generatedPortraitUrl}
+          <img src={generatedPortraitUrl} alt={`${generatedPortrait?.source.expression ?? 'Current'} generated expression portrait`} />
+          <span class:stale={!portraitCurrent} class="portrait-status">{portraitBusy ? 'Updating…' : portraitCurrent ? generatedPortrait?.source.expression : 'Stale'}</span>
+        {:else if portraitDataUrl && activeCard}
           <img src={portraitDataUrl} alt={`${activeCard.data.name} character portrait`} />
         {:else if activeCard}
           <span class="initial">{activeCard.data.name.slice(0, 1).toUpperCase()}</span>
@@ -889,6 +1146,69 @@
         >
           {sidecarBusy ? 'Determining…' : 'Determine expression'}
         </button>
+      </section>
+      <section class="portrait-panel" aria-label="Generated expression portrait">
+        <div class="portrait-heading">
+          <div>
+            <span class="eyebrow">Comfy portrait</span>
+            <strong>{portraitBusy ? 'Generating…' : portraitCurrent ? 'Current' : generatedPortrait ? 'Stale' : 'No image yet'}</strong>
+          </div>
+          {#if generatedPortrait}<small>{generatedPortrait.width}×{generatedPortrait.height}</small>{/if}
+        </div>
+        {#if portraitCapabilities}
+          <label>
+            <span>Image model</span>
+            <select value={portraitCapabilities.template.id} disabled={portraitBusy} aria-label="Portrait image model">
+              <option value={portraitCapabilities.template.id}>{portraitCapabilities.template.label}</option>
+            </select>
+          </label>
+          <label>
+            <span>Subject</span>
+            <input bind:value={portraitSubject} on:change={persistPortraitSettings} maxlength="500" disabled={portraitBusy} aria-label="Portrait subject" />
+          </label>
+          <label>
+            <span>Subject LoRA</span>
+            <select bind:value={portraitLora} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait subject LoRA">
+              <option value="">None</option>
+              {#each portraitCapabilities.loras as lora}
+                <option value={lora}>{lora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            <span>Attire</span>
+            <input bind:value={portraitAttire} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait attire" />
+          </label>
+          <label>
+            <span>Setting</span>
+            <input bind:value={portraitSetting} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait setting" />
+          </label>
+          <div class="portrait-grid">
+            <label>
+              <span>Aspect</span>
+              <select bind:value={portraitAspectRatio} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait aspect ratio">
+                {#each portraitCapabilities.aspectRatios as ratio}<option value={ratio.id}>{ratio.label}</option>{/each}
+              </select>
+            </label>
+            <label>
+              <span>Megapixels</span>
+              <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
+                {#each portraitCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
+              </select>
+            </label>
+          </div>
+          <small class="prompt-guide">{portraitCapabilities.template.promptGuide}</small>
+          {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
+          <button on:click={() => void generatePortrait()} disabled={portraitBusy || !portraitRequest || !expressionsEnabled || !portraitPersistenceAvailable}>
+            {portraitBusy ? 'Generating…' : portraitCurrent ? 'Regenerate portrait' : 'Generate portrait'}
+          </button>
+          {#if !expressionsEnabled}<small>Turn on Expressions to generate and update portraits.</small>{/if}
+        {:else}
+          {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
+          <button on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
+            {portraitCapabilitiesLoading ? 'Connecting…' : 'Retry portrait generator'}
+          </button>
+        {/if}
       </section>
       <section class="lore-panel" aria-label="Active lorebooks">
         <div class="lore-heading">
@@ -1077,8 +1397,12 @@
   main { min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
   aside { min-height: 0; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid #302c28; background: rgba(15,14,13,.55); }
   .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
+  .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
+  .portrait.generated { border-color: #49614d; }
   .portrait img { width: 100%; height: 100%; object-fit: cover; }
+  .portrait-status { position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border: 1px solid rgba(126,184,141,.65); border-radius: 999px; color: #d9efdd; background: rgba(17,29,20,.82); font: 700 9px/1 ui-monospace, monospace; text-transform: capitalize; backdrop-filter: blur(8px); }
+  .portrait-status.stale { border-color: rgba(181,135,84,.65); color: #efd0a8; background: rgba(43,31,20,.82); }
   .initial { color: #e7aa61; font: 500 72px/1 Georgia, serif; text-shadow: 0 0 42px rgba(231,170,97,.25); }
   .scenario { padding: 2px 3px; }
   .scenario strong { display: block; margin: 7px 0; font-family: Georgia, serif; font-size: 17px; }
@@ -1109,6 +1433,20 @@
   .expression-panel > button:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
   .expression-panel > button:disabled { opacity: .4; cursor: default; }
   .sidecar-error { padding: 7px 8px; border: 1px solid #6e3c34; border-radius: 7px; color: #e6b9ae; background: #2c1b18; font-size: 9px; line-height: 1.4; }
+  .portrait-panel { display: grid; gap: 8px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
+  .portrait-heading { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
+  .portrait-heading > div { display: grid; gap: 4px; }
+  .portrait-heading strong { color: #d7d0c7; font-size: 12px; }
+  .portrait-heading > small { color: #758c78; font: 9px/1 ui-monospace, monospace; }
+  .portrait-panel label { display: grid; gap: 4px; color: #817970; font-size: 9px; }
+  .portrait-panel input, .portrait-panel select { min-width: 0; width: 100%; padding: 6px 7px; border: 1px solid #3c3731; border-radius: 7px; color: #c9c1b7; background: #181512; font-size: 10px; }
+  .portrait-panel input:focus, .portrait-panel select:focus { outline: 1px solid #5f8066; border-color: #5f8066; }
+  .portrait-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .prompt-guide { color: #69635c; font-size: 8px; line-height: 1.4; }
+  .portrait-panel > small { color: #877d72; font-size: 9px; line-height: 1.4; }
+  .portrait-panel > button { padding: 8px; border: 1px solid #49614d; border-radius: 8px; color: #b6d3ba; background: #19221b; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .portrait-panel > button:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
+  .portrait-panel > button:disabled { opacity: .4; cursor: default; }
   .lore-panel { display: grid; gap: 10px; padding-top: 17px; border-top: 1px solid #34302b; }
   .persona-field { display: grid; gap: 7px; }
   .persona-field textarea { width: 100%; resize: vertical; min-height: 64px; padding: 9px 10px; border: 1px solid #413a33; border-radius: 9px; color: #ded6cc; background: #171513; font-size: 11px; line-height: 1.45; }
