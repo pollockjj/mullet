@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import { Z_IMAGE_TURBO_SCENE_TEMPLATE, buildInlineSceneImageRequest, createInlineSceneResult } from '../src/lib/inline-scene.ts';
 import { loadInlineSceneCapabilities, runComfyInlineScene, validateInlineScenePng } from '../src/lib/server/comfy-inline-scene.ts';
 
@@ -8,17 +9,12 @@ const promptId = '33333333-3333-4333-8333-333333333333';
 const visualPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 
 function request() {
+  const turns = [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }];
   const result = createInlineSceneResult({
     spec: 'mullet_inline_scene_request_v1',
     kind: 'inline_scene',
-    source: {
-      conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
-      messageCount: 2,
-      messageIndex: 1,
-      fingerprint: `sha256:${'a'.repeat(64)}`,
-      turnFingerprint: `sha256:${'b'.repeat(64)}`
-    },
-    turns: [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }]
+    source: livingHistorySourceForMessages('8d78c151-83f0-4c72-9b9b-1ab957adca78', turns),
+    turns
   }, 'gemma-4-ortenzya', visualPrompt);
   return buildInlineSceneImageRequest(result, { lora: null, aspectRatio: '3:2', megapixels: 0.5 });
 }

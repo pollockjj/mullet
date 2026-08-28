@@ -220,12 +220,16 @@ export function normalizeInlineSceneResult(value: unknown): InlineSceneResult {
   if (!isRecord(value) || value.spec !== INLINE_SCENE_RESULT_SPEC || value.kind !== 'inline_scene') {
     throw new Error('invalid inline-scene result spec');
   }
-  return createInlineSceneResult({
-    spec: INLINE_SCENE_REQUEST_SPEC,
+  const source = normalizeLivingHistorySource(value.source);
+  if (typeof value.model !== 'string' || !value.model.trim() || value.model.length > 200) throw new Error('inline-scene model is invalid');
+  const prompt = parseInlineSceneResponse(JSON.stringify({ prompt: isRecord(value.output) ? value.output.prompt : '' }));
+  return {
+    spec: INLINE_SCENE_RESULT_SPEC,
     kind: 'inline_scene',
-    source: normalizeLivingHistorySource(value.source),
-    turns: [{ role: 'user', content: 'provenance placeholder' }, { role: 'assistant', content: 'provenance placeholder' }]
-  }, value.model as string, isRecord(value.output) ? value.output.prompt as string : '');
+    source,
+    model: value.model.trim(),
+    output: { prompt }
+  };
 }
 
 export function inlineSceneResultMatchesRequest(result: InlineSceneResult, request: InlineSceneRequest): boolean {

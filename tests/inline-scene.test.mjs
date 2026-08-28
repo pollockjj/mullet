@@ -48,7 +48,8 @@ test('shrinks an oversized context tail while retaining the exact finalized pair
   ];
   const source = livingHistorySourceForMessages(conversationId, transcript);
   const request = buildInlineSceneRequest(conversationId, transcript, source);
-  assert.deepEqual(request.turns, messages);
+  assert.deepEqual(request.turns, [transcript[2], ...messages]);
+  assert.equal(request.turns.some((turn) => turn.content.length > 60_000), false);
 });
 
 test('rejects forged source provenance unrelated to the supplied latest turn', () => {
