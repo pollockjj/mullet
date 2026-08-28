@@ -22,13 +22,14 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function png(width, height) {
+function png(width, height, marker = 0) {
   const bytes = new Uint8Array(24);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   bytes.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(bytes.buffer);
   view.setUint32(16, width, false);
   view.setUint32(20, height, false);
+  bytes[8] = marker;
   return bytes;
 }
 
@@ -212,7 +213,7 @@ function fakeComfy() {
       }
       if (url.pathname === '/view') {
         if (url.searchParams.get('filename')?.endsWith('.png')) {
-          const endFrameBytes = png(768, 1152);
+          const endFrameBytes = png(768, 1152, 1);
           response.writeHead(200, {
             'content-type': 'image/png',
             'content-length': String(endFrameBytes.byteLength)
@@ -414,14 +415,14 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.headers.get('x-mullet-end-frame-prompt-id'), endFramePromptId);
     assert.equal(response.headers.get('x-mullet-end-frame-width'), '768');
     assert.equal(response.headers.get('x-mullet-end-frame-height'), '1152');
-    assert.equal(response.headers.get('x-mullet-end-frame-sha256'), sha256(png(768, 1152)));
+    assert.equal(response.headers.get('x-mullet-end-frame-sha256'), sha256(png(768, 1152, 1)));
     const videoSeed = Number(response.headers.get('x-mullet-seed'));
     const endFrameSeed = Number(response.headers.get('x-mullet-end-frame-seed'));
     assert.equal(endFrameSeed, videoSeed === Number.MAX_SAFE_INTEGER ? 0 : videoSeed + 1);
 
     assert.equal(fake.state.uploads.length, 2);
     assert.deepEqual(fake.state.uploads[0].bytes, imageBytes);
-    assert.deepEqual(fake.state.uploads[1].bytes, png(768, 1152));
+    assert.deepEqual(fake.state.uploads[1].bytes, png(768, 1152, 1));
     assert.equal(fake.state.prompts.length, 2);
     const endFramePrompt = fake.state.prompts[0];
     const videoPrompt = fake.state.prompts[1];
