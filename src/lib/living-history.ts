@@ -257,7 +257,6 @@ export function buildLivingHistoryRequest(
     spec: LIVING_HISTORY_REQUEST_SPEC,
     kind: 'living_history',
     source: {
-      conversationId,
       ...latestSource
     },
     previous: {
