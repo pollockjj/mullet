@@ -26,6 +26,13 @@
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
   import { serializeChatRequest } from '$lib/chat-request-size';
+  import {
+    isScenarioCard,
+    normalizeScenarioCatalog,
+    validateScenarioPackage,
+    type ScenarioCatalog,
+    type ScenarioCatalogEntry
+  } from '$lib/scenario';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -54,6 +61,10 @@
   let lorePersistenceAvailable = true;
   let loreTimedState: LoreTimedState = emptyLoreTimedState();
   let personaDescription = '';
+  let scenarioCatalog: ScenarioCatalog | null = null;
+  let selectedScenarioId = '';
+  let selectedScenario: ScenarioCatalogEntry | null = null;
+  let scenarioLoading = false;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
@@ -74,6 +85,7 @@
     ...(embeddedLorebook && !importedLorebooks.some((book) => book.name === embeddedLorebook?.name) ? [embeddedLorebook] : []),
     ...importedLorebooks
   ];
+  $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -133,7 +145,72 @@
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
+    void loadScenarioCatalog();
   });
+
+  async function loadScenarioCatalog() {
+    try {
+      const response = await fetch(`${base}/scenarios/catalog.json`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Bundled scenario catalog failed to load (${response.status}).`);
+      scenarioCatalog = normalizeScenarioCatalog(await response.json());
+      const activeScenarioId = activeCard?.data.extensions.mullet && typeof activeCard.data.extensions.mullet === 'object'
+        ? String((activeCard.data.extensions.mullet as Record<string, unknown>).scenario_id ?? '')
+        : '';
+      selectedScenarioId = scenarioCatalog.scenarios.some((scenario) => scenario.id === activeScenarioId)
+        ? activeScenarioId
+        : scenarioCatalog.scenarios[0].id;
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario catalog failed to load.';
+    }
+  }
+
+  function hasRealTranscript(): boolean {
+    if (messages.some((message) => message.role === 'user')) return true;
+    return messages.length > 0 && (!activeCard || !containsOnlyOpeningGreeting(activeCard));
+  }
+
+  async function startSelectedScenario() {
+    if (!selectedScenario || streaming || scenarioLoading) return;
+    errorMessage = '';
+    noticeMessage = '';
+    scenarioLoading = true;
+    try {
+      const [cardResponse, lorebookResponse] = await Promise.all([
+        fetch(`${base}/scenarios/${selectedScenario.card}`, { cache: 'no-store' }),
+        fetch(`${base}/scenarios/${selectedScenario.lorebook}`, { cache: 'no-store' })
+      ]);
+      if (!cardResponse.ok || !lorebookResponse.ok) {
+        throw new Error(`Bundled scenario package failed to load (${cardResponse.status}/${lorebookResponse.status}).`);
+      }
+      const packaged = validateScenarioPackage(
+        selectedScenario,
+        await cardResponse.json(),
+        await lorebookResponse.json()
+      );
+      if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
+
+      activeCard = packaged.card;
+      cardSourceIdentifier = characterSourceIdentifier(selectedScenario.card);
+      portraitDataUrl = '';
+      embeddedLorebook = embeddedLoreFromCard(activeCard);
+      loreEnabled = true;
+      loreTimedState = emptyLoreTimedState();
+      lastLoreActivations = null;
+      lastLoreActivationCount = 0;
+      lastLoreBudget = 0;
+      localStorage.removeItem(loreTimedStateStorageKey);
+      persistCard();
+      persistLoreEnabled();
+      messages = freshConversation();
+      persist();
+      noticeMessage = `${selectedScenario.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
+      await scrollToLatest();
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario failed to start.';
+    } finally {
+      scenarioLoading = false;
+    }
+  }
 
   function persist() {
     if (browser) localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
@@ -549,7 +626,7 @@
       </div>
       {#if activeCard}
         <div class="scenario">
-          <span class="eyebrow">Active character · V{activeCard.version}</span>
+          <span class="eyebrow">{isScenarioCard(activeCard) ? 'Active scenario' : `Active character · V${activeCard.version}`}</span>
           <strong>{activeCard.data.name}</strong>
           <p>{activeCard.data.description || 'No character description supplied.'}</p>
           <div class="card-facts">
@@ -581,6 +658,22 @@
           <button class="card-button" on:click={removeCharacterCard} disabled={streaming}>Remove</button>
         {/if}
       </div>
+      <section class="scenario-picker" aria-label="Bundled scenarios">
+        <span class="eyebrow">Bundled scenarios</span>
+        {#if scenarioCatalog}
+          <select bind:value={selectedScenarioId} disabled={streaming || scenarioLoading} aria-label="Select bundled scenario">
+            {#each scenarioCatalog.scenarios as scenario}
+              <option value={scenario.id}>{scenario.title}</option>
+            {/each}
+          </select>
+          {#if selectedScenario}<small>{selectedScenario.summary}</small>{/if}
+          <button on:click={() => void startSelectedScenario()} disabled={streaming || scenarioLoading || !selectedScenario}>
+            {scenarioLoading ? 'Loading…' : 'Start scenario'}
+          </button>
+        {:else}
+          <small>Loading bundled scenarios…</small>
+        {/if}
+      </section>
       <section class="lore-panel" aria-label="Active lorebooks">
         <div class="lore-heading">
           <div>
@@ -747,7 +840,7 @@
   :global(*) { box-sizing: border-box; }
   :global(html) { background: #11100f; color: #eee9df; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   :global(body) { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 70% -20%, #3a3026 0, transparent 38%), #11100f; }
-  :global(button), :global(textarea), :global(input) { font: inherit; }
+  :global(button), :global(textarea), :global(input), :global(select) { font: inherit; }
   .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
   header { height: 74px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid #39342e; background: rgba(17,16,15,.9); backdrop-filter: blur(14px); }
   .brand { display: flex; align-items: center; gap: 13px; }
@@ -779,6 +872,12 @@
   .card-button:hover:not(:disabled) { border-color: #98714a; color: #fff0df; }
   .card-button.primary:hover:not(:disabled) { color: #21170d; background: #e8b06e; }
   .card-button:disabled { opacity: .35; cursor: default; }
+  .scenario-picker { display: grid; gap: 8px; padding: 13px 0 2px; border-top: 1px solid #34302b; }
+  .scenario-picker select { min-width: 0; width: 100%; padding: 8px 9px; border: 1px solid #443d35; border-radius: 8px; color: #d0c7bc; background: #181512; font-size: 10px; }
+  .scenario-picker small { color: #7e766e; font-size: 10px; line-height: 1.45; }
+  .scenario-picker button { padding: 8px; border: 1px solid #875f39; border-radius: 8px; color: #e8c28e; background: #2a2118; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .scenario-picker button:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }
+  .scenario-picker button:disabled { opacity: .4; cursor: default; }
   .lore-panel { display: grid; gap: 10px; padding-top: 17px; border-top: 1px solid #34302b; }
   .persona-field { display: grid; gap: 7px; }
   .persona-field textarea { width: 100%; resize: vertical; min-height: 64px; padding: 9px 10px; border: 1px solid #413a33; border-radius: 9px; color: #ded6cc; background: #171513; font-size: 11px; line-height: 1.45; }
