@@ -1,0 +1,13 @@
+{
+  "spec": "mullet_scenario_catalog_v1",
+  "scenarios": [
+    {
+      "id": "blakes-7-post-gan",
+      "version": "1.0.0",
+      "title": "Blake's 7 — After the False Control",
+      "summary": "A divergent ensemble continuation aboard the Liberator, beginning immediately after Gan's death and the discovery that Control was a decoy.",
+      "card": "blakes-7-post-gan.card.json",
+      "lorebook": "blakes-7-post-gan.lorebook.json"
+    }
+  ]
+}
