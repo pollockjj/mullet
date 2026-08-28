@@ -2656,6 +2656,70 @@
           </button>
         {/if}
       </section>
+      <section class="portrait-panel scene-panel" aria-label="Inline landscape scene">
+        <div class="portrait-heading">
+          <div>
+            <span class="eyebrow">Inline scene</span>
+            <strong>{inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Current response' : generatedInlineScene && inlineSceneApplies ? 'Stale settings' : 'No scene yet'}</strong>
+          </div>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              bind:checked={inlineScenesEnabled}
+              on:change={persistInlineScenesEnabled}
+              disabled={!inlineScenePersistenceReady || !inlineScenePersistenceAvailable}
+            />
+            <span>{inlineScenesEnabled ? 'On' : 'Off'}</span>
+          </label>
+        </div>
+        {#if inlineSceneCapabilities}
+          <label>
+            <span>Image model</span>
+            <select value={inlineSceneCapabilities.template.id} disabled={inlineSceneBusy} aria-label="Inline scene image model">
+              <option value={inlineSceneCapabilities.template.id}>{inlineSceneCapabilities.template.label}</option>
+            </select>
+          </label>
+          <label>
+            <span>Subject LoRA</span>
+            <select bind:value={inlineSceneLora} on:change={persistInlineSceneSettings} disabled={inlineSceneBusy} aria-label="Inline scene subject LoRA">
+              <option value="">None</option>
+              {#each inlineSceneCapabilities.loras as lora}
+                <option value={lora.path}>{lora.path.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · {lora.trigger}</option>
+              {/each}
+            </select>
+          </label>
+          <div class="portrait-grid">
+            <label>
+              <span>Aspect</span>
+              <select bind:value={inlineSceneAspectRatio} on:change={persistInlineSceneSettings} disabled={inlineSceneBusy} aria-label="Inline scene aspect ratio">
+                {#each inlineSceneCapabilities.aspectRatios as ratio}<option value={ratio.id}>{ratio.label}</option>{/each}
+              </select>
+            </label>
+            <label>
+              <span>Megapixels</span>
+              <select bind:value={inlineSceneMegapixels} on:change={persistInlineSceneSettings} disabled={inlineSceneBusy} aria-label="Inline scene megapixels">
+                {#each inlineSceneCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
+              </select>
+            </label>
+          </div>
+          {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.source.sidecarModel}</small>{/if}
+          <small class="prompt-guide">{inlineSceneCapabilities.template.promptGuide}</small>
+          {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
+          <button
+            on:click={() => void generateInlineScene()}
+            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || !inlineScenesEnabled || !inlineScenePersistenceAvailable}
+          >
+            {inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Regenerate scene' : 'Generate scene'}
+          </button>
+          {#if !inlineScenesEnabled}<small>Turn on Inline scene to direct and render each finalized response.</small>{/if}
+          {#if inlineScenesEnabled && !inlineSceneSidecarRequest}<small>Finish one user-and-assistant turn before scene generation starts.</small>{/if}
+        {:else}
+          {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
+          <button on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
+            {inlineSceneCapabilitiesLoading ? 'Connecting…' : 'Retry inline scene'}
+          </button>
+        {/if}
+      </section>
       <section class="lore-panel" aria-label="Active lorebooks">
         <div class="lore-heading">
           <div>
@@ -2813,10 +2877,25 @@
             </div>
           </div>
         {:else}
-          {#each messages as message}
+          {#each messages as message, messageIndex}
             <article class:assistant={message.role === 'assistant'}>
               <span class="speaker">{message.role === 'user' ? 'You' : activeCard?.data.name ?? data.model}</span>
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
+              {#if inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
+                <figure class:stale={inlineSceneApplies && !inlineSceneCurrent} class="scene-card" aria-busy={inlineSceneBusy}>
+                  {#if generatedInlineSceneUrl && inlineSceneApplies}
+                    <img src={generatedInlineSceneUrl} alt="Generated landscape still for this finalized response" />
+                  {:else}
+                    <div class:error-state={Boolean(inlineSceneError)} class="scene-placeholder">
+                      <span>{inlineSceneError ? 'Static scene unavailable' : inlineSceneBusy ? 'Directing and rendering…' : 'Waiting for scene generation'}</span>
+                    </div>
+                  {/if}
+                  <figcaption>
+                    <span>{inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? 'Current response · static landscape' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
+                  </figcaption>
+                </figure>
+              {/if}
             </article>
           {/each}
         {/if}
@@ -2991,6 +3070,14 @@
   .speaker { display: block; margin-bottom: 8px; color: #c98e4f; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
   article.assistant .speaker { color: #7db68d; }
   .content { color: #e8e2d9; font: 16px/1.72 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .scene-card { position: relative; overflow: hidden; margin: 18px 0 0; border: 1px solid #435344; border-radius: 13px; background: #171b18; box-shadow: 0 18px 42px rgba(0,0,0,.24); }
+  .scene-card.stale { border-color: #6d573d; }
+  .scene-card img, .scene-placeholder { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
+  .scene-placeholder { min-height: 180px; display: grid; place-items: center; color: #8ea491; font: 700 10px/1.4 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+  .scene-placeholder:not(.error-state) { background: linear-gradient(110deg, #171918 25%, #263028 45%, #171918 65%); background-size: 240% 100%; animation: scene-shimmer 1.8s linear infinite; }
+  .scene-placeholder.error-state { color: #d4a99e; background: #251918; }
+  .scene-card figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 9px 11px; color: #a8b9aa; background: #171b18; font: 700 9px/1.3 ui-monospace, monospace; }
+  .scene-card figcaption small { color: #748276; font-size: 8px; }
   .cursor { color: #e7aa61; animation: pulse .55s infinite alternate; }
   .composer-wrap { padding: 12px clamp(24px, 7vw, 110px) 20px; background: linear-gradient(transparent, #11100f 18%); }
   .composer { max-width: 840px; margin: 0 auto; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 12px; padding: 12px; border: 1px solid #484139; border-radius: 15px; background: #1b1815; box-shadow: 0 16px 50px rgba(0,0,0,.32); }
@@ -3007,6 +3094,7 @@
   .error { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #7b4036; border-radius: 9px; color: #f0c8bd; background: #321d19; font-size: 12px; white-space: pre-wrap; }
   .notice { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #5f513d; border-radius: 9px; color: #e9c995; background: #2d251a; font-size: 12px; }
   @keyframes pulse { to { opacity: .35; } }
+  @keyframes scene-shimmer { to { background-position: -240% 0; } }
   @media (max-width: 760px) {
     header { height: 66px; padding: 0 14px; }
     .brand p { display: none; }
