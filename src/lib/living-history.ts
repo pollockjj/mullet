@@ -4,7 +4,8 @@ import { sha256Hex } from './sha256.ts';
 
 export const LIVING_HISTORY_REQUEST_SPEC = 'mullet_living_history_request_v2' as const;
 export const LIVING_HISTORY_RESULT_SPEC = 'mullet_living_history_result_v2' as const;
-export const LIVING_HISTORY_TIMEOUT_MS = 30_000 as const;
+export const LIVING_HISTORY_TIMEOUT_MS = 60_000 as const;
+export const LIVING_HISTORY_MAX_TOKENS = 1_536 as const;
 export const LIVING_HISTORY_INTERVAL_MESSAGES = 10 as const;
 export const LIVING_HISTORY_TARGET_SUMMARY_WORDS = 200 as const;
 export const LIVING_HISTORY_MAX_SUMMARY_WORDS = 250 as const;

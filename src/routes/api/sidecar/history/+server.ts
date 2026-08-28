@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import {
   LIVING_HISTORY_SYSTEM_PROMPT,
   LIVING_HISTORY_TIMEOUT_MS,
+  LIVING_HISTORY_MAX_TOKENS,
   createLivingHistoryResult,
   livingHistoryModelInput,
   normalizeLivingHistoryRequest,
@@ -28,7 +29,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       model: runtime.modelId,
       systemPrompt: LIVING_HISTORY_SYSTEM_PROMPT,
       input: livingHistoryModelInput(historyRequest),
-      maxTokens: 2048,
+      maxTokens: LIVING_HISTORY_MAX_TOKENS,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(LIVING_HISTORY_TIMEOUT_MS)])
     });
     const update = parseLivingHistoryResponse(completion, historyRequest);
