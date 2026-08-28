@@ -9,6 +9,7 @@ import {
   createLivingHistoryResult,
   livingHistoryLorebook,
   livingHistoryModelInput,
+  livingHistoryResultMatchesMessages,
   livingHistoryResultMatchesRequest,
   normalizeLivingHistoryRequest,
   parseLivingHistoryResponse
@@ -61,6 +62,8 @@ test('binds each replacement ledger to one source turn and prior revision', () =
   const result = createLivingHistoryResult(request, 'gemma-4-ortenzya', 'Gan is dead. Avon rejected the user’s command proposal. Blake remains in command.');
   assert.equal(result.output.revision, 1);
   assert.equal(livingHistoryResultMatchesRequest(result, request), true);
+  assert.equal(livingHistoryResultMatchesMessages(result, conversationId, messages), true);
+  assert.equal(livingHistoryResultMatchesMessages(result, conversationId, [...messages, { role: 'user', content: 'What now?' }]), false);
   assert.equal(livingHistoryResultMatchesRequest({ ...result, output: { ...result.output, revision: 2 } }, request), false);
 });
 

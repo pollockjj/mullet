@@ -246,6 +246,24 @@ export function livingHistoryResultMatchesRequest(
     && normalizedResult.output.revision === normalizedRequest.previous.revision + 1;
 }
 
+export function livingHistoryResultMatchesMessages(
+  result: LivingHistoryResult,
+  conversationId: string,
+  messages: readonly TranscriptMessage[]
+): boolean {
+  const normalizedResult = normalizeLivingHistoryResult(result);
+  let source: LivingHistorySource;
+  try {
+    source = buildLivingHistoryRequest(conversationId, messages, null).source;
+  } catch {
+    return false;
+  }
+  return normalizedResult.source.conversationId === source.conversationId
+    && normalizedResult.source.messageCount === source.messageCount
+    && normalizedResult.source.messageIndex === source.messageIndex
+    && normalizedResult.source.fingerprint === source.fingerprint;
+}
+
 export function livingHistoryLorebook(result: LivingHistoryResult): ImportedLorebook {
   const normalized = normalizeLivingHistoryResult(result);
   const raw = {
