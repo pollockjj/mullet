@@ -123,6 +123,15 @@ function exactRecord(value: unknown, fields: readonly string[], name: string): R
   return value;
 }
 
+function normalizeExactSource(value: unknown): LivingHistorySource {
+  exactRecord(
+    value,
+    ['conversationId', 'messageCount', 'messageIndex', 'fingerprint', 'turnFingerprint'],
+    'assistant-memory source'
+  );
+  return normalizeLivingHistorySource(value);
+}
+
 function integer(value: unknown, name: string, minimum: number, maximum: number): number {
   if (!Number.isSafeInteger(value) || Number(value) < minimum || Number(value) > maximum) {
     throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
@@ -307,8 +316,13 @@ export function normalizeAssistantMemoryRequest(value: unknown): AssistantMemory
   if (!isRecord(value) || value.spec !== ASSISTANT_MEMORY_REQUEST_SPEC || value.kind !== 'assistant_memory') {
     throw new Error('invalid assistant-memory request spec');
   }
+  exactRecord(
+    value,
+    ['spec', 'kind', 'memoryId', 'source', 'parentFingerprint', 'previous', 'turns'],
+    'assistant-memory request'
+  );
   if (!isSidecarConversationId(value.memoryId)) throw new Error('assistant memory ID must be a UUID');
-  const source = normalizeLivingHistorySource(value.source);
+  const source = normalizeExactSource(value.source);
   if (typeof value.parentFingerprint !== 'string' || !FINGERPRINT_PATTERN.test(value.parentFingerprint)) {
     throw new Error('assistant-memory parent fingerprint is invalid');
   }
@@ -478,7 +492,7 @@ function applyFactOperations(
   for (const operation of operations) {
     const current = records.get(operation.key);
     if (operation.operation === 'create') {
-      if (current) throw new Error(`${name} create references an existing key`);
+      if (current?.status === 'active') throw new Error(`${name} create references an existing key`);
       records.set(operation.key, {
         key: operation.key,
         value: operation.value,
@@ -507,7 +521,7 @@ function applyTaskOperations(previous: AssistantMemoryTask[], operations: TaskOp
   for (const operation of operations) {
     const current = records.get(operation.key);
     if (operation.operation === 'create') {
-      if (current) throw new Error('assistant-memory task create references an existing key');
+      if (current?.status === 'open') throw new Error('assistant-memory task create references an existing key');
       records.set(operation.key, {
         key: operation.key,
         text: operation.text,
@@ -545,6 +559,52 @@ function applyTaskOperations(previous: AssistantMemoryTask[], operations: TaskOp
   return [...records.values()].sort((left, right) => left.key.localeCompare(right.key));
 }
 
+function retainNewestInactive<T extends { key: string; status: string; updatedRevision: number }>(
+  records: T[],
+  activeStatus: string,
+  limit: number
+): T[] {
+  const active = records.filter((record) => record.status === activeStatus);
+  if (active.length >= limit) return active.sort((left, right) => left.key.localeCompare(right.key));
+  const inactive = records
+    .filter((record) => record.status !== activeStatus)
+    .sort((left, right) => right.updatedRevision - left.updatedRevision || left.key.localeCompare(right.key));
+  return [...active, ...inactive.slice(0, limit - active.length)]
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function pruneAssistantMemoryState(
+  facts: AssistantMemoryFact[],
+  preferences: AssistantMemoryPreference[],
+  tasks: AssistantMemoryTask[]
+): Pick<AssistantMemoryState, 'facts' | 'preferences' | 'tasks'> {
+  let nextFacts = retainNewestInactive(facts, 'active', ASSISTANT_MEMORY_FACT_LIMIT);
+  let nextPreferences = retainNewestInactive(preferences, 'active', ASSISTANT_MEMORY_PREFERENCE_LIMIT);
+  let nextTasks = retainNewestInactive(tasks, 'open', ASSISTANT_MEMORY_TASK_LIMIT);
+  const activeCount = nextFacts.filter((record) => record.status === 'active').length
+    + nextPreferences.filter((record) => record.status === 'active').length
+    + nextTasks.filter((record) => record.status === 'open').length;
+  if (activeCount > ASSISTANT_MEMORY_TOTAL_RECORD_LIMIT) {
+    return { facts: nextFacts, preferences: nextPreferences, tasks: nextTasks };
+  }
+  const excess = nextFacts.length + nextPreferences.length + nextTasks.length - ASSISTANT_MEMORY_TOTAL_RECORD_LIMIT;
+  if (excess > 0) {
+    const inactive = [
+      ...nextFacts.filter((record) => record.status !== 'active').map((record) => ({ bank: 'facts', record })),
+      ...nextPreferences.filter((record) => record.status !== 'active').map((record) => ({ bank: 'preferences', record })),
+      ...nextTasks.filter((record) => record.status !== 'open').map((record) => ({ bank: 'tasks', record }))
+    ].sort((left, right) => (
+      left.record.updatedRevision - right.record.updatedRevision
+      || left.record.key.localeCompare(right.record.key)
+    ));
+    const removed = new Set(inactive.slice(0, excess).map((item) => `${item.bank}:${item.record.key}`));
+    nextFacts = nextFacts.filter((record) => !removed.has(`facts:${record.key}`));
+    nextPreferences = nextPreferences.filter((record) => !removed.has(`preferences:${record.key}`));
+    nextTasks = nextTasks.filter((record) => !removed.has(`tasks:${record.key}`));
+  }
+  return { facts: nextFacts, preferences: nextPreferences, tasks: nextTasks };
+}
+
 export function createAssistantMemoryResult(
   request: AssistantMemoryRequest,
   model: string,
@@ -552,13 +612,16 @@ export function createAssistantMemoryResult(
 ): AssistantMemoryResult {
   const normalized = normalizeAssistantMemoryRequest(request);
   const revision = normalized.previous.revision + 1;
+  const pruned = pruneAssistantMemoryState(
+    applyFactOperations(normalized.previous.facts, operations.facts, revision, 'assistant-memory fact'),
+    applyFactOperations(normalized.previous.preferences, operations.preferences, revision, 'assistant-memory preference'),
+    applyTaskOperations(normalized.previous.tasks, operations.tasks, revision)
+  );
   const output = normalizeAssistantMemoryState({
     revision,
-    facts: applyFactOperations(normalized.previous.facts, operations.facts, revision, 'assistant-memory fact'),
-    preferences: applyFactOperations(normalized.previous.preferences, operations.preferences, revision, 'assistant-memory preference'),
-    tasks: applyTaskOperations(normalized.previous.tasks, operations.tasks, revision)
+    ...pruned
   });
-  return normalizeAssistantMemoryResult({
+  const result = normalizeAssistantMemoryResult({
     spec: ASSISTANT_MEMORY_RESULT_SPEC,
     kind: 'assistant_memory',
     memoryId: normalized.memoryId,
@@ -567,12 +630,21 @@ export function createAssistantMemoryResult(
     model,
     output
   });
+  if (!assistantMemoryResultMatchesRequest(result, normalized)) {
+    throw new Error('assistant-memory result transition is invalid');
+  }
+  return result;
 }
 
 export function normalizeAssistantMemoryResult(value: unknown): AssistantMemoryResult {
   if (!isRecord(value) || value.spec !== ASSISTANT_MEMORY_RESULT_SPEC || value.kind !== 'assistant_memory') {
     throw new Error('invalid assistant-memory result spec');
   }
+  exactRecord(
+    value,
+    ['spec', 'kind', 'memoryId', 'source', 'parentFingerprint', 'model', 'output'],
+    'assistant-memory result'
+  );
   if (!isSidecarConversationId(value.memoryId)) throw new Error('assistant memory ID must be a UUID');
   if (typeof value.parentFingerprint !== 'string' || !FINGERPRINT_PATTERN.test(value.parentFingerprint)) {
     throw new Error('assistant-memory result parent fingerprint is invalid');
@@ -581,7 +653,7 @@ export function normalizeAssistantMemoryResult(value: unknown): AssistantMemoryR
     spec: ASSISTANT_MEMORY_RESULT_SPEC,
     kind: 'assistant_memory',
     memoryId: value.memoryId,
-    source: normalizeLivingHistorySource(value.source),
+    source: normalizeExactSource(value.source),
     parentFingerprint: value.parentFingerprint,
     model: boundedText(value.model, 'assistant-memory model', 1, 200),
     output: normalizeAssistantMemoryState(value.output)
@@ -595,10 +667,61 @@ export function assistantMemoryResultMatchesRequest(
   try {
     const normalizedResult = normalizeAssistantMemoryResult(result);
     const normalizedRequest = normalizeAssistantMemoryRequest(request);
-    return normalizedResult.memoryId === normalizedRequest.memoryId
+    if (!(normalizedResult.memoryId === normalizedRequest.memoryId
       && livingHistorySourcesMatch(normalizedResult.source, normalizedRequest.source)
       && normalizedResult.parentFingerprint === normalizedRequest.parentFingerprint
-      && normalizedResult.output.revision === normalizedRequest.previous.revision + 1;
+      && normalizedResult.output.revision === normalizedRequest.previous.revision + 1)) return false;
+    const revision = normalizedResult.output.revision;
+    const evidenceMatches = (record: AssistantMemoryFact | AssistantMemoryTask) => {
+      const evidence = record.evidence.at(-1);
+      return evidence?.conversationId === normalizedRequest.source.conversationId
+        && evidence.messageIndex === normalizedRequest.turns[0].messageIndex
+        && evidence.turnFingerprint === normalizedRequest.source.turnFingerprint
+        && normalizedRequest.turns[0].content.includes(evidence.text);
+    };
+    const factBankMatches = (next: AssistantMemoryFact[], previous: AssistantMemoryFact[]) => {
+      const nextByKey = new Map(next.map((record) => [record.key, record]));
+      const previousByKey = new Map(previous.map((record) => [record.key, record]));
+      if (previous.some((record) => record.status === 'active' && !nextByKey.has(record.key))) return false;
+      return next.every((record) => {
+        const prior = previousByKey.get(record.key);
+        if (prior && JSON.stringify(record) === JSON.stringify(prior)) return true;
+        if (record.updatedRevision !== revision || !evidenceMatches(record)) return false;
+        if (!prior) return record.status === 'active' && record.createdRevision === revision;
+        if (prior.status === 'forgotten') {
+          return record.status === 'active' && record.createdRevision === revision;
+        }
+        if (record.createdRevision !== prior.createdRevision) return false;
+        return record.status === 'active'
+          || (record.status === 'forgotten' && record.value === prior.value);
+      });
+    };
+    const taskBankMatches = (next: AssistantMemoryTask[], previous: AssistantMemoryTask[]) => {
+      const nextByKey = new Map(next.map((record) => [record.key, record]));
+      const previousByKey = new Map(previous.map((record) => [record.key, record]));
+      if (previous.some((record) => record.status === 'open' && !nextByKey.has(record.key))) return false;
+      return next.every((record) => {
+        const prior = previousByKey.get(record.key);
+        if (prior && JSON.stringify(record) === JSON.stringify(prior)) return true;
+        if (record.updatedRevision !== revision || !evidenceMatches(record)) return false;
+        if (!prior) return record.status === 'open' && record.createdRevision === revision;
+        if (prior.status === 'open') {
+          if (record.createdRevision !== prior.createdRevision) return false;
+          return record.status === 'open'
+            || ((record.status === 'done' || record.status === 'cancelled')
+              && record.text === prior.text
+              && record.dueText === prior.dueText);
+        }
+        if (record.status !== 'open') return false;
+        return record.createdRevision === revision
+          || (record.createdRevision === prior.createdRevision
+            && record.text === prior.text
+            && record.dueText === prior.dueText);
+      });
+    };
+    return factBankMatches(normalizedResult.output.facts, normalizedRequest.previous.facts)
+      && factBankMatches(normalizedResult.output.preferences, normalizedRequest.previous.preferences)
+      && taskBankMatches(normalizedResult.output.tasks, normalizedRequest.previous.tasks);
   } catch {
     return false;
   }
@@ -698,12 +821,27 @@ export function assistantMemoryLorebook(result: AssistantMemoryResult): Imported
 }
 
 export function isAssistantMemoryLorebook(value: ImportedLorebook): boolean {
-  if (value.name !== ASSISTANT_MEMORY_LOREBOOK_NAME || value.entries.length > 3) return false;
+  if (
+    value.name !== ASSISTANT_MEMORY_LOREBOOK_NAME
+    || value.origin !== 'generated'
+    || value.entries.length < 1
+    || value.entries.length > 3
+  ) return false;
   const extensions = isRecord(value.raw.extensions) ? value.raw.extensions : null;
   const mullet = extensions && isRecord(extensions.mullet) ? extensions.mullet : null;
-  if (!mullet || mullet.kind !== 'assistant_memory' || !isSidecarConversationId(mullet.memory_id)) return false;
+  if (
+    !mullet
+    || mullet.kind !== 'assistant_memory'
+    || !isSidecarConversationId(mullet.memory_id)
+    || !Number.isSafeInteger(mullet.revision)
+    || Number(mullet.revision) < 1
+  ) return false;
   const kinds = new Set(['assistant_memory_preferences', 'assistant_memory_facts', 'assistant_memory_tasks']);
-  return value.entries.every((entry) => (
+  const entryKinds = value.entries.map((entry) => isRecord(entry.raw.extensions)
+    && isRecord(entry.raw.extensions.mullet)
+    ? String(entry.raw.extensions.mullet.kind)
+    : '');
+  return new Set(entryKinds).size === entryKinds.length && value.entries.every((entry, index) => (
     entry.constant
     && entry.position === 1
     && entry.ignoreBudget
@@ -712,5 +850,6 @@ export function isAssistantMemoryLorebook(value: ImportedLorebook): boolean {
     && isRecord(entry.raw.extensions)
     && isRecord(entry.raw.extensions.mullet)
     && kinds.has(String(entry.raw.extensions.mullet.kind))
+    && entry.raw.automationId === `mullet-assistant-memory-${entryKinds[index].replace('assistant_memory_', '')}`
   ));
 }
