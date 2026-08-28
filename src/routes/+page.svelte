@@ -84,6 +84,26 @@
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
+    PORTRAIT_VIDEO_TIMEOUT_MS,
+    buildPortraitVideoRequest,
+    normalizePortraitVideoCapabilities,
+    portraitVideoRequestKey,
+    type PortraitVideoCapabilities,
+    type PortraitVideoRequest
+  } from '$lib/portrait-video';
+  import {
+    STORED_PORTRAIT_VIDEO_SPEC,
+    clearStoredPortraitVideo,
+    commitStoredPortraitVideo,
+    loadStoredPortraitVideo,
+    normalizeStoredPortraitVideo,
+    restoreStoredPortraitVideo,
+    rollbackStoredPortraitVideoWrite,
+    runStoredPortraitVideoExclusive,
+    saveStoredPortraitVideo,
+    type StoredPortraitVideo
+  } from '$lib/portrait-video-storage';
+  import {
     buildExpressionSidecarRequest,
     emptySidecarState,
     expressionResultMatchesRequest,
@@ -141,6 +161,22 @@
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
   let portraitController: AbortController | null = null;
+  let portraitMotionEnabled = false;
+  let generatedPortraitVideoUrl = '';
+  let generatedPortraitVideo: StoredPortraitVideo | null = null;
+  let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
+  let portraitVideoCapabilitiesLoading = false;
+  let portraitVideoPersistenceReady = false;
+  let portraitVideoPersistenceAvailable = true;
+  let portraitVideoBusy = false;
+  let portraitVideoError = '';
+  let portraitVideoRequest: PortraitVideoRequest | null = null;
+  let portraitVideoCurrent = false;
+  let lastPortraitVideoAttemptKey = '';
+  let portraitVideoController: AbortController | null = null;
+  let portraitVideoGeneration = 0;
+  let portraitImageDigestPromptId = '';
+  let portraitImageSha256 = '';
   let embeddedLorebook: ImportedLorebook | null = null;
   let importedLorebooks: ImportedLorebook[] = [];
   let loreEnabled = true;
@@ -210,6 +246,7 @@
   const portraitLoraStorageKey = 'mullet.portrait-lora';
   const portraitAspectStorageKey = 'mullet.portrait-aspect';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
+  const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: livingHistoryApplicable = Boolean(
@@ -241,6 +278,17 @@
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
   $: portraitRequest = currentPortraitRequest(expressionResult, expressionCurrent);
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
+  $: portraitVideoRequest = currentPortraitVideoRequest(
+    generatedPortrait,
+    portraitCurrent,
+    portraitImageDigestPromptId,
+    portraitImageSha256
+  );
+  $: portraitVideoCurrent = Boolean(
+    generatedPortraitVideo
+    && portraitVideoRequest
+    && generatedPortraitVideo.requestKey === portraitVideoRequestKey(portraitVideoRequest)
+  );
   $: scheduleExpressionReconciliation(
     expressionsEnabled,
     sidecarPersistenceReady,
@@ -258,6 +306,17 @@
     portraitBusy,
     portraitRequest,
     portraitCurrent
+  );
+  $: schedulePortraitVideoReconciliation(
+    expressionsEnabled,
+    portraitMotionEnabled,
+    portraitVideoCapabilities,
+    portraitVideoPersistenceReady,
+    portraitVideoPersistenceAvailable,
+    portraitBusy,
+    portraitVideoBusy,
+    portraitVideoRequest,
+    portraitVideoCurrent
   );
   $: scheduleLivingHistoryReconciliation(
     livingHistoryEnabled,
@@ -340,10 +399,12 @@
     void restoreLivingHistory(allowLegacyLivingHistory);
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
+    portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
     restorePortraitSettings();
     void restoreSidecarState();
-    void restoreGeneratedPortrait();
+    void restoreGeneratedMedia();
     void loadPortraitGenerator();
+    void loadPortraitVideoGenerator();
     void loadScenarioCatalog();
   });
 
@@ -351,7 +412,10 @@
     if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
     livingHistoryController?.abort();
     portraitController?.abort();
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
+    if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
   });
 
   function restorePortraitSettings() {
@@ -381,6 +445,7 @@
     portraitController?.abort();
     lastPortraitAttemptKey = '';
     portraitError = '';
+    invalidatePortraitVideoForPortraitChange(true);
   }
 
   async function loadPortraitGenerator() {
@@ -418,10 +483,12 @@
     }
   }
 
-  function installGeneratedPortrait(portrait: StoredPortrait) {
+  function installGeneratedPortrait(portrait: StoredPortrait, preserveStoredMotion = false): Promise<void> {
+    const generation = beginPortraitVideoSourceChange(preserveStoredMotion);
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     generatedPortrait = portrait;
     generatedPortraitUrl = URL.createObjectURL(portrait.image);
+    return refreshPortraitImageDigest(portrait, generation);
   }
 
   async function restoreGeneratedPortrait() {
@@ -429,7 +496,7 @@
       const stored = await loadStoredPortrait();
       if (stored) {
         const normalized = normalizeStoredPortrait(stored);
-        if (normalized.conversationId === conversationId) installGeneratedPortrait(normalized);
+        if (normalized.conversationId === conversationId) await installGeneratedPortrait(normalized, true);
         else await clearStoredPortrait();
       }
     } catch (cause) {
@@ -437,6 +504,291 @@
       portraitError = cause instanceof Error ? cause.message : 'Portrait persistence failed.';
     } finally {
       portraitPersistenceReady = true;
+    }
+  }
+
+  async function restoreGeneratedMedia() {
+    await restoreGeneratedPortrait();
+    await restoreGeneratedPortraitVideo();
+  }
+
+  async function blobSha256(blob: Blob): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  }
+
+  function removeInstalledPortraitVideo() {
+    if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
+    generatedPortraitVideoUrl = '';
+    generatedPortraitVideo = null;
+  }
+
+  function installGeneratedPortraitVideo(video: StoredPortraitVideo) {
+    removeInstalledPortraitVideo();
+    generatedPortraitVideo = video;
+    generatedPortraitVideoUrl = URL.createObjectURL(video.video);
+  }
+
+  function disablePortraitVideoPersistence(cause: unknown) {
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoPersistenceAvailable = false;
+    portraitMotionEnabled = false;
+    if (browser) localStorage.setItem(portraitMotionEnabledStorageKey, 'false');
+    portraitVideoError = cause instanceof Error ? cause.message : 'Portrait-motion persistence failed.';
+  }
+
+  function clearStoredPortraitVideoLocked() {
+    void runStoredPortraitVideoExclusive(clearStoredPortraitVideo).catch(disablePortraitVideoPersistence);
+  }
+
+  function beginPortraitVideoSourceChange(preserveStoredMotion: boolean): number {
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoController = null;
+    portraitVideoBusy = false;
+    portraitVideoError = '';
+    lastPortraitVideoAttemptKey = '';
+    portraitImageDigestPromptId = '';
+    portraitImageSha256 = '';
+    removeInstalledPortraitVideo();
+    if (!preserveStoredMotion && portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked();
+    return portraitVideoGeneration;
+  }
+
+  function invalidatePortraitVideoForPortraitChange(clearStored: boolean) {
+    beginPortraitVideoSourceChange(!clearStored);
+  }
+
+  async function refreshPortraitImageDigest(portrait: StoredPortrait, generation: number) {
+    try {
+      const digest = await blobSha256(portrait.image);
+      if (
+        generation === portraitVideoGeneration
+        && generatedPortrait?.promptId === portrait.promptId
+        && generatedPortrait.requestKey === portrait.requestKey
+      ) {
+        portraitImageDigestPromptId = portrait.promptId;
+        portraitImageSha256 = digest;
+      }
+    } catch (cause) {
+      if (generation === portraitVideoGeneration) {
+        portraitVideoError = cause instanceof Error ? cause.message : 'Portrait image hashing failed.';
+      }
+    }
+  }
+
+  function currentPortraitVideoRequest(
+    portrait: StoredPortrait | null,
+    staticCurrent: boolean,
+    digestPromptId: string,
+    imageSha256: string
+  ): PortraitVideoRequest | null {
+    if (!portrait || !staticCurrent || digestPromptId !== portrait.promptId || !imageSha256) return null;
+    try {
+      return buildPortraitVideoRequest(portrait, portraitAspectRatio, imageSha256);
+    } catch {
+      return null;
+    }
+  }
+
+  function portraitVideoSourceIsCurrent(
+    generation: number,
+    portrait: StoredPortrait,
+    request: PortraitVideoRequest,
+    key: string
+  ): boolean {
+    const liveRequest = currentPortraitVideoRequest(
+      generatedPortrait,
+      portraitCurrent,
+      portraitImageDigestPromptId,
+      portraitImageSha256
+    );
+    return generation === portraitVideoGeneration
+      && portrait.conversationId === conversationId
+      && generatedPortrait?.promptId === portrait.promptId
+      && generatedPortrait.requestKey === portrait.requestKey
+      && portraitImageSha256 === request.source.portraitImageSha256
+      && Boolean(liveRequest && portraitVideoRequestKey(liveRequest) === key);
+  }
+
+  async function restoreGeneratedPortraitVideo() {
+    const generation = portraitVideoGeneration;
+    try {
+      await restoreStoredPortraitVideo({
+        exclusive: runStoredPortraitVideoExclusive,
+        load: loadStoredPortraitVideo,
+        isCurrent: () => generation === portraitVideoGeneration && Boolean(generatedPortrait && portraitImageSha256),
+        accepts: (video) => {
+          const request = currentPortraitVideoRequest(
+            generatedPortrait,
+            portraitCurrent,
+            portraitImageDigestPromptId,
+            portraitImageSha256
+          );
+          return Boolean(request && video.requestKey === portraitVideoRequestKey(request));
+        },
+        install: installGeneratedPortraitVideo
+      });
+    } catch (cause) {
+      disablePortraitVideoPersistence(cause);
+    } finally {
+      portraitVideoPersistenceReady = true;
+    }
+  }
+
+  async function loadPortraitVideoGenerator() {
+    if (portraitVideoCapabilitiesLoading) return;
+    portraitVideoCapabilitiesLoading = true;
+    portraitVideoError = '';
+    try {
+      const response = await fetch(`${base}/api/portrait/video`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : `Portrait-motion generator failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      portraitVideoCapabilities = normalizePortraitVideoCapabilities(payload);
+    } catch (cause) {
+      portraitVideoCapabilities = null;
+      portraitVideoError = cause instanceof Error ? cause.message : 'Portrait-motion generator is unavailable.';
+    } finally {
+      portraitVideoCapabilitiesLoading = false;
+    }
+  }
+
+  function schedulePortraitVideoReconciliation(
+    expressionsOn: boolean,
+    enabled: boolean,
+    capabilities: PortraitVideoCapabilities | null,
+    persistenceReady: boolean,
+    persistenceAvailable: boolean,
+    staticBusy: boolean,
+    busy: boolean,
+    request: PortraitVideoRequest | null,
+    current: boolean
+  ) {
+    if (
+      !expressionsOn
+      || !enabled
+      || !capabilities
+      || !persistenceReady
+      || !persistenceAvailable
+      || staticBusy
+      || busy
+      || !request
+      || current
+    ) return;
+    const key = portraitVideoRequestKey(request);
+    if (key === lastPortraitVideoAttemptKey) return;
+    lastPortraitVideoAttemptKey = key;
+    void generatePortraitVideo(request);
+  }
+
+  function responseHeaderSha256(response: Response, name: string): string {
+    const value = response.headers.get(name) ?? '';
+    if (!/^[0-9a-f]{64}$/.test(value)) throw new Error(`Portrait-motion response omitted ${name}.`);
+    return value;
+  }
+
+  async function generatePortraitVideo(selectedRequest: PortraitVideoRequest | null = portraitVideoRequest) {
+    const selectedPortrait = generatedPortrait;
+    if (
+      !selectedRequest
+      || !selectedPortrait
+      || !portraitVideoCapabilities
+      || portraitVideoBusy
+      || portraitBusy
+      || !portraitVideoPersistenceReady
+      || !portraitVideoPersistenceAvailable
+    ) return;
+    const key = portraitVideoRequestKey(selectedRequest);
+    const generation = portraitVideoGeneration;
+    if (!portraitVideoSourceIsCurrent(generation, selectedPortrait, selectedRequest, key)) return;
+    lastPortraitVideoAttemptKey = key;
+    portraitVideoBusy = true;
+    portraitVideoError = '';
+    const activeController = new AbortController();
+    portraitVideoController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, PORTRAIT_VIDEO_TIMEOUT_MS + 5_000);
+    try {
+      const form = new FormData();
+      form.append('request', JSON.stringify(selectedRequest));
+      form.append('image', selectedPortrait.image, 'portrait.png');
+      const response = await fetch(`${base}/api/portrait/video`, {
+        method: 'POST',
+        body: form,
+        signal: activeController.signal
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : `Portrait motion failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      const video = await response.blob();
+      if (video.type !== 'video/webm' || video.size < 4) throw new Error('Portrait-motion generator returned an invalid video.');
+      const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
+      const inputImageSha256 = responseHeaderSha256(response, 'x-mullet-input-sha256');
+      if (modelTemplate !== selectedRequest.modelTemplate || inputImageSha256 !== selectedRequest.source.portraitImageSha256) {
+        throw new Error('Portrait-motion response provenance does not match its request.');
+      }
+      const stored = normalizeStoredPortraitVideo({
+        spec: STORED_PORTRAIT_VIDEO_SPEC,
+        conversationId: selectedRequest.source.conversationId,
+        requestKey: key,
+        request: selectedRequest,
+        modelTemplate,
+        promptId: response.headers.get('x-mullet-prompt-id') ?? '',
+        seed: responseHeaderInteger(response, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
+        width: responseHeaderInteger(response, 'x-mullet-width', 16, 8192),
+        height: responseHeaderInteger(response, 'x-mullet-height', 16, 8192),
+        frames: responseHeaderInteger(response, 'x-mullet-frames', 1, 10_000),
+        fps: responseHeaderInteger(response, 'x-mullet-fps', 1, 1_000),
+        durationSeconds: responseHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
+        generatedAt: Date.now(),
+        inputImageSha256,
+        videoSha256: responseHeaderSha256(response, 'x-mullet-video-sha256'),
+        video
+      });
+      await commitStoredPortraitVideo(stored, {
+        exclusive: runStoredPortraitVideoExclusive,
+        save: saveStoredPortraitVideo,
+        rollback: rollbackStoredPortraitVideoWrite,
+        isCurrent: () => portraitVideoSourceIsCurrent(generation, selectedPortrait, selectedRequest, key),
+        install: installGeneratedPortraitVideo
+      });
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        if (timedOut) portraitVideoError = `Portrait motion timed out after ${(PORTRAIT_VIDEO_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+      } else {
+        portraitVideoError = cause instanceof Error ? cause.message : 'Portrait motion failed.';
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (portraitVideoController === activeController) {
+        portraitVideoBusy = false;
+        portraitVideoController = null;
+      }
+    }
+  }
+
+  function persistPortraitMotionEnabled() {
+    if (!portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable) portraitMotionEnabled = false;
+    localStorage.setItem(portraitMotionEnabledStorageKey, String(portraitMotionEnabled));
+    portraitVideoError = '';
+    lastPortraitVideoAttemptKey = '';
+    if (!portraitMotionEnabled) {
+      portraitVideoGeneration += 1;
+      portraitVideoController?.abort();
+      portraitVideoBusy = false;
     }
   }
 
@@ -480,6 +832,7 @@
 
   async function generatePortrait(selectedRequest: PortraitRequest | null = portraitRequest) {
     if (!selectedRequest || !portraitCapabilities || portraitBusy || !portraitPersistenceReady || !portraitPersistenceAvailable) return;
+    invalidatePortraitVideoForPortraitChange(true);
     const key = portraitRequestKey(selectedRequest);
     lastPortraitAttemptKey = key;
     portraitBusy = true;
@@ -546,6 +899,7 @@
   }
 
   async function resetPortraitForConversation() {
+    invalidatePortraitVideoForPortraitChange(true);
     portraitController?.abort();
     lastPortraitAttemptKey = '';
     portraitError = '';
@@ -899,6 +1253,9 @@
     if (!expressionsEnabled) {
       sidecarController?.abort();
       portraitController?.abort();
+      portraitVideoGeneration += 1;
+      portraitVideoController?.abort();
+      portraitVideoBusy = false;
     }
   }
 
@@ -1344,6 +1701,10 @@
     livingHistoryController?.abort();
     lastLivingHistoryAttemptKey = '';
     portraitController?.abort();
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoBusy = false;
+    lastPortraitVideoAttemptKey = '';
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
@@ -1457,7 +1818,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || sidecarBusy || portraitBusy || livingHistoryBusy} class="dot"></span>
+      <span class:live={streaming || sidecarBusy || portraitBusy || portraitVideoBusy || livingHistoryBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
@@ -1465,9 +1826,12 @@
   <main>
     <aside>
       <div class:active={activeCard || generatedPortraitUrl} class:generated={expressionsEnabled && generatedPortraitUrl} class="portrait">
-        {#if expressionsEnabled && generatedPortraitUrl}
+        {#if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent}
+          <video src={generatedPortraitVideoUrl} autoplay muted loop playsinline aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}></video>
+          <span class="portrait-status">{portraitVideoBusy ? 'Animating…' : generatedPortrait?.source.expression}</span>
+        {:else if expressionsEnabled && generatedPortraitUrl}
           <img src={generatedPortraitUrl} alt={`${generatedPortrait?.source.expression ?? 'Current'} generated expression portrait`} />
-          <span class:stale={!portraitCurrent} class="portrait-status">{portraitBusy ? 'Updating…' : portraitCurrent ? generatedPortrait?.source.expression : 'Stale'}</span>
+          <span class:stale={!portraitCurrent || (portraitMotionEnabled && Boolean(generatedPortraitVideo) && !portraitVideoCurrent)} class="portrait-status">{portraitBusy ? 'Updating…' : portraitVideoBusy ? 'Animating…' : portraitCurrent ? generatedPortrait?.source.expression : 'Stale'}</span>
         {:else if portraitDataUrl && activeCard}
           <img src={portraitDataUrl} alt={`${activeCard.data.name} character portrait`} />
         {:else if activeCard}
@@ -1615,6 +1979,47 @@
           {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
           <button on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
             {portraitCapabilitiesLoading ? 'Connecting…' : 'Retry portrait generator'}
+          </button>
+        {/if}
+      </section>
+      <section class="portrait-panel motion-panel" aria-label="Generated portrait motion">
+        <div class="portrait-heading">
+          <div>
+            <span class="eyebrow">Portrait motion</span>
+            <strong>{portraitVideoBusy ? 'Animating…' : portraitVideoCurrent ? 'Current loop' : generatedPortraitVideo ? 'Stale' : 'No loop yet'}</strong>
+          </div>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              bind:checked={portraitMotionEnabled}
+              on:change={persistPortraitMotionEnabled}
+              disabled={!portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
+            />
+            <span>{portraitMotionEnabled ? 'On' : 'Off'}</span>
+          </label>
+        </div>
+        {#if portraitVideoCapabilities}
+          <label>
+            <span>Video model</span>
+            <select value={portraitVideoCapabilities.template.id} disabled={portraitVideoBusy} aria-label="Portrait video model">
+              <option value={portraitVideoCapabilities.template.id}>{portraitVideoCapabilities.template.label}</option>
+            </select>
+          </label>
+          <small>2-second motion span · 49 frames at 24 FPS · looping VP9 WebM</small>
+          {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames</small>{/if}
+          {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
+          <button
+            on:click={() => void generatePortraitVideo()}
+            disabled={portraitVideoBusy || portraitBusy || !portraitVideoRequest || !portraitMotionEnabled || !expressionsEnabled || !portraitVideoPersistenceAvailable}
+          >
+            {portraitVideoBusy ? 'Animating…' : portraitVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
+          </button>
+          {#if !portraitMotionEnabled}<small>Turn on Portrait motion to animate each current expression portrait.</small>{/if}
+          {#if portraitMotionEnabled && !generatedPortrait}<small>A current Comfy portrait is required before motion starts.</small>{/if}
+        {:else}
+          {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
+          <button on:click={() => void loadPortraitVideoGenerator()} disabled={portraitVideoCapabilitiesLoading}>
+            {portraitVideoCapabilitiesLoading ? 'Connecting…' : 'Retry portrait motion'}
           </button>
         {/if}
       </section>
@@ -1851,7 +2256,7 @@
   .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
   .portrait.generated { border-color: #49614d; }
-  .portrait img { width: 100%; height: 100%; object-fit: cover; }
+  .portrait img, .portrait video { width: 100%; height: 100%; object-fit: cover; }
   .portrait-status { position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border: 1px solid rgba(126,184,141,.65); border-radius: 999px; color: #d9efdd; background: rgba(17,29,20,.82); font: 700 9px/1 ui-monospace, monospace; text-transform: capitalize; backdrop-filter: blur(8px); }
   .portrait-status.stale { border-color: rgba(181,135,84,.65); color: #efd0a8; background: rgba(43,31,20,.82); }
   .initial { color: #e7aa61; font: 500 72px/1 Georgia, serif; text-shadow: 0 0 42px rgba(231,170,97,.25); }
