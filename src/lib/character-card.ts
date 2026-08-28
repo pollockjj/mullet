@@ -45,6 +45,12 @@ export type CharacterPromptInjections = {
   outlets?: Record<string, string[]>;
 };
 
+export type CharacterDepthPrompt = {
+  content: string;
+  depth: number;
+  role: ChatRole;
+};
+
 export const DEFAULT_MAIN_PROMPT = "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}.";
 
 function isRecord(value: unknown): value is JsonObject {
@@ -204,6 +210,33 @@ export function splitMessageExamples(value: string): string[] {
     .filter(Boolean);
 }
 
+export function characterDepthPrompt(
+  card: ImportedCharacterCard,
+  userName = 'You'
+): CharacterDepthPrompt | null {
+  const value = card.data.extensions.depth_prompt;
+  if (!isRecord(value) || typeof value.prompt !== 'string' || !value.prompt.trim()) return null;
+  const characterName = card.data.nickname || card.data.name;
+  const rawDepth = typeof value.depth === 'number' && Number.isFinite(value.depth) ? value.depth : 4;
+  const depth = Math.max(0, Math.min(1000, Math.trunc(rawDepth)));
+  const role: ChatRole = value.role === 'user' || value.role === 'assistant' ? value.role : 'system';
+  return {
+    content: substituteCardMacros(value.prompt.trim(), characterName, userName),
+    depth,
+    role
+  };
+}
+
+function injectCharacterDepthPrompt(
+  history: ChatMessage[],
+  prompt: CharacterDepthPrompt | null
+): ChatMessage[] {
+  if (!prompt) return history;
+  const result = [...history];
+  result.splice(Math.max(0, result.length - prompt.depth), 0, { role: prompt.role, content: prompt.content });
+  return result;
+}
+
 export function compileCharacterMessages(
   card: ImportedCharacterCard,
   history: ChatMessage[],
@@ -215,6 +248,7 @@ export function compileCharacterMessages(
     .replace(/{{outlet::(.+?)}}/gi, (_match, key: string) => injections.outlets?.[key.trim()]?.join('\n') ?? '');
   const mainPrompt = substitute(card.data.systemPrompt.trim() || DEFAULT_MAIN_PROMPT);
   const context = [mainPrompt];
+  const preparedHistory = injectCharacterDepthPrompt(history, characterDepthPrompt(card, userName));
 
   context.push(...(injections.beforeCharacter ?? []).filter((value) => value.trim()));
   if (card.data.description.trim()) context.push(`[Character description]\n${substitute(card.data.description)}`);
@@ -232,7 +266,7 @@ export function compileCharacterMessages(
   const compiled: ChatMessage[] = [
     { role: 'system', content: context.join('\n\n') },
     ...exampleMessages,
-    ...history
+    ...preparedHistory
   ];
   if (card.data.postHistoryInstructions.trim()) {
     compiled.push({ role: 'system', content: substitute(card.data.postHistoryInstructions) });

@@ -47,6 +47,7 @@
   let lorePersistenceReady = false;
   let lorePersistenceBusy = false;
   let lorePersistenceAvailable = true;
+  let personaDescription = '';
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
@@ -58,6 +59,7 @@
   const lorebookStorageKey = 'mullet.active-lorebook';
   const loreEnabledStorageKey = 'mullet.lorebook-enabled';
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
+  const personaDescriptionStorageKey = 'mullet.persona-description';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: activeLorebooks = [
@@ -97,6 +99,7 @@
 
     void restoreLorebooks();
     loreEnabled = localStorage.getItem(loreEnabledStorageKey) !== 'false';
+    personaDescription = localStorage.getItem(personaDescriptionStorageKey) ?? '';
     const savedLoreSettings = localStorage.getItem(loreSettingsStorageKey);
     if (savedLoreSettings) {
       try {
@@ -343,6 +346,14 @@
     }
   }
 
+  function persistPersonaDescription() {
+    if (!browser) return;
+    if (personaDescription) localStorage.setItem(personaDescriptionStorageKey, personaDescription);
+    else localStorage.removeItem(personaDescriptionStorageKey);
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
+  }
+
   function readLoreActivations(value: string | null): LoreActivation[] | null {
     if (value === null) return null;
     try {
@@ -381,6 +392,7 @@
         maxTokens: tokenLimit,
         characterCard: activeCard?.raw ?? null,
         userName: 'You',
+        personaDescription,
         loreEnabled,
         lorebooks: loreEnabled
           ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
@@ -589,12 +601,31 @@
               <span>Context %</span>
               <input type="number" min="1" max="100" step="1" bind:value={loreSettings.budgetPercent} on:change={persistLoreSettings} disabled={streaming} />
             </label>
+            <label>
+              <span>Minimum fired</span>
+              <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivations} on:change={persistLoreSettings} disabled={streaming} />
+            </label>
+            <label>
+              <span>Maximum depth</span>
+              <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivationsDepthMax} on:change={persistLoreSettings} disabled={streaming} />
+            </label>
           </div>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={persistLoreSettings} disabled={streaming} /> Recursive scanning</label>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={persistLoreSettings} disabled={streaming} /> Whole-word matching</label>
           <small>{lastLoreBudget || Math.round(loreSettings.budgetPercent * loreSettings.maxContextTokens / 100)}-token budget · server tokenizer</small>
         </details>
       </section>
+      <label class="persona-field">
+        <span class="eyebrow">Your role</span>
+        <textarea
+          bind:value={personaDescription}
+          on:change={persistPersonaDescription}
+          rows="3"
+          maxlength="100000"
+          placeholder="Optional user-character description for opt-in lore scans"
+          disabled={streaming}
+        ></textarea>
+      </label>
       <button class="clear" on:click={clearConversation} disabled={streaming || messages.length === 0}>Clear conversation</button>
     </aside>
 
@@ -698,6 +729,9 @@
   .card-button.primary:hover:not(:disabled) { color: #21170d; background: #e8b06e; }
   .card-button:disabled { opacity: .35; cursor: default; }
   .lore-panel { display: grid; gap: 10px; padding-top: 17px; border-top: 1px solid #34302b; }
+  .persona-field { display: grid; gap: 7px; }
+  .persona-field textarea { width: 100%; resize: vertical; min-height: 64px; padding: 9px 10px; border: 1px solid #413a33; border-radius: 9px; color: #ded6cc; background: #171513; font-size: 11px; line-height: 1.45; }
+  .persona-field textarea:focus { outline: 1px solid #9c7145; border-color: #9c7145; }
   .lore-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .lore-heading > div { display: grid; gap: 4px; }
   .lore-heading strong { color: #d7d0c7; font-size: 12px; }

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 
 import {
+  characterDepthPrompt,
   compileCharacterMessages,
   embeddedLoreEntryCount,
   firstCharacterMessage,
@@ -176,6 +177,26 @@ test('compiles card context before history and post-history instructions after i
   assert.deepEqual(compiled[3], { role: 'user', content: 'HISTORY' });
   assert.deepEqual(compiled[4], { role: 'system', content: 'PHI Vila Restal' });
   assert.equal(firstCharacterMessage(card, 'John'), '"You look useful, John."');
+});
+
+test('injects the character depth prompt at its configured depth and role', () => {
+  const source = structuredClone(v3);
+  source.data.extensions.depth_prompt = { prompt: 'Private note for {{char}} and {{user}}.', depth: 1, role: 'assistant' };
+  const card = normalizeCharacterCard(source);
+  assert.deepEqual(characterDepthPrompt(card, 'Avon'), {
+    content: 'Private note for Gem and Avon.',
+    depth: 1,
+    role: 'assistant'
+  });
+  const compiled = compileCharacterMessages(card, [
+    { role: 'user', content: 'one' },
+    { role: 'assistant', content: 'two' }
+  ], 'Avon');
+  assert.deepEqual(compiled.slice(-4, -1), [
+    { role: 'user', content: 'one' },
+    { role: 'assistant', content: 'Private note for Gem and Avon.' },
+    { role: 'assistant', content: 'two' }
+  ]);
 });
 
 test('uses the V3 nickname for character macros while retaining the full card name', () => {

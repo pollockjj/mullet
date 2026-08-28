@@ -5,6 +5,7 @@ import { countModelTokens, getModelContextTokens } from '$lib/server/model-token
 import { RegexSandbox } from '$lib/server/regex-sandbox';
 import { resolveTokenLimit } from '$lib/token-limit';
 import {
+  characterDepthPrompt,
   compileCharacterMessages,
   normalizeCharacterCard,
   type ChatMessage,
@@ -66,6 +67,10 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (typeof userName !== 'string' || userName.trim().length === 0 || userName.length > 100) {
     throw error(400, 'userName must be a non-empty string of at most 100 characters');
   }
+  const personaDescription = body?.personaDescription ?? '';
+  if (typeof personaDescription !== 'string' || personaDescription.length > 100_000) {
+    throw error(400, 'personaDescription must be a string of at most 100000 characters');
+  }
 
   if (body?.characterCard !== undefined && body.characterCard !== null) {
     try {
@@ -111,6 +116,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
             card: characterCard,
             userName: userName.trim(),
             assistantName: runtime.modelId,
+            personaDescription,
+            characterDepthPrompt: characterCard ? characterDepthPrompt(characterCard, userName.trim())?.content ?? '' : '',
             tokenCount: (content) => countModelTokens(fetch, runtime.modelBaseUrl, content, request.signal),
             regexTest: (source, flags, haystack) => regexSandbox.test(source, flags, haystack),
             generationTrigger: 'normal'
