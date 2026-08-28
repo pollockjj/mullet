@@ -6,6 +6,7 @@ import { inlineSceneImageRequestKey } from '../src/lib/inline-scene.ts';
 import {
   STORED_INLINE_SCENE_ENVELOPE_SPEC,
   STORED_INLINE_SCENE_SPEC,
+  StoredInlineSceneIntegrityError,
   commitStoredInlineScene,
   normalizeStoredInlineScene,
   restoreStoredInlineScene,
@@ -115,6 +116,7 @@ test('restores only accepted current source inside the lock', async () => {
       try { return await operation(); } finally { lockHeld = false; }
     },
     load: async () => stored(),
+    discardInvalid: async () => assert.fail('valid restore was discarded'),
     isCurrent: () => true,
     accepts: () => true,
     install: () => { installedWhileLocked = lockHeld; }
@@ -126,10 +128,31 @@ test('restores only accepted current source inside the lock', async () => {
   const rejected = await restoreStoredInlineScene({
     exclusive: async (operation) => operation(),
     load: async () => stored(),
+    discardInvalid: async () => assert.fail('valid rejected restore was discarded'),
     isCurrent: () => true,
     accepts: () => false,
     install: () => { installed = true; }
   });
   assert.equal(rejected, null);
   assert.equal(installed, false);
+});
+
+test('discards corrupt bytes inside the original restore lock', async () => {
+  let lockHeld = false;
+  let discardedWhileLocked = false;
+  await assert.rejects(
+    restoreStoredInlineScene({
+      exclusive: async (operation) => {
+        lockHeld = true;
+        try { return await operation(); } finally { lockHeld = false; }
+      },
+      load: async () => stored({ imageSha256: 'c'.repeat(64) }),
+      discardInvalid: async () => { discardedWhileLocked = lockHeld; },
+      isCurrent: () => true,
+      accepts: () => true,
+      install: () => assert.fail('corrupt restore installed')
+    }),
+    (cause) => cause instanceof StoredInlineSceneIntegrityError
+  );
+  assert.equal(discardedWhileLocked, true);
 });

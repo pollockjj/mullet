@@ -9,6 +9,13 @@ import {
 export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v1' as const;
 export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v1' as const;
 
+export class StoredInlineSceneIntegrityError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'stored inline-scene integrity verification failed');
+    this.name = 'StoredInlineSceneIntegrityError';
+  }
+}
+
 export type StoredInlineScene = {
   spec: typeof STORED_INLINE_SCENE_SPEC;
   conversationId: string;
@@ -44,6 +51,7 @@ export type InlineSceneCommitOperations = {
 
 export type InlineSceneRestoreOperations = {
   load: () => Promise<unknown | null>;
+  discardInvalid: () => Promise<void>;
   isCurrent: () => boolean;
   accepts: (scene: StoredInlineScene) => boolean;
   install: (scene: StoredInlineScene) => void;
@@ -257,7 +265,13 @@ export async function restoreStoredInlineScene(operations: InlineSceneRestoreOpe
     if (!operations.isCurrent()) return null;
     const stored = await operations.load();
     if (!operations.isCurrent() || stored === null) return null;
-    const verified = await verifyStoredInlineScene(stored);
+    let verified: StoredInlineScene;
+    try {
+      verified = await verifyStoredInlineScene(stored);
+    } catch (cause) {
+      await operations.discardInvalid();
+      throw new StoredInlineSceneIntegrityError(cause);
+    }
     if (!operations.accepts(verified) || !operations.isCurrent()) return null;
     operations.install(verified);
     return verified;
