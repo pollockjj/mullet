@@ -999,6 +999,7 @@
     request: InlineSceneVideoRequest | null,
     current: boolean
   ) {
+    if (!request) return;
     if (!inlineSceneVideoReconciliationAllowed({
       scenesEnabled,
       motionEnabled,
@@ -1010,7 +1011,7 @@
       sceneBusy,
       videoBusy,
       videoError: Boolean(videoError),
-      requestReady: Boolean(request),
+      requestReady: true,
       current
     })) return;
     const key = inlineSceneVideoRequestKey(request);
