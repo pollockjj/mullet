@@ -212,9 +212,14 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
   };
   const root = boxes(bytes, 0, bytes.byteLength, budget);
   const ftyp = exactlyOne(root, 'ftyp', 'file-type box');
-  const brands = [];
-  for (let offset = ftyp.dataStart; offset + 4 <= ftyp.dataEnd; offset += 4) brands.push(fourcc(bytes, offset, 'file-type brand'));
-  if (ftyp.dataEnd - ftyp.dataStart < 8 || !brands.some((brand) => ['isom', 'iso2', 'mp41', 'mp42', 'avc1'].includes(brand))) {
+  if (ftyp.dataEnd - ftyp.dataStart < 8 || (ftyp.dataEnd - ftyp.dataStart) % 4 !== 0) {
+    throw new Error('MP4 file type is unsupported');
+  }
+  const brands = [fourcc(bytes, ftyp.dataStart, 'major brand')];
+  for (let offset = ftyp.dataStart + 8; offset + 4 <= ftyp.dataEnd; offset += 4) {
+    brands.push(fourcc(bytes, offset, 'compatible brand'));
+  }
+  if (!brands.some((brand) => ['isom', 'iso2', 'mp41', 'mp42', 'avc1'].includes(brand))) {
     throw new Error('MP4 file type is unsupported');
   }
   const moov = exactlyOne(root, 'moov', 'movie box');
