@@ -8,6 +8,7 @@ import {
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
   buildMiniMaxH3PortraitVideoWorkflow,
   buildQwenPortraitEndFrameWorkflow,
+  portraitVideoDimensions,
   portraitVideoOutputNode,
   type PortraitVideoCapabilities,
   type PortraitVideoInputReference,
