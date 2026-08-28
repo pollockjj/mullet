@@ -16,6 +16,13 @@ export type StoredPortrait = {
   image: Blob;
 };
 
+export type PortraitCommitOperations = {
+  save: (portrait: StoredPortrait) => Promise<void>;
+  isCurrent: () => boolean;
+  discard: (portrait: StoredPortrait) => Promise<void>;
+  install: (portrait: StoredPortrait) => void;
+};
+
 const DATABASE_NAME = 'mullet-portraits';
 const STORE_NAME = 'state';
 const ACTIVE_PORTRAIT_KEY = 'active-portrait';
@@ -118,4 +125,40 @@ export async function clearStoredPortrait(): Promise<void> {
   } finally {
     database.close();
   }
+}
+
+export async function clearStoredPortraitIfPromptId(promptId: string): Promise<void> {
+  if (!/^[0-9a-f-]{36}$/i.test(promptId)) throw new Error('portrait prompt ID is invalid');
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(ACTIVE_PORTRAIT_KEY);
+      request.onsuccess = () => {
+        if (isRecord(request.result) && request.result.promptId === promptId) store.delete(ACTIVE_PORTRAIT_KEY);
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait conditional read failed'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB portrait conditional delete failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait conditional delete aborted'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+export async function commitStoredPortrait(
+  portrait: StoredPortrait,
+  operations: PortraitCommitOperations
+): Promise<boolean> {
+  const normalized = normalizeStoredPortrait(portrait);
+  if (!operations.isCurrent()) return false;
+  await operations.save(normalized);
+  if (!operations.isCurrent()) {
+    await operations.discard(normalized);
+    return false;
+  }
+  operations.install(normalized);
+  return true;
 }

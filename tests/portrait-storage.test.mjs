@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { STORED_PORTRAIT_SPEC, normalizeStoredPortrait } from '../src/lib/portrait-storage.ts';
+import { STORED_PORTRAIT_SPEC, commitStoredPortrait, normalizeStoredPortrait } from '../src/lib/portrait-storage.ts';
 
 function stored(overrides = {}) {
   return {
@@ -36,4 +36,23 @@ test('normalizes a generated portrait without any canonical transcript text', ()
 test('rejects portraits for another conversation or non-image results', () => {
   assert.throws(() => normalizeStoredPortrait(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredPortrait(stored({ image: new Blob(['no'], { type: 'text/plain' }) })), /image is invalid/);
+});
+
+test('discards a portrait when its conversation becomes stale during the storage write', async () => {
+  let resolveSave;
+  const saveBlocked = new Promise((resolve) => { resolveSave = resolve; });
+  let current = true;
+  let installed = false;
+  let discardedPromptId = '';
+  const committing = commitStoredPortrait(stored(), {
+    save: async () => saveBlocked,
+    isCurrent: () => current,
+    discard: async (portrait) => { discardedPromptId = portrait.promptId; },
+    install: () => { installed = true; }
+  });
+  current = false;
+  resolveSave();
+  assert.equal(await committing, false);
+  assert.equal(installed, false);
+  assert.equal(discardedPromptId, '11111111-1111-4111-8111-111111111111');
 });

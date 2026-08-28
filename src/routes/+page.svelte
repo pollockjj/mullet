@@ -40,6 +40,8 @@
   } from '$lib/portrait';
   import {
     STORED_PORTRAIT_SPEC,
+    clearStoredPortraitIfPromptId,
+    commitStoredPortrait,
     clearStoredPortrait,
     loadStoredPortrait,
     normalizeStoredPortrait,
@@ -396,8 +398,6 @@
       }
       const image = await response.blob();
       if (image.type !== 'image/png' || image.size < 8) throw new Error('Portrait generator returned an invalid image.');
-      const liveRequest = currentPortraitRequest(expressionResult, expressionCurrent);
-      if (!liveRequest || portraitRequestKey(liveRequest) !== key) return;
       const promptId = response.headers.get('x-mullet-prompt-id') ?? '';
       const stored = normalizeStoredPortrait({
         spec: STORED_PORTRAIT_SPEC,
@@ -412,8 +412,17 @@
         generatedAt: Date.now(),
         image
       });
-      await saveStoredPortrait(stored);
-      installGeneratedPortrait(stored);
+      const isCurrent = () => {
+        const liveRequest = currentPortraitRequest(expressionResult, expressionCurrent);
+        return selectedRequest.source.conversationId === conversationId
+          && Boolean(liveRequest && portraitRequestKey(liveRequest) === key);
+      };
+      await commitStoredPortrait(stored, {
+        save: saveStoredPortrait,
+        isCurrent,
+        discard: (stale) => clearStoredPortraitIfPromptId(stale.promptId),
+        install: installGeneratedPortrait
+      });
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
         if (timedOut) portraitError = `Portrait generation timed out after ${(PORTRAIT_TIMEOUT_MS + 5_000) / 1000} seconds.`;
