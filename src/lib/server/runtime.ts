@@ -13,6 +13,7 @@ export const runtime = {
   service: 'mullet',
   modelBaseUrl: (env.MODEL_BASE_URL ?? 'http://127.0.0.1:1234/v1').replace(/\/$/, ''),
   modelId: env.MODEL_ID ?? 'local-model',
+  comfyBaseUrl: (env.COMFY_BASE_URL ?? '').trim().replace(/\/$/, ''),
   maxTokens,
   defaultMaxTokens,
   temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : 0.85,
