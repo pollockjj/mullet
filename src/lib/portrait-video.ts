@@ -199,7 +199,7 @@ export function buildPortraitVideoRequest(
   portrait: PortraitVideoInputPortrait,
   aspectRatio: PortraitAspectRatio,
   imageSha256: string,
-  mode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_I2V
+  mode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF
 ): PortraitVideoRequest {
   return normalizePortraitVideoRequest({
     spec: PORTRAIT_VIDEO_REQUEST_SPEC,
