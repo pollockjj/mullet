@@ -30,6 +30,7 @@
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
   import {
     LIVING_HISTORY_INTERVAL_MESSAGES,
+    LIVING_HISTORY_QUOTE_BANK_LIMIT,
     LIVING_HISTORY_TIMEOUT_MS,
     livingHistoryLorebook,
     livingHistoryRequestKey,
@@ -3437,6 +3438,21 @@
               <summary>Continuity preview</summary>
               <p>{livingHistoryResult.output.summary}</p>
             </details>
+            <details>
+              <summary>Quote bank · {livingHistoryResult.output.quotes.length}/{LIVING_HISTORY_QUOTE_BANK_LIMIT}</summary>
+              {#if livingHistoryResult.output.quotes.length}
+                <ol class="quote-bank">
+                  {#each livingHistoryResult.output.quotes as quote}
+                    <li>
+                      <small>{quote.role} · message {quote.messageIndex}</small>
+                      <q>{quote.text}</q>
+                    </li>
+                  {/each}
+                </ol>
+              {:else}
+                <p>No retained quotes yet.</p>
+              {/if}
+            </details>
           {/if}
           {#if livingHistoryError}<div class="sidecar-error" role="alert">{livingHistoryError}</div>{/if}
           <div class="history-actions">
@@ -3451,7 +3467,7 @@
               disabled={streaming || livingHistoryBusy || !livingHistoryPersistenceReady || (!livingHistoryResult && livingHistoryBoundaries.length === 0)}
             >Clear</button>
           </div>
-          <small>200-word target · every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>
+          <small>200-word target · {LIVING_HISTORY_QUOTE_BANK_LIMIT} relevance-ranked quote slots · every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>
         </div>
 
         {#if activeLorebooks.length}
@@ -3729,6 +3745,10 @@
   .history-panel details { color: #8f9d91; font-size: 9px; }
   .history-panel summary { cursor: pointer; }
   .history-panel p { max-height: 12em; overflow-y: auto; margin: 7px 0 0; color: #b9c4ba; line-height: 1.5; white-space: pre-wrap; }
+  .quote-bank { display: grid; max-height: 16em; overflow-y: auto; gap: 7px; margin: 7px 0 0; padding-left: 18px; }
+  .quote-bank li { color: #b9c4ba; line-height: 1.4; }
+  .quote-bank li small { display: block; color: #718174; }
+  .quote-bank q { white-space: pre-wrap; }
   .history-actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
   .history-actions button { padding: 7px 9px; border: 1px solid #49614d; border-radius: 7px; color: #b6d3ba; background: #19221b; font-size: 9px; font-weight: 700; cursor: pointer; }
   .history-actions button:last-child { border-color: #4a4239; color: #a99f95; background: #1b1815; }
