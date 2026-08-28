@@ -24,15 +24,15 @@ import {
   unwrapStoredInlineSceneVideo,
   verifyStoredInlineSceneVideo
 } from '../src/lib/inline-scene-video-storage.ts';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
+import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const epoch = '11111111-1111-4111-8111-111111111111';
 const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const motionPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
-const webmBytes = buildVp9WebmFixture();
-const videoSha256 = createHash('sha256').update(webmBytes).digest('hex');
+const mp4Bytes = buildH264AacMp4Fixture();
+const videoSha256 = createHash('sha256').update(mp4Bytes).digest('hex');
 
 function request() {
   const messages = [
@@ -69,23 +69,23 @@ function stored(overrides = {}) {
     mode: motionRequest.mode,
     promptId: motionPromptId,
     seed: 42,
-    width: 1024,
-    height: 576,
-    frames: 49,
+    width: 1344,
+    height: 768,
+    frames: 124,
     fps: 24,
-    durationSeconds: 2,
+    durationSeconds: 5,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     videoSha256,
-    video: new Blob([webmBytes], { type: 'video/webm' }),
+    video: new Blob([mp4Bytes], { type: 'video/mp4' }),
     ...overrides
   };
 }
 
-test('normalizes and byte-verifies a static-scene-bound WebM', async () => {
+test('normalizes and byte-verifies a static-scene-bound H.264/AAC MP4', async () => {
   const normalized = normalizeStoredInlineSceneVideo(stored());
   assert.equal(normalized.requestKey, inlineSceneVideoRequestKey(normalized.request));
-  assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/webm');
+  assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/mp4');
   assert.equal(normalized.request.source.scenePromptId, staticPromptId);
 });
 
@@ -98,10 +98,10 @@ test('rejects mismatched source, key, dimensions, timing, hashes, and blobs', as
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
   await assert.rejects(verifyStoredInlineSceneVideo(stored({ videoSha256: 'd'.repeat(64) })), /hash does not match/);
-  const wrongSizeBytes = buildVp9WebmFixture({ width: 640 });
+  const wrongSizeBytes = buildH264AacMp4Fixture({ width: 640 });
   await assert.rejects(
     verifyStoredInlineSceneVideo(stored({
-      video: new Blob([wrongSizeBytes], { type: 'video/webm' }),
+      video: new Blob([wrongSizeBytes], { type: 'video/mp4' }),
       videoSha256: createHash('sha256').update(wrongSizeBytes).digest('hex')
     })),
     /dimensions/
