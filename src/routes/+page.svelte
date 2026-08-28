@@ -554,6 +554,434 @@
     invalidatePortraitVideoForPortraitChange(true);
   }
 
+  function restoreInlineSceneSettings() {
+    const savedAspect = localStorage.getItem(inlineSceneAspectStorageKey);
+    if (savedAspect === '3:2' || savedAspect === '4:3' || savedAspect === '5:4' || savedAspect === '16:9') {
+      inlineSceneAspectRatio = savedAspect;
+    }
+    const savedMegapixels = Number(localStorage.getItem(inlineSceneMegapixelsStorageKey));
+    if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
+      inlineSceneMegapixels = savedMegapixels;
+    }
+    inlineSceneLora = localStorage.getItem(inlineSceneLoraStorageKey) ?? '';
+  }
+
+  function persistInlineSceneSettings() {
+    localStorage.setItem(inlineSceneAspectStorageKey, inlineSceneAspectRatio);
+    localStorage.setItem(inlineSceneMegapixelsStorageKey, String(inlineSceneMegapixels));
+    if (inlineSceneLora) localStorage.setItem(inlineSceneLoraStorageKey, inlineSceneLora);
+    else localStorage.removeItem(inlineSceneLoraStorageKey);
+    inlineSceneGeneration += 1;
+    inlineSceneController?.abort();
+    inlineSceneController = null;
+    inlineSceneBusy = false;
+    inlineSceneError = '';
+    lastInlineSceneAttemptKey = '';
+  }
+
+  function inlineSceneStoredEpochIsCurrent(epoch: string): boolean {
+    const saved = localStorage.getItem(inlineSceneFinalizedStorageKey);
+    if (!saved) return false;
+    try {
+      const parsed = JSON.parse(saved);
+      return parsed && typeof parsed === 'object' && parsed.epoch === epoch;
+    } catch {
+      return false;
+    }
+  }
+
+  function restoreInlineSceneFinalizedSource() {
+    const saved = localStorage.getItem(inlineSceneFinalizedStorageKey);
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved);
+      if (!parsed || typeof parsed !== 'object' || !isSidecarConversationId(parsed.epoch)) throw new Error('invalid inline-scene epoch');
+      const source = normalizeLivingHistorySource(parsed.source);
+      if (source.conversationId !== conversationId || !livingHistorySourceMatchesMessages(source, conversationId, messages)) {
+        throw new Error('inline-scene finalized source does not match this transcript');
+      }
+      inlineSceneEpoch = parsed.epoch;
+      finalizedInlineSceneSource = source;
+    } catch {
+      inlineSceneEpoch = '';
+      finalizedInlineSceneSource = null;
+      localStorage.removeItem(inlineSceneFinalizedStorageKey);
+    }
+  }
+
+  function currentInlineSceneSidecarRequest(
+    currentConversationId: string,
+    currentMessages: readonly Message[],
+    source: LivingHistorySource | null
+  ): InlineSceneRequest | null {
+    if (!source) return null;
+    try {
+      return buildInlineSceneRequest(currentConversationId, currentMessages, source);
+    } catch {
+      return null;
+    }
+  }
+
+  function inlineSceneAppliesToTranscript(
+    scene: StoredInlineScene | null,
+    source: LivingHistorySource | null,
+    epoch: string,
+    currentConversationId: string,
+    currentMessages: readonly Message[]
+  ): boolean {
+    return Boolean(
+      scene
+      && source
+      && scene.epoch === epoch
+      && scene.conversationId === currentConversationId
+      && livingHistorySourcesMatch(scene.request.source, source)
+      && livingHistorySourceMatchesMessages(scene.request.source, currentConversationId, currentMessages)
+    );
+  }
+
+  function inlineSceneMatchesSettings(
+    scene: StoredInlineScene | null,
+    aspectRatio: InlineSceneAspectRatio,
+    megapixels: InlineSceneMegapixels,
+    lora: string
+  ): boolean {
+    return Boolean(
+      scene
+      && scene.request.aspectRatio === aspectRatio
+      && scene.request.megapixels === megapixels
+      && scene.request.lora === (lora || null)
+    );
+  }
+
+  function removeInstalledInlineScene() {
+    if (generatedInlineSceneUrl) URL.revokeObjectURL(generatedInlineSceneUrl);
+    generatedInlineSceneUrl = '';
+    generatedInlineScene = null;
+  }
+
+  function installGeneratedInlineScene(scene: StoredInlineScene) {
+    removeInstalledInlineScene();
+    generatedInlineScene = scene;
+    generatedInlineSceneUrl = URL.createObjectURL(scene.image);
+  }
+
+  function beginInlineScenePersistenceOperation() {
+    inlineScenePersistenceOperations += 1;
+    inlineScenePersistenceReady = false;
+  }
+
+  function endInlineScenePersistenceOperation() {
+    inlineScenePersistenceOperations = Math.max(0, inlineScenePersistenceOperations - 1);
+    inlineScenePersistenceReady = inlineScenePersistenceOperations === 0;
+  }
+
+  function disableInlineScenePersistence(cause: unknown) {
+    inlineSceneGeneration += 1;
+    inlineSceneController?.abort();
+    inlineSceneController = null;
+    inlineSceneBusy = false;
+    inlineScenePersistenceOperations = 0;
+    inlineScenePersistenceAvailable = false;
+    inlineScenePersistenceReady = true;
+    inlineScenesEnabled = false;
+    localStorage.setItem(inlineScenesEnabledStorageKey, 'false');
+    inlineSceneError = cause instanceof Error ? cause.message : 'Inline-scene persistence failed.';
+  }
+
+  async function restoreGeneratedInlineScene() {
+    const generation = inlineSceneGeneration;
+    const epoch = inlineSceneEpoch;
+    const source = finalizedInlineSceneSource;
+    beginInlineScenePersistenceOperation();
+    try {
+      await restoreStoredInlineScene({
+        exclusive: runStoredInlineSceneExclusive,
+        load: loadStoredInlineScene,
+        isCurrent: () => generation === inlineSceneGeneration
+          && epoch === inlineSceneEpoch
+          && Boolean(source && finalizedInlineSceneSource && livingHistorySourcesMatch(source, finalizedInlineSceneSource))
+          && inlineSceneStoredEpochIsCurrent(epoch),
+        accepts: (scene) => scene.epoch === epoch
+          && scene.conversationId === conversationId
+          && Boolean(source && livingHistorySourcesMatch(scene.request.source, source))
+          && livingHistorySourceMatchesMessages(scene.request.source, conversationId, messages),
+        install: installGeneratedInlineScene
+      });
+    } catch (cause) {
+      try {
+        await runStoredInlineSceneExclusive(clearStoredInlineScene);
+        inlineSceneError = cause instanceof Error ? cause.message : 'Stored inline-scene integrity verification failed.';
+      } catch (clearCause) {
+        disableInlineScenePersistence(clearCause);
+      }
+    } finally {
+      endInlineScenePersistenceOperation();
+    }
+  }
+
+  async function loadInlineSceneGenerator() {
+    if (inlineSceneCapabilitiesLoading) return;
+    inlineSceneCapabilitiesLoading = true;
+    inlineSceneError = '';
+    try {
+      const response = await fetch(`${base}/api/scene`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : `Inline-scene generator failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      inlineSceneCapabilities = normalizeInlineSceneCapabilities(payload);
+      if (inlineSceneLora && !inlineSceneCapabilities.loras.some((lora) => lora.path === inlineSceneLora)) {
+        inlineSceneLora = '';
+        localStorage.removeItem(inlineSceneLoraStorageKey);
+      }
+    } catch (cause) {
+      inlineSceneCapabilities = null;
+      inlineSceneError = cause instanceof Error ? cause.message : 'Inline-scene generator is unavailable.';
+    } finally {
+      inlineSceneCapabilitiesLoading = false;
+    }
+  }
+
+  function inlineSceneAttemptKey(
+    request: InlineSceneRequest,
+    aspectRatio: InlineSceneAspectRatio,
+    megapixels: InlineSceneMegapixels,
+    lora: string
+  ): string {
+    return [
+      request.source.conversationId,
+      request.source.messageCount,
+      request.source.fingerprint,
+      request.source.turnFingerprint,
+      aspectRatio,
+      megapixels,
+      lora
+    ].join('\u001f');
+  }
+
+  function scheduleInlineSceneReconciliation(
+    enabled: boolean,
+    capabilities: InlineSceneCapabilities | null,
+    persistenceReady: boolean,
+    persistenceAvailable: boolean,
+    isStreaming: boolean,
+    busy: boolean,
+    request: InlineSceneRequest | null,
+    current: boolean,
+    aspectRatio: InlineSceneAspectRatio,
+    megapixels: InlineSceneMegapixels,
+    lora: string
+  ) {
+    if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current) return;
+    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, lora);
+    if (key === lastInlineSceneAttemptKey) return;
+    lastInlineSceneAttemptKey = key;
+    void generateInlineScene(request, aspectRatio, megapixels, lora);
+  }
+
+  function inlineSceneGenerationIsCurrent(
+    generation: number,
+    epoch: string,
+    sidecarRequest: InlineSceneRequest,
+    result: InlineSceneResult | null,
+    imageRequestKey: string,
+    signal: AbortSignal
+  ): boolean {
+    if (
+      signal.aborted
+      || generation !== inlineSceneGeneration
+      || epoch !== inlineSceneEpoch
+      || !inlineScenesEnabled
+      || !inlineSceneStoredEpochIsCurrent(epoch)
+    ) return false;
+    const liveSidecar = currentInlineSceneSidecarRequest(conversationId, messages, finalizedInlineSceneSource);
+    if (!liveSidecar || !livingHistorySourcesMatch(liveSidecar.source, sidecarRequest.source)) return false;
+    if (!result) return true;
+    try {
+      const liveImageRequest = buildInlineSceneImageRequest(result, {
+        lora: inlineSceneLora || null,
+        aspectRatio: inlineSceneAspectRatio,
+        megapixels: inlineSceneMegapixels
+      });
+      return inlineSceneImageRequestKey(liveImageRequest) === imageRequestKey;
+    } catch {
+      return false;
+    }
+  }
+
+  function inlineSceneResponseHash(response: Response): string {
+    const value = response.headers.get('x-mullet-image-sha256') ?? '';
+    if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('Inline-scene response omitted its image hash.');
+    return value;
+  }
+
+  async function generateInlineScene(
+    selectedSidecarRequest: InlineSceneRequest | null = inlineSceneSidecarRequest,
+    selectedAspectRatio: InlineSceneAspectRatio = inlineSceneAspectRatio,
+    selectedMegapixels: InlineSceneMegapixels = inlineSceneMegapixels,
+    selectedLora: string = inlineSceneLora
+  ) {
+    if (
+      !selectedSidecarRequest
+      || !inlineScenesEnabled
+      || !inlineSceneCapabilities
+      || inlineSceneBusy
+      || !inlineScenePersistenceReady
+      || !inlineScenePersistenceAvailable
+    ) return;
+    const generation = inlineSceneGeneration;
+    const epoch = inlineSceneEpoch;
+    lastInlineSceneAttemptKey = inlineSceneAttemptKey(selectedSidecarRequest, selectedAspectRatio, selectedMegapixels, selectedLora);
+    inlineSceneBusy = true;
+    inlineSceneError = '';
+    const activeController = new AbortController();
+    inlineSceneController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, INLINE_SCENE_TIMEOUT_MS + INLINE_SCENE_IMAGE_TIMEOUT_MS + 10_000);
+    try {
+      const sidecarResponse = await fetch(`${base}/api/sidecar/scene`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(selectedSidecarRequest),
+        signal: activeController.signal
+      });
+      const sidecarPayload = await sidecarResponse.json().catch(() => null);
+      if (!sidecarResponse.ok) {
+        const detail = sidecarPayload && typeof sidecarPayload.message === 'string'
+          ? sidecarPayload.message
+          : `Inline-scene sidecar failed (${sidecarResponse.status}).`;
+        throw new Error(detail);
+      }
+      const result = normalizeInlineSceneResult(sidecarPayload);
+      if (!inlineSceneResultMatchesRequest(result, selectedSidecarRequest)) {
+        throw new Error('Inline-scene sidecar returned a mismatched finalized source.');
+      }
+      const imageRequest = buildInlineSceneImageRequest(result, {
+        lora: selectedLora || null,
+        aspectRatio: selectedAspectRatio,
+        megapixels: selectedMegapixels
+      });
+      const requestKey = inlineSceneImageRequestKey(imageRequest);
+      if (!inlineSceneGenerationIsCurrent(generation, epoch, selectedSidecarRequest, result, requestKey, activeController.signal)) return;
+      const imageResponse = await fetch(`${base}/api/scene`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(imageRequest),
+        signal: activeController.signal
+      });
+      if (!imageResponse.ok) {
+        const payload = await imageResponse.json().catch(() => null);
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : `Inline scene failed (${imageResponse.status}).`;
+        throw new Error(detail);
+      }
+      const image = await imageResponse.blob();
+      if (image.type !== 'image/png' || image.size < 24) throw new Error('Inline-scene generator returned an invalid image.');
+      const modelTemplate = imageResponse.headers.get('x-mullet-model-template') ?? '';
+      if (modelTemplate !== imageRequest.modelTemplate) throw new Error('Inline-scene response model does not match its request.');
+      const imageSha256 = inlineSceneResponseHash(imageResponse);
+      if (await blobSha256(image) !== imageSha256) throw new Error('Inline-scene response hash does not match its image.');
+      const stored = normalizeStoredInlineScene({
+        spec: STORED_INLINE_SCENE_SPEC,
+        conversationId: imageRequest.source.conversationId,
+        epoch,
+        requestKey,
+        request: imageRequest,
+        modelTemplate,
+        promptId: imageResponse.headers.get('x-mullet-prompt-id') ?? '',
+        seed: responseHeaderInteger(imageResponse, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
+        width: responseHeaderInteger(imageResponse, 'x-mullet-width', 16, 2048),
+        height: responseHeaderInteger(imageResponse, 'x-mullet-height', 16, 2048),
+        generatedAt: Date.now(),
+        imageSha256,
+        image
+      });
+      await commitStoredInlineScene(stored, {
+        exclusive: runStoredInlineSceneExclusive,
+        save: saveStoredInlineScene,
+        rollback: rollbackStoredInlineSceneWrite,
+        isCurrent: () => inlineSceneGenerationIsCurrent(
+          generation,
+          epoch,
+          selectedSidecarRequest,
+          result,
+          requestKey,
+          activeController.signal
+        ),
+        install: installGeneratedInlineScene
+      });
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        if (timedOut) inlineSceneError = `Inline scene timed out after ${(INLINE_SCENE_TIMEOUT_MS + INLINE_SCENE_IMAGE_TIMEOUT_MS + 10_000) / 1000} seconds.`;
+      } else {
+        inlineSceneError = cause instanceof Error ? cause.message : 'Inline scene failed.';
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (inlineSceneController === activeController) {
+        inlineSceneBusy = false;
+        inlineSceneController = null;
+      }
+    }
+  }
+
+  function persistInlineScenesEnabled() {
+    if (!inlineScenePersistenceReady || !inlineScenePersistenceAvailable) inlineScenesEnabled = false;
+    localStorage.setItem(inlineScenesEnabledStorageKey, String(inlineScenesEnabled));
+    inlineSceneError = '';
+    lastInlineSceneAttemptKey = '';
+    if (!inlineScenesEnabled) {
+      inlineSceneGeneration += 1;
+      inlineSceneController?.abort();
+      inlineSceneController = null;
+      inlineSceneBusy = false;
+    }
+  }
+
+  function publishFinalizedInlineSceneSource() {
+    const source = livingHistorySourceForMessages(conversationId, messages);
+    const epoch = crypto.randomUUID();
+    inlineSceneGeneration += 1;
+    inlineSceneController?.abort();
+    inlineSceneController = null;
+    inlineSceneBusy = false;
+    inlineSceneError = '';
+    lastInlineSceneAttemptKey = '';
+    removeInstalledInlineScene();
+    finalizedInlineSceneSource = source;
+    inlineSceneEpoch = epoch;
+    localStorage.setItem(inlineSceneFinalizedStorageKey, JSON.stringify({ epoch, source }));
+  }
+
+  async function resetInlineSceneForConversation() {
+    inlineSceneGeneration += 1;
+    inlineSceneController?.abort();
+    inlineSceneController = null;
+    inlineSceneBusy = false;
+    inlineSceneError = '';
+    lastInlineSceneAttemptKey = '';
+    finalizedInlineSceneSource = null;
+    inlineSceneEpoch = '';
+    localStorage.removeItem(inlineSceneFinalizedStorageKey);
+    removeInstalledInlineScene();
+    if (!inlineScenePersistenceAvailable) return;
+    beginInlineScenePersistenceOperation();
+    try {
+      await runStoredInlineSceneExclusive(clearStoredInlineScene);
+    } catch (cause) {
+      disableInlineScenePersistence(cause);
+    } finally {
+      endInlineScenePersistenceOperation();
+    }
+  }
+
   async function loadPortraitGenerator() {
     if (portraitCapabilitiesLoading) return;
     portraitCapabilitiesLoading = true;
