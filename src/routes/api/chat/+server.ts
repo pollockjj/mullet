@@ -26,6 +26,7 @@ import {
 import { isScenarioCard } from '$lib/scenario';
 import { assertChatRequestTextSize } from '$lib/chat-request-size';
 import { LIVING_HISTORY_LOREBOOK_NAME } from '$lib/living-history';
+import { isAssistantMemoryLorebook } from '$lib/assistant-memory';
 import {
   CONVERSATION_MODE_FICTION,
   CONVERSATION_MODE_PERSONAL_ASSISTANT,
@@ -100,6 +101,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   let characterCard: ImportedCharacterCard | null = null;
   let upstreamMessages = messages;
   let loreResult: LoreScanResult | null = null;
+  let assistantMemoryContext: string[] = [];
   const userName = body?.userName === undefined ? 'You' : body.userName;
   if (typeof userName !== 'string' || userName.trim().length === 0 || userName.length > 100) {
     throw error(400, 'userName must be a non-empty string of at most 100 characters');
@@ -141,7 +143,27 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       || characterFilterNames.length
       || characterTagIds.length
     ) throw error(400, 'personal-assistant mode does not accept fiction persona or character filters');
+    const requestedMemory = body?.assistantMemory;
+    if (requestedMemory !== undefined && requestedMemory !== null) {
+      try {
+        if (!isRecord(requestedMemory)) throw new Error('assistantMemory must be a generated memory book');
+        const name = typeof requestedMemory.name === 'string' ? requestedMemory.name : '';
+        const memoryBook = normalizeLorebook(requestedMemory.raw ?? requestedMemory, name, 'generated');
+        if (!isAssistantMemoryLorebook(memoryBook)) throw new Error('assistantMemory is not a generated assistant-memory book');
+        assistantMemoryContext = [...memoryBook.entries]
+          .sort((left, right) => left.insertionOrder - right.insertionOrder)
+          .map((entry) => entry.content);
+        if (assistantMemoryContext.reduce((sum, entry) => sum + entry.length, 0) > 8_000) {
+          throw new Error('assistantMemory exceeds the 8000-character projection limit');
+        }
+      } catch (cause) {
+        throw error(400, cause instanceof Error ? cause.message : 'invalid assistantMemory');
+      }
+    }
   } else if (loreEnabled) {
+    if (body?.assistantMemory !== undefined && body.assistantMemory !== null) {
+      throw error(400, 'fiction mode does not accept assistant memory');
+    }
     const requestedLorebooks = body?.lorebooks ?? [];
     if (!Array.isArray(requestedLorebooks) || requestedLorebooks.length > 20) {
       throw error(400, 'lorebooks must be an array containing at most 20 books');
@@ -196,7 +218,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   }
 
   if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) {
-    upstreamMessages = compilePersonalAssistantMessages(messages);
+    upstreamMessages = compilePersonalAssistantMessages(messages, assistantMemoryContext);
   } else if (characterCard) {
     const history = loreResult ? injectLoreContext(messages, loreResult) : messages;
     upstreamMessages = compileCharacterMessages(characterCard, history, userName.trim(), loreResult ?? {});
@@ -235,6 +257,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     'x-accel-buffering': 'no',
     'x-mullet-token-limit': String(tokenLimit),
     'x-mullet-mode': conversationMode,
+    'x-mullet-assistant-memory-active': String(Number(assistantMemoryContext.length > 0)),
     'x-mullet-living-history-active': String(Number(Boolean(
       loreResult?.activated.some((entry) => entry.book === LIVING_HISTORY_LOREBOOK_NAME)
     )))

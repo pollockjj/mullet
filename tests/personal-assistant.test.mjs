@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   CONVERSATION_MODE_FICTION,
   CONVERSATION_MODE_PERSONAL_ASSISTANT,
+  PERSONAL_ASSISTANT_MEMORY_CONTEXT_PREFIX,
   PERSONAL_ASSISTANT_SYSTEM_PROMPT,
   compilePersonalAssistantMessages,
   normalizeConversationMode
@@ -43,4 +44,21 @@ test('rejects system-message injection and empty turns in assistant history', ()
     () => compilePersonalAssistantMessages([{ role: 'user', content: '   ' }]),
     /message 0 is invalid/
   );
+});
+
+test('places bounded untrusted memory after the fixed prompt and before canonical history', () => {
+  const history = [
+    { role: 'user', content: 'What should I do next?' },
+    { role: 'assistant', content: 'Review the open task.' }
+  ];
+  const canonical = JSON.stringify(history);
+  const memory = ['OPEN TASK MEMORY:\n- atlas: "Submit Atlas"'];
+  const compiled = compilePersonalAssistantMessages(history, memory);
+  assert.equal(compiled[0].content, PERSONAL_ASSISTANT_SYSTEM_PROMPT);
+  assert.match(compiled[1].content, new RegExp(`^${PERSONAL_ASSISTANT_MEMORY_CONTEXT_PREFIX}`));
+  assert.match(compiled[1].content, /Submit Atlas/);
+  assert.deepEqual(compiled.slice(2), history);
+  assert.equal(JSON.stringify(history), canonical);
+  assert.throws(() => compilePersonalAssistantMessages(history, ['x'.repeat(8_001)]), /memory context is invalid/);
+  assert.throws(() => compilePersonalAssistantMessages(history, ['a', 'b', 'c', 'd']), /memory context is invalid/);
 });
