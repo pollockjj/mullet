@@ -148,10 +148,10 @@ export function normalizeInlineSceneRequest(value: unknown): InlineSceneRequest 
 }
 
 function withoutReasoning(value: string): string {
-  return value
+  const withoutThink = value
     .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
-    .replace(/^```(?:json)?\s*([\s\S]*?)```$/i, '$1')
     .trim();
+  return withoutThink.replace(/^```(?:json)?\s*([\s\S]*?)```$/i, '$1').trim();
 }
 
 export function parseInlineSceneResponse(value: unknown): string {
