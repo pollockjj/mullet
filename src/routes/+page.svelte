@@ -479,8 +479,10 @@
     inlineSceneVideoCapabilities,
     inlineSceneVideoPersistenceReady,
     inlineSceneVideoPersistenceAvailable,
+    streaming,
     inlineSceneBusy,
     inlineSceneVideoBusy,
+    inlineSceneVideoError,
     inlineSceneVideoRequest,
     inlineSceneVideoCurrent
   );
@@ -575,7 +577,6 @@
     void restoreInlineSceneAndMotion();
     void loadPortraitGenerator();
     void loadPortraitVideoGenerator();
-    void loadInlineSceneGenerator();
     void loadInlineSceneVideoGenerator();
     void loadScenarioCatalog();
   });
@@ -815,6 +816,7 @@
 
   async function restoreInlineSceneAndMotion() {
     await restoreGeneratedInlineScene();
+    await loadInlineSceneGenerator();
     await tick();
     await restoreGeneratedInlineSceneVideo();
   }
@@ -961,8 +963,10 @@
     capabilities: InlineSceneVideoCapabilities | null,
     persistenceReady: boolean,
     persistenceAvailable: boolean,
+    isStreaming: boolean,
     sceneBusy: boolean,
     videoBusy: boolean,
+    videoError: string,
     request: InlineSceneVideoRequest | null,
     current: boolean
   ) {
@@ -972,8 +976,10 @@
       || !capabilities
       || !persistenceReady
       || !persistenceAvailable
+      || isStreaming
       || sceneBusy
       || videoBusy
+      || Boolean(videoError)
       || !request
       || current
     ) return;
@@ -1145,7 +1151,9 @@
     inlineSceneVideoController = null;
     inlineSceneVideoBusy = false;
     inlineSceneVideoError = 'The generated scene motion could not be decoded; showing the static scene.';
-    lastInlineSceneVideoAttemptKey = '';
+    if (inlineSceneVideoRequest) {
+      lastInlineSceneVideoAttemptKey = inlineSceneVideoRequestKey(inlineSceneVideoRequest);
+    }
     removeInstalledInlineSceneVideo();
     if (inlineSceneVideoPersistenceAvailable) {
       void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
