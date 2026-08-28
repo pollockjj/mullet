@@ -1,6 +1,11 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { PORTRAIT_TIMEOUT_MS, normalizePortraitRequest, portraitDimensions } from '$lib/portrait';
+import {
+  PORTRAIT_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_TIMEOUT_MS,
+  normalizePortraitRequest,
+  portraitDimensions
+} from '$lib/portrait';
 import { loadPortraitCapabilities, runComfyPortrait } from '$lib/server/comfy-portrait';
 import { runtime } from '$lib/server/runtime';
 
@@ -48,6 +53,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     const capabilities = await loadPortraitCapabilities(fetch, baseUrl, signal);
     if (portraitRequest.lora && !capabilities.loras.includes(portraitRequest.lora)) {
       throw error(400, 'The selected portrait LoRA is unavailable for this model.');
+    }
+    if (portraitRequest.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID && !capabilities.referenceTemplate) {
+      throw error(400, 'Reference-conditioned portrait generation is unavailable.');
     }
     const result = await runComfyPortrait(fetch, baseUrl, portraitRequest, seed, signal);
     const dimensions = portraitDimensions(portraitRequest.aspectRatio, portraitRequest.megapixels);

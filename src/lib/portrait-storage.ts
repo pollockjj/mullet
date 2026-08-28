@@ -1,4 +1,10 @@
-import { PORTRAIT_TEMPLATE_ID, isPortraitSource, type PortraitSource } from './portrait.ts';
+import {
+  PORTRAIT_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_TEMPLATE_ID,
+  isPortraitSource,
+  type PortraitModelTemplate,
+  type PortraitSource
+} from './portrait.ts';
 
 export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v1' as const;
 
@@ -7,7 +13,7 @@ export type StoredPortrait = {
   conversationId: string;
   requestKey: string;
   source: PortraitSource;
-  modelTemplate: typeof PORTRAIT_TEMPLATE_ID;
+  modelTemplate: PortraitModelTemplate;
   promptId: string;
   seed: number;
   width: number;
@@ -46,7 +52,9 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
   if (typeof value.requestKey !== 'string' || value.requestKey.length < 1 || value.requestKey.length > 5000) {
     throw new Error('stored portrait request key is invalid');
   }
-  if (value.modelTemplate !== PORTRAIT_TEMPLATE_ID) throw new Error('stored portrait template is invalid');
+  if (value.modelTemplate !== PORTRAIT_TEMPLATE_ID && value.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID) {
+    throw new Error('stored portrait template is invalid');
+  }
   if (typeof value.promptId !== 'string' || !/^[0-9a-f-]{36}$/i.test(value.promptId)) throw new Error('stored portrait prompt ID is invalid');
   if (!(value.image instanceof Blob) || value.image.type !== 'image/png' || value.image.size < 8 || value.image.size > 20 * 1024 * 1024) {
     throw new Error('stored portrait image is invalid');
@@ -56,7 +64,7 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
     conversationId: value.conversationId,
     requestKey: value.requestKey,
     source: value.source,
-    modelTemplate: PORTRAIT_TEMPLATE_ID,
+    modelTemplate: value.modelTemplate,
     promptId: value.promptId,
     seed: safeInteger(value.seed, 'stored portrait seed', 0, Number.MAX_SAFE_INTEGER),
     width: safeInteger(value.width, 'stored portrait width', 16, 8192),

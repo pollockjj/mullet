@@ -1,7 +1,10 @@
 import {
   PORTRAIT_ASPECT_RATIOS,
   PORTRAIT_MEGAPIXELS,
+  PORTRAIT_REFERENCE_TEMPLATE_ID,
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
+  buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   type PortraitCapabilities,
   type PortraitRequest
@@ -40,6 +43,10 @@ function optionList(value: unknown, nodeName: string, inputName: string): string
   return input[0] as string[];
 }
 
+function nodeAvailable(value: unknown, nodeName: string): boolean {
+  return isRecord(value) && isRecord(value[nodeName]);
+}
+
 export async function loadPortraitCapabilities(
   fetcher: Fetcher,
   baseUrl: string,
@@ -49,9 +56,16 @@ export async function loadPortraitCapabilities(
     '/object_info/UNETLoader',
     '/object_info/CLIPLoader',
     '/object_info/VAELoader',
-    '/object_info/LoraLoader'
+    '/object_info/LoraLoader',
+    '/object_info/LoadImage',
+    '/object_info/FluxKontextImageScale',
+    '/object_info/CFGNorm',
+    '/object_info/LoraLoaderModelOnly',
+    '/object_info/TextEncodeQwenImageEditPlus',
+    '/object_info/VAEEncode',
+    '/object_info/ImageScale'
   ];
-  const [unetInfo, clipInfo, vaeInfo, loraInfo] = await Promise.all(paths.map(async (path) => {
+  const [unetInfo, clipInfo, vaeInfo, loraInfo, ...referenceNodeInfo] = await Promise.all(paths.map(async (path) => {
     const response = await fetcher(endpoint(baseUrl, path), { signal });
     return responseJson(response, 'capability query');
   }));
@@ -62,9 +76,16 @@ export async function loadPortraitCapabilities(
   if (!unets.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.unet)) throw new Error('ComfyUI is missing the Z-Image Turbo model');
   if (!clips.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.clip)) throw new Error('ComfyUI is missing the Z-Image text encoder');
   if (!vaes.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.vae)) throw new Error('ComfyUI is missing the Z-Image VAE');
+  const referenceNodes = ['LoadImage', 'FluxKontextImageScale', 'CFGNorm', 'LoraLoaderModelOnly', 'TextEncodeQwenImageEditPlus', 'VAEEncode', 'ImageScale'];
+  const referenceReady = unets.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet)
+    && clips.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip)
+    && vaes.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae)
+    && loras.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.lora)
+    && referenceNodeInfo.every((info, index) => nodeAvailable(info, referenceNodes[index]));
   return {
-    spec: 'mullet_portrait_capabilities_v1',
+    spec: 'mullet_portrait_capabilities_v2',
     template: Z_IMAGE_TURBO_TEMPLATE,
+    referenceTemplate: referenceReady ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE : null,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
     loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_TEMPLATE.loraPrefix)).sort()
@@ -93,16 +114,23 @@ function historyFailure(entry: Record<string, unknown>): string | null {
   return null;
 }
 
-function outputImage(entry: Record<string, unknown>): { filename: string; subfolder: string; type: 'output' } | null {
+function outputImage(entry: Record<string, unknown>, request: PortraitRequest): { filename: string; subfolder: string; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  if (!isRecord(entry.outputs) || !isRecord(entry.outputs[Z_IMAGE_TURBO_TEMPLATE.outputNode])) {
+  const referenceConditioned = request.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID;
+  const outputNode = referenceConditioned
+    ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.outputNode
+    : Z_IMAGE_TURBO_TEMPLATE.outputNode;
+  if (!isRecord(entry.outputs) || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI portrait history omitted the output node');
   }
-  const output = entry.outputs[Z_IMAGE_TURBO_TEMPLATE.outputNode];
+  const output = entry.outputs[outputNode];
   if (!isRecord(output)) throw new Error('ComfyUI portrait history omitted the output node');
   if (!Array.isArray(output.images) || !isRecord(output.images[0])) throw new Error('ComfyUI portrait history omitted the image');
   const image = output.images[0];
-  if (typeof image.filename !== 'string' || !/^portrait_\d+_\.png$/.test(image.filename)) {
+  const filenamePattern = referenceConditioned
+    ? /^portrait-reference_\d+_\.png$/
+    : /^portrait_\d+_\.png$/;
+  if (typeof image.filename !== 'string' || !filenamePattern.test(image.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait filename');
   }
   if (image.subfolder !== 'mullet' || image.type !== 'output') throw new Error('ComfyUI returned an unexpected portrait location');
@@ -128,6 +156,7 @@ async function waitForImage(
   fetcher: Fetcher,
   baseUrl: string,
   id: string,
+  request: PortraitRequest,
   signal?: AbortSignal
 ): Promise<{ filename: string; subfolder: string; type: 'output' }> {
   while (true) {
@@ -137,11 +166,38 @@ async function waitForImage(
     if (entry) {
       const failure = historyFailure(entry);
       if (failure) throw new Error(failure);
-      const image = outputImage(entry);
+      const image = outputImage(entry, request);
       if (image) return image;
     }
     await pollDelay(250, signal);
   }
+}
+
+async function assertIdentityReference(
+  fetcher: Fetcher,
+  baseUrl: string,
+  request: PortraitRequest,
+  signal?: AbortSignal
+): Promise<void> {
+  if (request.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || !request.referenceImage) return;
+  const query = new URLSearchParams({
+    filename: request.referenceImage.name,
+    subfolder: request.referenceImage.subfolder,
+    type: request.referenceImage.type
+  });
+  const response = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
+  if (!response.ok) throw new Error('ComfyUI identity reference is unavailable');
+  const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
+    throw new Error('ComfyUI identity reference has an invalid media type');
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength < 8 || bytes.byteLength > 20 * 1024 * 1024) {
+    throw new Error('ComfyUI identity reference has an invalid size');
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  if (sha256 !== request.referenceImage.sha256) throw new Error('ComfyUI identity reference does not match its profile');
 }
 
 export async function runComfyPortrait(
@@ -151,14 +207,18 @@ export async function runComfyPortrait(
   seed: number,
   signal?: AbortSignal
 ): Promise<ComfyPortraitImage> {
+  await assertIdentityReference(fetcher, baseUrl, request, signal);
+  const workflow = request.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
+    ? buildQwenReferencePortraitWorkflow(request, seed)
+    : buildZImageTurboWorkflow(request, seed);
   const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt: buildZImageTurboWorkflow(request, seed), client_id: 'mullet-portrait' }),
+    body: JSON.stringify({ prompt: workflow, client_id: 'mullet-portrait' }),
     signal
   });
   const id = promptId(await responseJson(queueResponse, 'queue submission'));
-  const image = await waitForImage(fetcher, baseUrl, id, signal);
+  const image = await waitForImage(fetcher, baseUrl, id, request, signal);
   const query = new URLSearchParams(image);
   const imageResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
   if (!imageResponse.ok) throw new Error(`ComfyUI image fetch failed (${imageResponse.status})`);
