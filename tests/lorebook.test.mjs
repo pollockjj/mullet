@@ -59,6 +59,8 @@ function history(...contents) {
 test('matches the operator SillyTavern lore settings and UI ranges', async () => {
   assert.deepEqual(DEFAULT_LOREBOOK_SETTINGS, {
     scanDepth: 228,
+    minActivations: 0,
+    minActivationsDepthMax: 0,
     budgetPercent: 25,
     includeNames: true,
     recursive: true,
@@ -72,10 +74,14 @@ test('matches the operator SillyTavern lore settings and UI ranges', async () =>
   assert.equal((await scanLorebooks([], [], DEFAULT_LOREBOOK_SETTINGS)).budgetTokens, 65_536);
   assert.equal(resolveLorebookSettings({ scanDepth: 0 }).scanDepth, 0);
   assert.equal(resolveLorebookSettings({ scanDepth: 1000 }).scanDepth, 1000);
+  assert.equal(resolveLorebookSettings({ minActivations: 100 }).minActivations, 100);
+  assert.equal(resolveLorebookSettings({ minActivationsDepthMax: 100 }).minActivationsDepthMax, 100);
   assert.equal(resolveLorebookSettings({ budgetPercent: 1 }).budgetPercent, 1);
   assert.equal(resolveLorebookSettings({ budgetPercent: 100 }).budgetPercent, 100);
   assert.equal(resolveLorebookSettings({ maxContextTokens: 999 }).maxContextTokens, 262_144);
   assert.throws(() => resolveLorebookSettings({ scanDepth: 1001 }), /between 0 and 1000/);
+  assert.throws(() => resolveLorebookSettings({ minActivations: 101 }), /between 0 and 100/);
+  assert.throws(() => resolveLorebookSettings({ minActivationsDepthMax: -1 }), /between 0 and 100/);
   assert.throws(() => resolveLorebookSettings({ budgetPercent: 0 }), /between 1 and 100/);
 });
 
@@ -341,6 +347,54 @@ test('normalizes NovelAI, Agnai, and Risu lorebook exports', () => {
   assert.deepEqual(agnai.entries[0].keys, ['a']);
   assert.equal(risu.format, 'risu');
   assert.deepEqual(risu.entries[0].keys, ['r', 's']);
+});
+
+test('scans persona, character depth prompt, and explicit scan injections only when enabled per entry', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Persona', key: ['pilot'], matchPersonaDescription: true, content: 'PERSONA' }),
+    nativeEntry({ uid: 1, comment: 'Depth prompt', key: ['private doubt'], matchCharacterDepthPrompt: true, content: 'DEPTH' }),
+    nativeEntry({ uid: 2, comment: 'Injection', key: ['quiet signal'], content: 'INJECTION' })
+  ]);
+  const result = await scanLorebooks([book], [], { recursive: false }, {
+    personaDescription: 'A pilot newly aboard the ship.',
+    characterDepthPrompt: 'Show private doubt.',
+    scanInjections: ['A quiet signal is active.']
+  });
+  assert.deepEqual(result.activated.map((entry) => entry.name), ['Persona', 'Depth prompt', 'Injection']);
+});
+
+test('applies inclusive and exclusive character-name and tag filters', async () => {
+  const card = normalizeCharacterCard({
+    spec: 'chara_card_v3', spec_version: '3.0', data: {
+      name: 'Blake', nickname: '', description: '', personality: '', scenario: '', first_mes: '', mes_example: '',
+      creator_notes: '', system_prompt: '', post_history_instructions: '', alternate_greetings: [], group_only_greetings: [],
+      tags: ['Liberator crew'], creator: '', character_version: '', extensions: {}
+    }
+  });
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Name include', constant: true, characterFilter: { names: ['Blake'], tags: [], isExclude: false } }),
+    nativeEntry({ uid: 1, comment: 'Tag include', constant: true, characterFilter: { names: [], tags: ['Liberator crew'], isExclude: false } }),
+    nativeEntry({ uid: 2, comment: 'Name exclude', constant: true, characterFilter: { names: ['Blake'], tags: [], isExclude: true } }),
+    nativeEntry({ uid: 3, comment: 'Other include', constant: true, characterFilter: { names: ['Servalan'], tags: [], isExclude: false } })
+  ]);
+  const result = await scanLorebooks([book], [], { recursive: false }, { card });
+  assert.deepEqual(result.activated.map((entry) => entry.name), ['Name include', 'Tag include']);
+});
+
+test('minimum activations expands only the global scan depth and excludes recursion text during expansion', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Recent', key: ['recent'], content: 'recursion-only-key' }),
+    nativeEntry({ uid: 1, comment: 'Older', key: ['older'], content: 'OLDER' }),
+    nativeEntry({ uid: 2, comment: 'Must not use recursion', key: ['recursion-only-key'], content: 'BAD' }),
+    nativeEntry({ uid: 3, comment: 'Fixed depth', key: ['older'], scanDepth: 1, content: 'FIXED' })
+  ]);
+  const result = await scanLorebooks([book], history('older', 'middle', 'recent'), {
+    scanDepth: 1,
+    minActivations: 2,
+    minActivationsDepthMax: 3,
+    recursive: false
+  });
+  assert.deepEqual(result.activated.map((entry) => entry.name), ['Recent', 'Older']);
 });
 
 test('imports NovelAI naidata from a PNG lorebook', () => {

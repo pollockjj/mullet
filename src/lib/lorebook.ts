@@ -10,6 +10,8 @@ export type LorebookFormat = 'character_book' | 'sillytavern' | 'lorebook_v3' | 
 
 export type LorebookSettings = {
   scanDepth: number;
+  minActivations: number;
+  minActivationsDepthMax: number;
   budgetPercent: number;
   includeNames: boolean;
   recursive: boolean;
@@ -23,6 +25,8 @@ export type LorebookSettings = {
 
 export const DEFAULT_LOREBOOK_SETTINGS: LorebookSettings = Object.freeze({
   scanDepth: 228,
+  minActivations: 0,
+  minActivationsDepthMax: 0,
   budgetPercent: 25,
   includeNames: true,
   recursive: true,
@@ -65,10 +69,17 @@ export type NormalizedLoreEntry = {
   outletName: string;
   triggers: string[];
   decorators: string[];
+  matchPersonaDescription: boolean;
   matchCharacterDescription: boolean;
   matchCharacterPersonality: boolean;
+  matchCharacterDepthPrompt: boolean;
   matchScenario: boolean;
   matchCreatorNotes: boolean;
+  characterFilter: {
+    names: string[];
+    tags: string[];
+    isExclude: boolean;
+  } | null;
   raw: JsonObject;
   sourceIndex: number;
 };
@@ -131,6 +142,11 @@ type ScanOptions = {
   card?: ImportedCharacterCard | null;
   userName?: string;
   assistantName?: string;
+  personaDescription?: string;
+  characterDepthPrompt?: string;
+  characterFilterNames?: string[];
+  characterTags?: string[];
+  scanInjections?: string[];
   random?: () => number;
   tokenCount?: (value: string) => number | Promise<number>;
   regexTest?: (source: string, flags: string, haystack: string) => RegexTestResult | Promise<RegexTestResult>;
@@ -168,6 +184,14 @@ function extensionValue(entry: JsonObject, camel: string, snake: string): unknow
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeCharacterFilter(value: unknown): NormalizedLoreEntry['characterFilter'] {
+  if (!isRecord(value)) return null;
+  const names = stringArray(value.names);
+  const tags = stringArray(value.tags);
+  if (!names.length && !tags.length) return null;
+  return { names, tags, isExclude: value.isExclude === true || value.is_exclude === true };
 }
 
 function normalizePosition(entry: JsonObject): number {
@@ -248,10 +272,13 @@ function normalizeEntry(value: unknown, id: string, index: number, format: Loreb
     outletName: stringValue(extensionValue(value, 'outletName', 'outlet_name')).trim(),
     triggers: stringArray(extensionValue(value, 'triggers', 'triggers')),
     decorators: parsedContent.decorators,
+    matchPersonaDescription: extensionValue(value, 'matchPersonaDescription', 'match_persona_description') === true,
     matchCharacterDescription: extensionValue(value, 'matchCharacterDescription', 'match_character_description') === true,
     matchCharacterPersonality: extensionValue(value, 'matchCharacterPersonality', 'match_character_personality') === true,
+    matchCharacterDepthPrompt: extensionValue(value, 'matchCharacterDepthPrompt', 'match_character_depth_prompt') === true,
     matchScenario: extensionValue(value, 'matchScenario', 'match_scenario') === true,
     matchCreatorNotes: extensionValue(value, 'matchCreatorNotes', 'match_creator_notes') === true,
+    characterFilter: normalizeCharacterFilter(value.characterFilter ?? extensionValue(value, 'characterFilter', 'character_filter')),
     raw: cloneJsonObject(value),
     sourceIndex: index
   };
@@ -422,6 +449,8 @@ export function resolveLorebookSettings(
   const input = isRecord(value) ? value : {};
   return {
     scanDepth: integerSetting(input.scanDepth, 'scanDepth', 0, 1000, DEFAULT_LOREBOOK_SETTINGS.scanDepth),
+    minActivations: integerSetting(input.minActivations, 'minActivations', 0, 100, DEFAULT_LOREBOOK_SETTINGS.minActivations),
+    minActivationsDepthMax: integerSetting(input.minActivationsDepthMax, 'minActivationsDepthMax', 0, 100, DEFAULT_LOREBOOK_SETTINGS.minActivationsDepthMax),
     budgetPercent: integerSetting(input.budgetPercent, 'budgetPercent', 1, 100, DEFAULT_LOREBOOK_SETTINGS.budgetPercent),
     includeNames: booleanSetting(input.includeNames, 'includeNames', DEFAULT_LOREBOOK_SETTINGS.includeNames),
     recursive: booleanSetting(input.recursive, 'recursive', DEFAULT_LOREBOOK_SETTINGS.recursive),
@@ -591,16 +620,41 @@ function scanText(
   entry: NormalizedLoreEntry,
   settings: LorebookSettings,
   recursion: string[],
-  card?: ImportedCharacterCard | null
+  scanDepthSkew: number,
+  includeRecursion: boolean,
+  options: ScanOptions
 ): string {
-  const depth = Math.max(0, Math.min(1000, Math.trunc(entry.scanDepth ?? settings.scanDepth)));
+  const depth = Math.max(0, Math.min(1000, Math.trunc(entry.scanDepth ?? settings.scanDepth + scanDepthSkew)));
   const buffer = historyNewestFirst.slice(0, depth);
+  const card = options.card;
+  if (entry.matchPersonaDescription) buffer.push(options.personaDescription ?? '');
   if (card && entry.matchCharacterDescription) buffer.push(card.data.description);
   if (card && entry.matchCharacterPersonality) buffer.push(card.data.personality);
+  if (entry.matchCharacterDepthPrompt) buffer.push(options.characterDepthPrompt ?? '');
   if (card && entry.matchScenario) buffer.push(card.data.scenario);
   if (card && entry.matchCreatorNotes) buffer.push(card.data.creatorNotes);
-  buffer.push(...recursion);
+  buffer.push(...(options.scanInjections ?? []));
+  if (includeRecursion) buffer.push(...recursion);
   return buffer.filter(Boolean).join('\n\x01');
+}
+
+function characterFilterAllows(entry: NormalizedLoreEntry, options: ScanOptions): boolean {
+  const filter = entry.characterFilter;
+  if (!filter) return true;
+  const currentNames = new Set([
+    options.card?.data.name,
+    options.card?.data.nickname,
+    ...(options.characterFilterNames ?? [])
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0));
+  const currentTags = new Set([
+    ...(options.card?.data.tags ?? []),
+    ...(options.characterTags ?? [])
+  ]);
+  const nameIncluded = filter.names.length > 0 && filter.names.some((name) => currentNames.has(name));
+  const tagIncluded = filter.tags.length > 0 && filter.tags.some((tag) => currentTags.has(tag));
+  const hasConfiguredFilter = filter.names.length > 0 || filter.tags.length > 0;
+  const included = nameIncluded || tagIncluded;
+  return !hasConfiguredFilter || (filter.isExclude ? !included : included);
 }
 
 export async function scanLorebooks(
@@ -654,6 +708,8 @@ export async function scanLorebooks(
   let budgetOverflowed = false;
   let iteration = 0;
   let initialScan = true;
+  let minActivationScan = false;
+  let scanDepthSkew = 0;
 
   while (true) {
     if (settings.maxRecursionSteps > 0 && iteration >= settings.maxRecursionSteps) break;
@@ -664,6 +720,7 @@ export async function scanLorebooks(
       const { book, entry } = candidate;
       if (activated.has(candidate.identity) || failedProbabilityChecks.has(candidate.identity) || !entry.enabled) continue;
       if (entry.triggers.length > 0 && !entry.triggers.includes(generationTrigger)) continue;
+      if (!characterFilterAllows(entry, options)) continue;
       if (initialScan && entry.delayUntilRecursion > 0) continue;
       if (!initialScan && (entry.excludeRecursion || entry.delayUntilRecursion > currentRecursionDelayLevel)) continue;
       if (entry.decorators.includes('@@activate')) {
@@ -672,7 +729,7 @@ export async function scanLorebooks(
         continue;
       }
       if (entry.decorators.includes('@@dont_activate')) continue;
-      const haystack = scanText(historyNewestFirst, entry, settings, recursion, options.card);
+      const haystack = scanText(historyNewestFirst, entry, settings, recursion, scanDepthSkew, !minActivationScan, options);
       if (!await entryMatches(haystack, entry, settings, substitute, regexTest)) continue;
       candidate.score = await entryMatchScore(haystack, entry, settings, substitute, regexTest);
       matched.push(candidate);
@@ -710,12 +767,26 @@ export async function scanLorebooks(
     }
 
     let continueScanning = settings.recursive && !budgetOverflowed && newRecursion.length > 0;
+    let nextMinActivationScan = false;
+    if (!continueScanning && settings.recursive && !budgetOverflowed && minActivationScan && recursion.length > 0) {
+      continueScanning = true;
+    }
+    const scanDepth = settings.scanDepth + scanDepthSkew;
+    const minActivationsNotSatisfied = settings.minActivations > 0 && activated.size < settings.minActivations;
+    const minActivationDepthAvailable = (settings.minActivationsDepthMax === 0 || scanDepth <= settings.minActivationsDepthMax)
+      && scanDepth <= historyNewestFirst.length;
+    if (!continueScanning && !budgetOverflowed && minActivationsNotSatisfied && minActivationDepthAvailable) {
+      scanDepthSkew += 1;
+      continueScanning = true;
+      nextMinActivationScan = true;
+    }
     if (!continueScanning && settings.recursive && !budgetOverflowed && recursionDelayLevels.length > 0) {
       currentRecursionDelayLevel = recursionDelayLevels.shift() ?? currentRecursionDelayLevel;
       continueScanning = true;
     }
     initialScan = false;
     if (!continueScanning) break;
+    minActivationScan = nextMinActivationScan;
     if (newRecursion.length) {
       recursion.push(...newRecursion);
       allActivatedText = `${newRecursion.join('\n')}\n${allActivatedText}`;
