@@ -31,21 +31,26 @@
   import {
     LIVING_HISTORY_INTERVAL_MESSAGES,
     LIVING_HISTORY_TIMEOUT_MS,
-    buildLivingHistoryRequest,
     livingHistoryLorebook,
     livingHistoryRequestKey,
     livingHistoryResultAppliesToMessages,
     livingHistoryResultMatchesMessages,
     livingHistoryResultMatchesRequest,
     livingHistorySourceForMessages,
-    livingHistorySourceMatchesMessages,
-    livingHistorySourcesMatch,
     normalizeLivingHistoryResult,
-    normalizeLivingHistorySource,
     type LivingHistoryRequest,
     type LivingHistoryResult,
     type LivingHistorySource
   } from '$lib/living-history';
+  import {
+    MAX_SUPPLEMENTAL_LOREBOOKS,
+    appendLivingHistoryBoundary,
+    assembleSupplementalLorebooks,
+    currentLivingHistoryRequest,
+    livingHistoryAutomaticUpdateDue,
+    normalizeStoredLivingHistoryBoundaries,
+    pendingLivingHistoryMessageCount
+  } from '$lib/living-history-client';
   import {
     clearStoredLivingHistory,
     clearStoredLivingHistoryIfResult,
@@ -213,7 +218,7 @@
     livingHistoryBoundaries
   );
   $: livingHistoryPendingMessages = livingHistoryRequest?.turns.length
-    ?? livingHistoryBoundaries.filter((boundary) => boundary.messageCount > (livingHistoryResult?.source.messageCount ?? 0)).length * 2;
+    ?? pendingLivingHistoryMessageCount(livingHistoryBoundaries, livingHistoryResult);
   $: livingHistoryBook = livingHistoryEnabled && livingHistoryResult && livingHistoryApplicable
     ? livingHistoryLorebook(livingHistoryResult)
     : null;
@@ -538,27 +543,6 @@
     }
   }
 
-  function currentLivingHistoryRequest(
-    currentConversationId: string,
-    currentMessages: readonly Message[],
-    currentResult: LivingHistoryResult | null,
-    boundaries: readonly LivingHistorySource[]
-  ): LivingHistoryRequest | null {
-    if (!currentConversationId || boundaries.length === 0) return null;
-    const applicableResult = currentResult && livingHistoryResultAppliesToMessages(currentResult, currentConversationId, currentMessages)
-      ? currentResult
-      : null;
-    if (currentResult && !applicableResult) return null;
-    const previousCount = applicableResult?.source.messageCount ?? 0;
-    const pending = boundaries.filter((boundary) => boundary.messageCount > previousCount);
-    if (pending.length === 0) return null;
-    try {
-      return buildLivingHistoryRequest(currentConversationId, currentMessages, applicableResult, pending);
-    } catch {
-      return null;
-    }
-  }
-
   function persistLivingHistoryBoundaries() {
     if (!browser) return;
     if (livingHistoryBoundaries.length) {
@@ -573,16 +557,7 @@
     if (!saved) return;
     try {
       const parsed = JSON.parse(saved);
-      if (!Array.isArray(parsed) || parsed.length > 500) throw new Error('invalid finalized boundary list');
-      const normalized = parsed.map((boundary) => normalizeLivingHistorySource(boundary));
-      normalized.forEach((boundary, index) => {
-        if (
-          boundary.conversationId !== conversationId
-          || (index > 0 && boundary.messageCount <= normalized[index - 1].messageCount)
-          || !livingHistorySourceMatchesMessages(boundary, conversationId, messages)
-        ) throw new Error('finalized boundary does not match this conversation');
-      });
-      livingHistoryBoundaries = normalized;
+      livingHistoryBoundaries = normalizeStoredLivingHistoryBoundaries(parsed, conversationId, messages);
     } catch {
       livingHistoryBoundaries = [];
       localStorage.removeItem(livingHistoryBoundariesStorageKey);
@@ -620,10 +595,8 @@
   function recordFinalizedLivingHistoryBoundary() {
     try {
       const source = livingHistorySourceForMessages(conversationId, messages);
-      if (!livingHistoryBoundaries.some((boundary) => livingHistorySourcesMatch(boundary, source))) {
-        livingHistoryBoundaries = [...livingHistoryBoundaries, source].slice(-500);
-        persistLivingHistoryBoundaries();
-      }
+      livingHistoryBoundaries = appendLivingHistoryBoundary(livingHistoryBoundaries, source);
+      persistLivingHistoryBoundaries();
       lastLivingHistoryAttemptKey = '';
     } catch {
       // Only completed, non-empty user-assistant pairs reach this function.
@@ -646,7 +619,7 @@
       || isStreaming
       || busy
       || !request
-      || pendingMessages < LIVING_HISTORY_INTERVAL_MESSAGES
+      || !livingHistoryAutomaticUpdateDue(pendingMessages)
     ) return;
     const key = livingHistoryRequestKey(request);
     if (key === lastLivingHistoryAttemptKey) return;
@@ -656,7 +629,7 @@
 
   function persistLivingHistoryEnabled() {
     if (!livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable) livingHistoryEnabled = false;
-    if (livingHistoryEnabled && importedLorebooks.length >= 20) {
+    if (livingHistoryEnabled && importedLorebooks.length >= MAX_SUPPLEMENTAL_LOREBOOKS) {
       livingHistoryEnabled = false;
       livingHistoryError = 'Living history reserves one supplemental lorebook slot; remove one of the 20 imported lorebooks first.';
     } else {
@@ -1148,7 +1121,9 @@
       const nextBooks = sameNameIndex >= 0
         ? importedLorebooks.map((book, index) => index === sameNameIndex ? imported : book)
         : [...importedLorebooks, imported];
-      const maximumImported = livingHistoryEnabled ? 19 : 20;
+      const maximumImported = livingHistoryEnabled
+        ? MAX_SUPPLEMENTAL_LOREBOOKS - 1
+        : MAX_SUPPLEMENTAL_LOREBOOKS;
       if (nextBooks.length > maximumImported) {
         throw new Error(livingHistoryEnabled
           ? 'Living history reserves one slot; at most 19 imported lorebooks can be active while it is on.'
@@ -1245,12 +1220,11 @@
     if (!content || streaming || !lorePersistenceReady) return;
 
     const outboundMessages = [...messages, { role: 'user' as const, content }];
-    const supplementalLorebooks = [
-      ...importedLorebooks,
-      ...(livingHistoryBook ? [livingHistoryBook] : [])
-    ];
-    if (supplementalLorebooks.length > 20) {
-      errorMessage = 'At most 20 supplemental lorebooks can be active; turn off living history or remove an imported lorebook.';
+    let supplementalLorebooks: ImportedLorebook[];
+    try {
+      supplementalLorebooks = assembleSupplementalLorebooks(importedLorebooks, livingHistoryBook);
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Supplemental lorebooks could not be prepared.';
       return;
     }
     let requestBody: string;
