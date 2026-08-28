@@ -24,6 +24,8 @@ import {
   type LoreScanResult
 } from '$lib/lorebook';
 import { isScenarioCard } from '$lib/scenario';
+import { assertChatRequestTextSize } from '$lib/chat-request-size';
+import { LIVING_HISTORY_LOREBOOK_NAME } from '$lib/living-history';
 
 type Role = 'system' | 'user' | 'assistant';
 
@@ -68,9 +70,20 @@ function validateStringArray(value: unknown, name: string): string[] {
 }
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  const body = await request.json().catch(() => {
-    throw error(400, 'request body must be JSON');
-  });
+  const requestText = await request.text();
+  try {
+    assertChatRequestTextSize(requestText);
+  } catch (cause) {
+    throw error(413, cause instanceof Error ? cause.message : 'chat request is too large');
+  }
+  let body: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(requestText);
+    if (!isRecord(parsed)) throw new Error('request body must be a JSON object');
+    body = parsed;
+  } catch (cause) {
+    throw error(400, cause instanceof Error ? cause.message : 'request body must be JSON');
+  }
   const messages = validateMessages(body?.messages);
   let characterCard: ImportedCharacterCard | null = null;
   let upstreamMessages = messages;
@@ -193,7 +206,10 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
     'x-accel-buffering': 'no',
-    'x-mullet-token-limit': String(tokenLimit)
+    'x-mullet-token-limit': String(tokenLimit),
+    'x-mullet-living-history-active': String(Number(Boolean(
+      loreResult?.activated.some((entry) => entry.book === LIVING_HISTORY_LOREBOOK_NAME)
+    )))
   };
   if (characterCard) {
     headers['x-mullet-character'] = encodeURIComponent(characterCard.data.name);
