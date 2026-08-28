@@ -13,8 +13,8 @@ import {
   type PortraitVideoRequest
 } from './portrait-video.ts';
 
-export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v3' as const;
-export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v3' as const;
+export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v4' as const;
+export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v4' as const;
 
 export type PortraitVideoEndFrameProvenance = {
   modelTemplate: typeof PORTRAIT_END_FRAME_TEMPLATE_ID;
@@ -39,6 +39,7 @@ export type StoredPortraitVideo = {
   frames: typeof PORTRAIT_VIDEO_FRAMES;
   fps: typeof PORTRAIT_VIDEO_FPS;
   durationSeconds: typeof PORTRAIT_VIDEO_DURATION_SECONDS;
+  encodedDurationSeconds: number;
   generatedAt: number;
   inputImageSha256: string;
   endFrame: PortraitVideoEndFrameProvenance | null;
@@ -90,6 +91,13 @@ function safeInteger(value: unknown, name: string, minimum: number, maximum: num
     throw new Error(`${name} is invalid`);
   }
   return Number(value);
+}
+
+function finiteNumber(value: unknown, name: string, minimum: number, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} is invalid`);
+  }
+  return value;
 }
 
 function sha256(value: unknown, name: string): string {
@@ -153,11 +161,17 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
   if (value.frames !== PORTRAIT_VIDEO_FRAMES || value.fps !== PORTRAIT_VIDEO_FPS || value.durationSeconds !== PORTRAIT_VIDEO_DURATION_SECONDS) {
     throw new Error('stored portrait-video timing is invalid');
   }
+  const encodedDurationSeconds = finiteNumber(
+    value.encodedDurationSeconds,
+    'stored portrait-video encoded duration',
+    PORTRAIT_VIDEO_DURATION_SECONDS,
+    PORTRAIT_VIDEO_DURATION_SECONDS + 1
+  );
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored portrait-video input hash');
   if (inputImageSha256 !== request.source.portraitImageSha256) throw new Error('stored portrait-video input hash does not match its request');
   const endFrame = normalizeEndFrame(value.endFrame, request, inputImageSha256, seed);
   const videoSha256 = sha256(value.videoSha256, 'stored portrait-video output hash');
-  if (!(value.video instanceof Blob) || value.video.type !== 'video/webm' || value.video.size < 4 || value.video.size > 64 * 1024 * 1024) {
+  if (!(value.video instanceof Blob) || value.video.type !== 'video/mp4' || value.video.size < 12 || value.video.size > 64 * 1024 * 1024) {
     throw new Error('stored portrait video is invalid');
   }
   return {
@@ -174,6 +188,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     frames: PORTRAIT_VIDEO_FRAMES,
     fps: PORTRAIT_VIDEO_FPS,
     durationSeconds: PORTRAIT_VIDEO_DURATION_SECONDS,
+    encodedDurationSeconds,
     generatedAt: safeInteger(value.generatedAt, 'stored portrait-video timestamp', 1, Number.MAX_SAFE_INTEGER),
     inputImageSha256,
     endFrame,
@@ -187,8 +202,10 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
   if (isRecord(value) && (
     value.spec === 'mullet_stored_portrait_video_v1'
     || value.spec === 'mullet_stored_portrait_video_v2'
+    || value.spec === 'mullet_stored_portrait_video_v3'
     || value.spec === 'mullet_stored_portrait_video_envelope_v1'
     || value.spec === 'mullet_stored_portrait_video_envelope_v2'
+    || value.spec === 'mullet_stored_portrait_video_envelope_v3'
   )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('video' in value)) {
