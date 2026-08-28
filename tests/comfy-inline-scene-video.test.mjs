@@ -16,6 +16,7 @@ import {
   uploadInlineSceneVideoInput,
   validateInlineSceneVideoPng
 } from '../src/lib/server/comfy-inline-scene-video.ts';
+import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const promptId = '22222222-2222-4222-8222-222222222222';
@@ -87,7 +88,7 @@ test('queues and returns only the fixed animated scene-motion WebM', async () =>
     type: 'input',
     imageSha256: videoRequest.source.sceneImageSha256
   };
-  const webm = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
+  const webm = buildVp9WebmFixture();
   let queued;
   const result = await runComfyInlineSceneVideo(async (inputUrl, init = {}) => {
     const url = String(inputUrl);

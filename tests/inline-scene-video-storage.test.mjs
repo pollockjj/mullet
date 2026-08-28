@@ -24,13 +24,14 @@ import {
   unwrapStoredInlineSceneVideo,
   verifyStoredInlineSceneVideo
 } from '../src/lib/inline-scene-video-storage.ts';
+import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const epoch = '11111111-1111-4111-8111-111111111111';
 const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const motionPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
-const webmBytes = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
+const webmBytes = buildVp9WebmFixture();
 const videoSha256 = createHash('sha256').update(webmBytes).digest('hex');
 
 function request() {
@@ -97,6 +98,14 @@ test('rejects mismatched source, key, dimensions, timing, hashes, and blobs', as
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
   await assert.rejects(verifyStoredInlineSceneVideo(stored({ videoSha256: 'd'.repeat(64) })), /hash does not match/);
+  const wrongSizeBytes = buildVp9WebmFixture({ width: 640 });
+  await assert.rejects(
+    verifyStoredInlineSceneVideo(stored({
+      video: new Blob([wrongSizeBytes], { type: 'video/webm' }),
+      videoSha256: createHash('sha256').update(wrongSizeBytes).digest('hex')
+    })),
+    /dimensions/
+  );
 });
 
 test('unwraps writer envelopes and rejects malformed ownership', () => {

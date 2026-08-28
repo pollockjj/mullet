@@ -9,6 +9,7 @@ import {
   normalizeInlineSceneVideoRequest,
   type InlineSceneVideoRequest
 } from './inline-scene-video.ts';
+import { validateVp9Webm } from './webm.ts';
 
 export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v1' as const;
 export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v1' as const;
@@ -186,6 +187,13 @@ export async function verifyStoredInlineSceneVideo(value: unknown): Promise<Stor
   if (await blobSha256(video.video) !== video.videoSha256) {
     throw new Error('stored inline-scene video hash does not match its bytes');
   }
+  const dimensions = inlineSceneVideoDimensions(video.request.aspectRatio);
+  validateVp9Webm(bytes, {
+    width: dimensions.width,
+    height: dimensions.height,
+    frames: dimensions.frames,
+    fps: dimensions.fps
+  });
   return video;
 }
 

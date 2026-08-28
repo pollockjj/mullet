@@ -3,10 +3,12 @@ import {
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
   buildLtx25InlineSceneVideoWorkflow,
+  inlineSceneVideoDimensions,
   type InlineSceneVideoCapabilities,
   type InlineSceneVideoInputReference,
   type InlineSceneVideoRequest
 } from '../inline-scene-video.ts';
+import { validateVp9Webm } from '../webm.ts';
 import { loadPortraitVideoCapabilities } from './comfy-portrait-video.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -263,6 +265,13 @@ export async function runComfyInlineSceneVideo(
     if (bytes.byteLength < 4 || bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) {
       throw new Error('ComfyUI inline-scene video output has an invalid WebM signature');
     }
+    const dimensions = inlineSceneVideoDimensions(request.aspectRatio);
+    validateVp9Webm(bytes, {
+      width: dimensions.width,
+      height: dimensions.height,
+      frames: dimensions.frames,
+      fps: dimensions.fps
+    });
     return {
       bytes,
       contentType: 'video/webm',
