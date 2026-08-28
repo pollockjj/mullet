@@ -274,10 +274,23 @@ export function buildAssistantMemoryRequest(
 ): AssistantMemoryRequest {
   if (!isSidecarConversationId(memoryId)) throw new Error('assistant memory ID must be a UUID');
   const source = livingHistorySourceForMessages(conversationId, messages);
-  const prior = previous ? normalizeAssistantMemoryResult(previous) : null;
-  if (prior && prior.memoryId !== memoryId) throw new Error('previous assistant memory belongs to another memory ledger');
   const user = messages[source.messageIndex - 1];
   const assistant = messages[source.messageIndex];
+  return buildAssistantMemoryRequestFromTurn(memoryId, source, [
+    { role: 'user', messageIndex: source.messageIndex - 1, content: user.content },
+    { role: 'assistant', messageIndex: source.messageIndex, content: assistant.content }
+  ], previous);
+}
+
+export function buildAssistantMemoryRequestFromTurn(
+  memoryId: string,
+  source: LivingHistorySource,
+  turns: [AssistantMemoryTurn, AssistantMemoryTurn],
+  previous: AssistantMemoryResult | null
+): AssistantMemoryRequest {
+  if (!isSidecarConversationId(memoryId)) throw new Error('assistant memory ID must be a UUID');
+  const prior = previous ? normalizeAssistantMemoryResult(previous) : null;
+  if (prior && prior.memoryId !== memoryId) throw new Error('previous assistant memory belongs to another memory ledger');
   const previousState = prior?.output ?? emptyState();
   return normalizeAssistantMemoryRequest({
     spec: ASSISTANT_MEMORY_REQUEST_SPEC,
@@ -286,10 +299,7 @@ export function buildAssistantMemoryRequest(
     source,
     parentFingerprint: prior ? assistantMemoryStateFingerprint(prior) : assistantMemoryEmptyFingerprint(memoryId),
     previous: previousState,
-    turns: [
-      { role: 'user', messageIndex: source.messageIndex - 1, content: user.content },
-      { role: 'assistant', messageIndex: source.messageIndex, content: assistant.content }
-    ]
+    turns
   });
 }
 
