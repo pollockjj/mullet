@@ -2160,6 +2160,8 @@
         const liveRequest = currentPortraitRequest(
           expressionResult,
           expressionCurrent,
+          activeCard,
+          scenarioPortraitProfile,
           portraitSubject,
           portraitSetting,
           portraitAttire,
