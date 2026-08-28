@@ -147,11 +147,14 @@
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
+    PORTRAIT_VIDEO_MODE_I2V,
+    PORTRAIT_VIDEO_MODES,
     PORTRAIT_VIDEO_TIMEOUT_MS,
     buildPortraitVideoRequest,
     normalizePortraitVideoCapabilities,
     portraitVideoRequestKey,
     type PortraitVideoCapabilities,
+    type PortraitVideoMode,
     type PortraitVideoRequest
   } from '$lib/portrait-video';
   import {
@@ -225,6 +228,7 @@
   let lastPortraitAttemptKey = '';
   let portraitController: AbortController | null = null;
   let portraitMotionEnabled = false;
+  let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_I2V;
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
@@ -350,6 +354,7 @@
   const portraitAspectStorageKey = 'mullet.portrait-aspect';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
+  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
@@ -401,7 +406,8 @@
     portraitCurrent,
     portraitImageDigestPromptId,
     portraitImageSha256,
-    portraitAspectRatio
+    portraitAspectRatio,
+    portraitVideoMode
   );
   $: portraitVideoCurrent = Boolean(
     generatedPortraitVideo
@@ -579,6 +585,10 @@
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
+    const savedPortraitVideoMode = localStorage.getItem(portraitVideoModeStorageKey);
+    portraitVideoMode = PORTRAIT_VIDEO_MODES.some(({ id }) => id === savedPortraitVideoMode)
+      ? savedPortraitVideoMode as PortraitVideoMode
+      : PORTRAIT_VIDEO_MODE_I2V;
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
     restorePortraitSettings();
@@ -1679,11 +1689,12 @@
     staticCurrent: boolean,
     digestPromptId: string,
     imageSha256: string,
-    aspectRatio: PortraitAspectRatio
+    aspectRatio: PortraitAspectRatio,
+    mode: PortraitVideoMode
   ): PortraitVideoRequest | null {
     if (!portrait || !staticCurrent || digestPromptId !== portrait.promptId || !imageSha256) return null;
     try {
-      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256);
+      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256, mode);
     } catch {
       return null;
     }
@@ -1701,7 +1712,8 @@
       portraitCurrent,
       portraitImageDigestPromptId,
       portraitImageSha256,
-      portraitAspectRatio
+      portraitAspectRatio,
+      portraitVideoMode
     );
     return !signal?.aborted
       && generation === portraitVideoGeneration
@@ -1720,7 +1732,8 @@
       portraitCurrent,
       portraitImageDigestPromptId,
       portraitImageSha256,
-      portraitAspectRatio
+      portraitAspectRatio,
+      portraitVideoMode
     );
     const restoredKey = restoredRequest ? portraitVideoRequestKey(restoredRequest) : '';
     try {
@@ -1733,7 +1746,8 @@
             portraitCurrent,
             portraitImageDigestPromptId,
             portraitImageSha256,
-            portraitAspectRatio
+            portraitAspectRatio,
+            portraitVideoMode
           );
           return generation === portraitVideoGeneration
             && Boolean(restoredRequest && request && portraitVideoRequestKey(request) === restoredKey);
@@ -1875,8 +1889,13 @@
         || videoBytes[3] !== 0xa3
       ) throw new Error('Portrait-motion generator returned an invalid WebM signature.');
       const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
+      const mode = response.headers.get('x-mullet-video-mode') ?? '';
       const inputImageSha256 = responseHeaderSha256(response, 'x-mullet-input-sha256');
-      if (modelTemplate !== selectedRequest.modelTemplate || inputImageSha256 !== selectedRequest.source.portraitImageSha256) {
+      if (
+        modelTemplate !== selectedRequest.modelTemplate
+        || mode !== selectedRequest.mode
+        || inputImageSha256 !== selectedRequest.source.portraitImageSha256
+      ) {
         throw new Error('Portrait-motion response provenance does not match its request.');
       }
       const videoSha256 = responseHeaderSha256(response, 'x-mullet-video-sha256');
@@ -1887,6 +1906,7 @@
         requestKey: key,
         request: selectedRequest,
         modelTemplate,
+        mode,
         promptId: response.headers.get('x-mullet-prompt-id') ?? '',
         seed: responseHeaderInteger(response, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
         width: responseHeaderInteger(response, 'x-mullet-width', 16, 8192),
@@ -1931,6 +1951,21 @@
       portraitVideoController?.abort();
       portraitVideoBusy = false;
     }
+  }
+
+  function persistPortraitVideoMode() {
+    if (!PORTRAIT_VIDEO_MODES.some(({ id }) => id === portraitVideoMode)) {
+      portraitVideoMode = PORTRAIT_VIDEO_MODE_I2V;
+    }
+    localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoController = null;
+    portraitVideoBusy = false;
+    portraitVideoError = '';
+    lastPortraitVideoAttemptKey = '';
+    removeInstalledPortraitVideo();
+    if (portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
   }
 
   function currentPortraitRequest(
@@ -3181,6 +3216,17 @@
           </label>
         </div>
         {#if portraitVideoCapabilities}
+          <label>
+            <span>Mode</span>
+            <select
+              bind:value={portraitVideoMode}
+              on:change={persistPortraitVideoMode}
+              disabled={portraitVideoBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
+              aria-label="Portrait video mode"
+            >
+              {#each portraitVideoCapabilities.modes as mode}<option value={mode.id}>{mode.label}</option>{/each}
+            </select>
+          </label>
           <label>
             <span>Video model</span>
             <select value={portraitVideoCapabilities.template.id} disabled={portraitVideoBusy} aria-label="Portrait video model">

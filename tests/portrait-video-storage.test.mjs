@@ -204,3 +204,21 @@ test('checks currentness before loading and installs restores inside the lock', 
   assert.equal(restored?.request.source.portraitPromptId, '11111111-1111-4111-8111-111111111111');
   assert.equal(installedWhileLocked, true);
 });
+
+test('does not install a valid prior-mode restore after selection changes', async () => {
+  let selectedMode = 'i2v';
+  let installed = false;
+  const restored = await restoreStoredPortraitVideo({
+    exclusive: async (operation) => operation(),
+    load: async () => {
+      const video = stored();
+      selectedMode = 'flf2v_loop';
+      return video;
+    },
+    isCurrent: () => selectedMode === 'i2v',
+    accepts: () => true,
+    install: () => { installed = true; }
+  });
+  assert.equal(restored, null);
+  assert.equal(installed, false);
+});
