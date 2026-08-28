@@ -194,21 +194,22 @@ test('retains forgotten tombstones and excludes closed or forgotten records from
   const book = assistantMemoryLorebook(forgotten);
   assert.ok(book);
   assert.equal(book.entries.some((entry) => entry.content.includes('Apollo')), false);
+  const invalidReplaceRequest = buildAssistantMemoryRequest(memoryId, '77949052-41aa-461a-a8d3-a14051c3acf8', [
+    { role: 'user', content: 'I now work on Horizon.' },
+    { role: 'assistant', content: 'I will update that project fact.' }
+  ], forgotten);
+  const invalidReplace = parseAssistantMemoryResponse(JSON.stringify({
+    facts: [{
+      operation: 'replace',
+      key: 'atlas-project',
+      value: 'The user works on Horizon.',
+      evidence: { message_index: 0, text: 'I now work on Horizon' }
+    }],
+    preferences: [],
+    tasks: []
+  }), invalidReplaceRequest);
   assert.throws(
-    () => createAssistantMemoryResult(forgetRequest, 'gemma-4-ortenzya', {
-      facts: [{ ...parseAssistantMemoryResponse(JSON.stringify({
-        facts: [{
-          operation: 'replace',
-          key: 'atlas-project',
-          value: 'The user works on Horizon.',
-          evidence: { message_index: 0, text: 'Forget that project fact' }
-        }],
-        preferences: [],
-        tasks: []
-      }), forgetRequest).facts[0] }],
-      preferences: [],
-      tasks: []
-    }),
+    () => createAssistantMemoryResult(invalidReplaceRequest, 'gemma-4-ortenzya', invalidReplace),
     /non-active key/
   );
 });
