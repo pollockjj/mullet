@@ -218,7 +218,7 @@ test('retains forgotten tombstones and excludes closed or forgotten records from
   );
 });
 
-test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', () => {
+test('rejects ungrounded, duplicate, and non-exact sidecar output while compacting oversized state', () => {
   const request = buildAssistantMemoryRequest(memoryId, conversationId, messages, null);
   assert.throws(() => parseAssistantMemoryResponse('not json', request), /invalid JSON/);
   assert.throws(() => parseAssistantMemoryResponse('{"facts":[],"preferences":[],"tasks":[],"extra":true}', request), /invalid schema/);
@@ -281,10 +281,12 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
     })),
     tasks: []
   }), oversizedRequest);
-  assert.throws(
-    () => createAssistantMemoryResult(oversizedRequest, 'gemma-4-ortenzya', bounded),
-    /exceeds 3200 state characters/
-  );
+  const compacted = createAssistantMemoryResult(oversizedRequest, 'gemma-4-ortenzya', bounded);
+  const compactedRecords = [...compacted.output.facts, ...compacted.output.preferences, ...compacted.output.tasks];
+  assert.ok(compactedRecords.length > 0 && compactedRecords.length < 24);
+  assert.ok(compactedRecords.reduce((sum, record) => sum
+    + record.key.length
+    + ('value' in record ? record.value.length : record.text.length + record.dueText.length), 0) <= ASSISTANT_MEMORY_MAX_STATE_CHARS);
 });
 
 test('rejects stale ancestry and transcript tampering', () => {

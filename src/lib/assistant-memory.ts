@@ -646,7 +646,11 @@ function assistantMemoryCompactionMatches(
     merge(next.preferences, previous.preferences),
     merge(next.tasks, previous.tasks)
   );
-  return JSON.stringify(compacted) === JSON.stringify(next);
+  return JSON.stringify(compacted) === JSON.stringify({
+    facts: next.facts,
+    preferences: next.preferences,
+    tasks: next.tasks
+  });
 }
 
 export function createAssistantMemoryResult(
