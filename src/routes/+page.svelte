@@ -2819,6 +2819,7 @@
 
   async function retryAssistantMemory() {
     if (assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable) return;
+    const retryError = assistantMemoryError;
     assistantTurnBusy = true;
     try {
       await runPersonalAssistantTurnExclusive(async () => {
@@ -2829,8 +2830,8 @@
         await reconcileAssistantMemoryPending();
       });
       if (!assistantMemoryPending) {
+        if (errorMessage === retryError) errorMessage = '';
         assistantMemoryError = '';
-        if (errorMessage.startsWith('Assistant-memory')) errorMessage = '';
       }
     } catch (cause) {
       assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory retry failed.';
@@ -2896,8 +2897,8 @@
   }
 
   function assistantMemoryStatusText(): string {
-    if (!assistantMemoryPersistenceReady) return 'Restoring the durable ledger…';
     if (!assistantMemoryPersistenceAvailable) return 'Durable memory is unavailable.';
+    if (!assistantMemoryPersistenceReady) return 'Restoring the durable ledger…';
     if (assistantMemoryBusy) return 'Updating structured memory for the completed turn…';
     if (assistantMemoryPending) return 'A completed turn is waiting to be committed.';
     if (!assistantMemoryResult) return 'No completed assistant turns have been recorded.';
