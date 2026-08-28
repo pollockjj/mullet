@@ -2,9 +2,14 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runtime } from '$lib/server/runtime';
 import { resolveTokenLimit } from '$lib/token-limit';
+import {
+  compileCharacterMessages,
+  normalizeCharacterCard,
+  type ChatMessage,
+  type ImportedCharacterCard
+} from '$lib/character-card';
 
 type Role = 'system' | 'user' | 'assistant';
-type ChatMessage = { role: Role; content: string };
 
 const roles = new Set<Role>(['system', 'user', 'assistant']);
 
@@ -39,6 +44,22 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     throw error(400, 'request body must be JSON');
   });
   const messages = validateMessages(body?.messages);
+  let characterCard: ImportedCharacterCard | null = null;
+  let upstreamMessages = messages;
+
+  if (body?.characterCard !== undefined && body.characterCard !== null) {
+    try {
+      characterCard = normalizeCharacterCard(body.characterCard);
+    } catch (cause) {
+      throw error(400, cause instanceof Error ? cause.message : 'invalid character card');
+    }
+
+    const userName = body?.userName === undefined ? 'You' : body.userName;
+    if (typeof userName !== 'string' || userName.trim().length === 0 || userName.length > 100) {
+      throw error(400, 'userName must be a non-empty string of at most 100 characters');
+    }
+    upstreamMessages = compileCharacterMessages(characterCard, messages, userName.trim());
+  }
   let tokenLimit: number;
   try {
     tokenLimit = resolveTokenLimit(body?.maxTokens, runtime.maxTokens, runtime.defaultMaxTokens);
@@ -53,7 +74,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model: runtime.modelId,
-        messages,
+        messages: upstreamMessages,
         stream: true,
         max_tokens: tokenLimit,
         temperature: runtime.temperature
@@ -78,6 +99,10 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     'x-accel-buffering': 'no',
     'x-mullet-token-limit': String(tokenLimit)
   };
+  if (characterCard) {
+    headers['x-mullet-character'] = encodeURIComponent(characterCard.data.name);
+    headers['x-mullet-card-spec'] = `${characterCard.spec}@${characterCard.specVersion}`;
+  }
 
   return new Response(upstream.body, {
     status: 200,

@@ -2,6 +2,14 @@
   import { base } from '$app/paths';
   import { browser } from '$app/environment';
   import { onMount, tick } from 'svelte';
+  import {
+    embeddedLoreEntryCount,
+    firstCharacterMessage,
+    normalizeCharacterCard,
+    parseCharacterCardJson,
+    type ImportedCharacterCard
+  } from '$lib/character-card';
+  import { extractPngCharacterCard, MAX_CHARACTER_CARD_PNG_BYTES } from '$lib/png-character-card';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -15,8 +23,15 @@
   let errorMessage = '';
   let noticeMessage = '';
   let tokenLimit = data.defaultMaxTokens;
+  let activeCard: ImportedCharacterCard | null = null;
+  let portraitDataUrl = '';
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
+  let cardInput: HTMLInputElement;
+
+  const messagesStorageKey = 'mullet.checkpoint-one.messages';
+  const cardStorageKey = 'mullet.active-character-card';
+  const portraitStorageKey = 'mullet.active-character-portrait';
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -25,14 +40,28 @@
   ];
 
   onMount(() => {
-    const saved = localStorage.getItem('mullet.checkpoint-one.messages');
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) messages = parsed;
-    } catch {
-      localStorage.removeItem('mullet.checkpoint-one.messages');
+    const savedMessages = localStorage.getItem(messagesStorageKey);
+    if (savedMessages) {
+      try {
+        const parsed = JSON.parse(savedMessages);
+        if (Array.isArray(parsed)) messages = parsed;
+      } catch {
+        localStorage.removeItem(messagesStorageKey);
+      }
     }
+
+    const savedCard = localStorage.getItem(cardStorageKey);
+    if (savedCard) {
+      try {
+        activeCard = normalizeCharacterCard(JSON.parse(savedCard));
+        portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
+        if (messages.length === 0) messages = freshConversation();
+      } catch {
+        localStorage.removeItem(cardStorageKey);
+        localStorage.removeItem(portraitStorageKey);
+      }
+    }
+
     const savedTokenLimit = Number(localStorage.getItem('mullet.response-token-limit'));
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
@@ -40,7 +69,25 @@
   });
 
   function persist() {
-    if (browser) localStorage.setItem('mullet.checkpoint-one.messages', JSON.stringify(messages));
+    if (browser) localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
+  }
+
+  function freshConversation(): Message[] {
+    if (!activeCard) return [];
+    const greeting = firstCharacterMessage(activeCard);
+    return greeting.trim() ? [{ role: 'assistant', content: greeting }] : [];
+  }
+
+  function containsOnlyOpeningGreeting(card: ImportedCharacterCard): boolean {
+    const greeting = firstCharacterMessage(card);
+    return messages.length === 1 && messages[0].role === 'assistant' && messages[0].content === greeting;
+  }
+
+  function persistCard() {
+    if (!browser || !activeCard) return;
+    localStorage.setItem(cardStorageKey, JSON.stringify(activeCard.raw));
+    if (portraitDataUrl) localStorage.setItem(portraitStorageKey, portraitDataUrl);
+    else localStorage.removeItem(portraitStorageKey);
   }
 
   async function scrollToLatest() {
@@ -54,10 +101,72 @@
 
   function clearConversation() {
     if (streaming) return;
-    messages = [];
+    messages = freshConversation();
     errorMessage = '';
     noticeMessage = '';
     persist();
+  }
+
+  async function portraitFromPng(file: File): Promise<string> {
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.src = objectUrl;
+      await image.decode();
+      const scale = Math.min(1, 900 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext('2d');
+      if (!context) return '';
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/webp', 0.82);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function importCharacterCard(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    errorMessage = '';
+    noticeMessage = '';
+    try {
+      if (file.size > MAX_CHARACTER_CARD_PNG_BYTES) throw new Error('Character card exceeds 25 MB.');
+      const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
+      const imported = isPng
+        ? extractPngCharacterCard(await file.arrayBuffer())
+        : parseCharacterCardJson(await file.text());
+      const nextPortrait = isPng ? await portraitFromPng(file) : '';
+      const replaceOpeningGreeting = activeCard ? containsOnlyOpeningGreeting(activeCard) : false;
+      const seedGreeting = messages.length === 0 || replaceOpeningGreeting;
+
+      activeCard = imported;
+      portraitDataUrl = nextPortrait;
+      persistCard();
+      if (seedGreeting) {
+        messages = freshConversation();
+        persist();
+      }
+      noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
+      await scrollToLatest();
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Character card import failed.';
+    } finally {
+      input.value = '';
+    }
+  }
+
+  function removeCharacterCard() {
+    if (streaming) return;
+    const removedName = activeCard?.data.name;
+    activeCard = null;
+    portraitDataUrl = '';
+    localStorage.removeItem(cardStorageKey);
+    localStorage.removeItem(portraitStorageKey);
+    noticeMessage = removedName ? `${removedName} removed; conversation retained.` : '';
   }
 
   function persistTokenLimit() {
@@ -84,7 +193,12 @@
       const response = await fetch(`${base}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages: messages.slice(0, -1), maxTokens: tokenLimit }),
+        body: JSON.stringify({
+          messages: messages.slice(0, -1),
+          maxTokens: tokenLimit,
+          characterCard: activeCard?.raw ?? null,
+          userName: 'You'
+        }),
         signal: controller.signal
       });
 
@@ -169,11 +283,48 @@
 
   <main>
     <aside>
-      <div class="portrait"><span>Portrait sidecar<br />arrives later</span></div>
-      <div class="scenario">
-        <span class="eyebrow">Active scenario</span>
-        <strong>Open conversation</strong>
-        <p>Checkpoint one connects directly to the selected local model. Character cards and lore follow next.</p>
+      <div class:active={activeCard} class="portrait">
+        {#if portraitDataUrl && activeCard}
+          <img src={portraitDataUrl} alt={`${activeCard.data.name} character portrait`} />
+        {:else if activeCard}
+          <span class="initial">{activeCard.data.name.slice(0, 1).toUpperCase()}</span>
+        {:else}
+          <span>Import a SillyTavern<br />JSON or PNG card</span>
+        {/if}
+      </div>
+      {#if activeCard}
+        <div class="scenario">
+          <span class="eyebrow">Active character · V{activeCard.version}</span>
+          <strong>{activeCard.data.name}</strong>
+          <p>{activeCard.data.description || 'No character description supplied.'}</p>
+          <div class="card-facts">
+            <span>{activeCard.specVersion}</span>
+            <span>{embeddedLoreEntryCount(activeCard)} lore entries</span>
+          </div>
+        </div>
+      {:else}
+        <div class="scenario">
+          <span class="eyebrow">Active scenario</span>
+          <strong>Open conversation</strong>
+          <p>The clean model channel is active. Load a V1, V2, or V3 character card to condition it.</p>
+        </div>
+      {/if}
+      <input
+        class="file-input"
+        bind:this={cardInput}
+        type="file"
+        accept=".json,.png,application/json,image/png"
+        on:change={importCharacterCard}
+        disabled={streaming}
+        aria-label="Choose a character card"
+      />
+      <div class="card-actions">
+        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming}>
+          {activeCard ? 'Replace card' : 'Import card'}
+        </button>
+        {#if activeCard}
+          <button class="card-button" on:click={removeCharacterCard} disabled={streaming}>Remove</button>
+        {/if}
       </div>
       <button class="clear" on:click={clearConversation} disabled={streaming || messages.length === 0}>Clear conversation</button>
     </aside>
@@ -184,7 +335,7 @@
           <div class="empty">
             <span class="eyebrow">Real local model · clean channel</span>
             <h2>Start the story.</h2>
-            <p>This first playable build sends an ordinary role-based conversation through the model server’s native chat template.</p>
+            <p>Talk directly to the local model, or import a SillyTavern-compatible character card from the left.</p>
             <div class="starters">
               {#each starters as starter}
                 <button on:click={() => chooseStarter(starter)}>{starter}</button>
@@ -194,7 +345,7 @@
         {:else}
           {#each messages as message}
             <article class:assistant={message.role === 'assistant'}>
-              <span class="speaker">{message.role === 'user' ? 'You' : data.model}</span>
+              <span class="speaker">{message.role === 'user' ? 'You' : activeCard?.data.name ?? data.model}</span>
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
             </article>
           {/each}
@@ -245,7 +396,7 @@
   :global(*) { box-sizing: border-box; }
   :global(html) { background: #11100f; color: #eee9df; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   :global(body) { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 70% -20%, #3a3026 0, transparent 38%), #11100f; }
-  :global(button), :global(textarea) { font: inherit; }
+  :global(button), :global(textarea), :global(input) { font: inherit; }
   .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
   header { height: 74px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid #39342e; background: rgba(17,16,15,.9); backdrop-filter: blur(14px); }
   .brand { display: flex; align-items: center; gap: 13px; }
@@ -259,12 +410,24 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #6ebc84; box-shadow: 0 0 10px rgba(110,188,132,.55); }
   .dot.live { background: #e7aa61; animation: pulse 1s infinite alternate; }
   main { min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
-  aside { min-height: 0; padding: 22px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid #302c28; background: rgba(15,14,13,.55); }
-  .portrait { aspect-ratio: 3 / 4; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
+  aside { min-height: 0; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid #302c28; background: rgba(15,14,13,.55); }
+  .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
+  .portrait.active { border-style: solid; border-color: #5c4b38; }
+  .portrait img { width: 100%; height: 100%; object-fit: cover; }
+  .initial { color: #e7aa61; font: 500 72px/1 Georgia, serif; text-shadow: 0 0 42px rgba(231,170,97,.25); }
   .scenario { padding: 2px 3px; }
   .scenario strong { display: block; margin: 7px 0; font-family: Georgia, serif; font-size: 17px; }
-  .scenario p { margin: 0; color: #968e84; font-size: 12px; line-height: 1.55; }
+  .scenario p { max-height: 7.75em; overflow-y: auto; margin: 0; color: #968e84; font-size: 12px; line-height: 1.55; }
+  .card-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .card-facts span { padding: 4px 7px; border: 1px solid #3d3730; border-radius: 999px; color: #817970; background: #191714; font: 9px/1 ui-monospace, monospace; }
   .eyebrow { color: #d69d5a; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .file-input { display: none; }
+  .card-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .card-button { padding: 9px 11px; border: 1px solid #4a4239; border-radius: 9px; color: #b7aea4; background: #1b1815; cursor: pointer; }
+  .card-button.primary { color: #21170d; border-color: #d49a56; background: #dca35f; font-weight: 750; }
+  .card-button:hover:not(:disabled) { border-color: #98714a; color: #fff0df; }
+  .card-button.primary:hover:not(:disabled) { color: #21170d; background: #e8b06e; }
+  .card-button:disabled { opacity: .35; cursor: default; }
   .clear { margin-top: auto; padding: 10px; border: 1px solid #3c3731; border-radius: 9px; color: #a9a097; background: transparent; cursor: pointer; }
   .clear:hover:not(:disabled) { border-color: #6a5f53; color: #e8e0d7; }
   .clear:disabled { opacity: .35; cursor: default; }
