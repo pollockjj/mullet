@@ -567,6 +567,32 @@ export function normalizeLivingHistoryRequest(value: unknown): LivingHistoryRequ
   };
 }
 
+function stateFingerprint(
+  source: LivingHistorySource,
+  revision: number,
+  summary: string,
+  quotes: readonly LivingHistoryQuote[],
+  characters: readonly LivingHistoryCharacter[]
+): string {
+  return `sha256:${sha256Hex(JSON.stringify({ source, revision, summary, quotes, characters }))}`;
+}
+
+function previousStateFingerprint(previous: LivingHistoryRequest['previous']): string {
+  if (previous.source === null) return LIVING_HISTORY_EMPTY_STATE_FINGERPRINT;
+  return stateFingerprint(previous.source, previous.revision, previous.summary, previous.quotes, previous.characters);
+}
+
+export function livingHistoryStateFingerprint(result: LivingHistoryResult): string {
+  const normalized = normalizeLivingHistoryResult(result);
+  return stateFingerprint(
+    normalized.source,
+    normalized.output.revision,
+    normalized.output.summary,
+    normalized.output.quotes,
+    normalized.output.characters
+  );
+}
+
 export function livingHistoryRequestKey(request: LivingHistoryRequest): string {
   const normalized = normalizeLivingHistoryRequest(request);
   const previousDigest = previousStateFingerprint(normalized.previous);
