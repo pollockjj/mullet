@@ -2633,6 +2633,8 @@
       );
       if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
 
+      conversationMode = CONVERSATION_MODE_FICTION;
+      persistConversationMode();
       activeCard = packaged.card;
       cardSourceIdentifier = characterSourceIdentifier(selectedScenario.card);
       portraitDataUrl = '';
