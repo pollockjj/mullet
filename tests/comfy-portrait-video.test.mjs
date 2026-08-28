@@ -10,7 +10,8 @@ import {
   loadPortraitVideoCapabilities,
   runComfyPortraitVideo,
   sha256Hex,
-  uploadPortraitVideoInput
+  uploadPortraitVideoInput,
+  validatePortraitVideoPng
 } from '../src/lib/server/comfy-portrait-video.ts';
 
 const portrait = {
@@ -89,6 +90,19 @@ test('uploads only digest-matched PNG bytes to the fixed input location', async 
   assert.equal(result.subfolder, 'mullet/motion-inputs');
   assert.equal(observed.get('overwrite'), 'false');
   await assert.rejects(uploadPortraitVideoInput(async () => assert.fail('uploaded mismatched bytes'), 'http://comfy', imageBytes, 'a'.repeat(64)), /does not match/);
+});
+
+test('accepts only a PNG with the exact source IHDR dimensions', () => {
+  const png = new Uint8Array(24);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  png.set([0x49, 0x48, 0x44, 0x52], 12);
+  const view = new DataView(png.buffer);
+  view.setUint32(16, 768, false);
+  view.setUint32(20, 1152, false);
+  assert.doesNotThrow(() => validatePortraitVideoPng(png, 768, 1152));
+  assert.throws(() => validatePortraitVideoPng(png, 864, 1152), /dimensions do not match/);
+  png[0] = 0;
+  assert.throws(() => validatePortraitVideoPng(png, 768, 1152), /invalid PNG header/);
 });
 
 test('queues, polls, and proxies only the fixed animated WebM output', async () => {

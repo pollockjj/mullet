@@ -101,6 +101,30 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export function validatePortraitVideoPng(bytes: Uint8Array, expectedWidth: number, expectedHeight: number): void {
+  if (
+    bytes.byteLength < 24
+    || bytes[0] !== 0x89
+    || bytes[1] !== 0x50
+    || bytes[2] !== 0x4e
+    || bytes[3] !== 0x47
+    || bytes[4] !== 0x0d
+    || bytes[5] !== 0x0a
+    || bytes[6] !== 0x1a
+    || bytes[7] !== 0x0a
+    || bytes[12] !== 0x49
+    || bytes[13] !== 0x48
+    || bytes[14] !== 0x44
+    || bytes[15] !== 0x52
+  ) throw new Error('portrait-video input has an invalid PNG header');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = view.getUint32(16, false);
+  const height = view.getUint32(20, false);
+  if (width !== expectedWidth || height !== expectedHeight) {
+    throw new Error('portrait-video input dimensions do not match its source');
+  }
+}
+
 export async function uploadPortraitVideoInput(
   fetcher: Fetcher,
   baseUrl: string,
