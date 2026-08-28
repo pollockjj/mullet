@@ -14,6 +14,7 @@ import {
   livingHistoryModelInput,
   livingHistoryResultAppliesToMessages,
   livingHistoryResultsMatch,
+  livingHistorySourceForMessages,
   livingHistoryResultMatchesMessages,
   livingHistoryResultMatchesRequest,
   normalizeLivingHistoryRequest,
@@ -187,7 +188,7 @@ test('sends every message in a ten-message update interval', () => {
   assert.deepEqual(JSON.parse(livingHistoryModelInput(request)).unsummarized_messages, delta);
   assert.throws(
     () => normalizeLivingHistoryRequest({ ...request, turns: request.turns.slice(2) }),
-    /complete source delta/
+    /two messages per eligible boundary/
   );
 });
 
@@ -209,4 +210,22 @@ test('compares complete results before conditional stale cleanup', () => {
   const second = createLivingHistoryResult(request, 'gemma-4-ortenzya', 'Second winner.');
   assert.equal(livingHistoryResultsMatch(first, structuredClone(first)), true);
   assert.equal(livingHistoryResultsMatch(first, second), false);
+});
+
+test('excludes aborted partial turns from explicitly finalized boundaries', () => {
+  const transcript = [
+    { role: 'assistant', content: 'Opening greeting.' },
+    { role: 'user', content: 'Completed user one.' },
+    { role: 'assistant', content: 'Completed assistant one.' },
+    { role: 'user', content: 'Aborted user.' },
+    { role: 'assistant', content: 'Aborted partial assistant.' },
+    { role: 'user', content: 'Completed user two.' },
+    { role: 'assistant', content: 'Completed assistant two.' }
+  ];
+  const firstBoundary = livingHistorySourceForMessages(conversationId, transcript.slice(0, 3));
+  const secondBoundary = livingHistorySourceForMessages(conversationId, transcript);
+  const request = buildLivingHistoryRequest(conversationId, transcript, null, [firstBoundary, secondBoundary]);
+  assert.deepEqual(request.turns, [transcript[1], transcript[2], transcript[5], transcript[6]]);
+  assert.equal(JSON.stringify(livingHistoryModelInput(request)).includes('Aborted partial assistant.'), false);
+  assert.deepEqual(normalizeLivingHistoryRequest(request), request);
 });

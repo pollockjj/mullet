@@ -36,6 +36,7 @@ export type LivingHistoryRequest = {
     summary: string;
     source: LivingHistorySource | null;
   };
+  boundaries: LivingHistorySource[];
   turns: TranscriptMessage[];
 };
 
@@ -105,6 +106,59 @@ function transcriptFingerprint(messages: readonly TranscriptMessage[], initial =
   );
 }
 
+function sourceForNormalizedMessages(
+  conversationId: string,
+  messages: readonly TranscriptMessage[]
+): LivingHistorySource {
+  const messageIndex = messages.length - 1;
+  const assistant = messages[messageIndex];
+  if (assistant?.role !== 'assistant' || assistant.content.length === 0) {
+    throw new Error('the latest message must be a non-empty assistant response');
+  }
+  const user = messages[messageIndex - 1];
+  if (user?.role !== 'user' || user.content.length === 0) {
+    throw new Error('the latest assistant response must follow a non-empty user turn');
+  }
+  return {
+    conversationId,
+    messageCount: messages.length,
+    messageIndex,
+    fingerprint: transcriptFingerprint(messages),
+    turnFingerprint: latestTurnFingerprint(user.content, assistant.content)
+  };
+}
+
+export function livingHistorySourceForMessages(
+  conversationId: string,
+  messages: readonly TranscriptMessage[]
+): LivingHistorySource {
+  if (!isSidecarConversationId(conversationId)) throw new Error('conversationId must be a UUID');
+  if (messages.length < 2 || messages.length > 1000) throw new Error('messages must contain between 2 and 1000 items');
+  return sourceForNormalizedMessages(conversationId, normalizedTranscript(messages));
+}
+
+export function livingHistorySourceMatchesMessages(
+  source: unknown,
+  conversationId: string,
+  messages: readonly TranscriptMessage[]
+): boolean {
+  let normalizedSource: LivingHistorySource;
+  try {
+    normalizedSource = normalizeLivingHistorySource(source);
+  } catch {
+    return false;
+  }
+  if (normalizedSource.conversationId !== conversationId || normalizedSource.messageCount > messages.length) return false;
+  try {
+    return livingHistorySourcesMatch(
+      normalizedSource,
+      livingHistorySourceForMessages(conversationId, messages.slice(0, normalizedSource.messageCount))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeLivingHistorySource(value: unknown): LivingHistorySource {
   if (!isRecord(value) || !isSidecarConversationId(value.conversationId)) {
     throw new Error('living-history source conversationId must be a UUID');
@@ -146,21 +200,13 @@ export function livingHistorySourcesMatch(left: unknown, right: unknown): boolea
 export function buildLivingHistoryRequest(
   conversationId: string,
   messages: readonly TranscriptMessage[],
-  previous: LivingHistoryResult | null
+  previous: LivingHistoryResult | null,
+  eligibleBoundaries?: readonly LivingHistorySource[]
 ): LivingHistoryRequest {
   if (!isSidecarConversationId(conversationId)) throw new Error('conversationId must be a UUID');
   if (messages.length < 2 || messages.length > 1000) throw new Error('messages must contain between 2 and 1000 items');
   const normalizedMessages = normalizedTranscript(messages);
-  const messageIndex = normalizedMessages.length - 1;
-  const assistant = normalizedMessages[messageIndex];
-  if (assistant.role !== 'assistant' || assistant.content.length === 0) {
-    throw new Error('the latest message must be a non-empty assistant response');
-  }
-  const prior = normalizedMessages[messageIndex - 1];
-  if (prior?.role !== 'user' || prior.content.length === 0) {
-    throw new Error('the latest assistant response must follow a non-empty user turn');
-  }
-  const user = prior.content;
+  const latestSource = sourceForNormalizedMessages(conversationId, normalizedMessages);
   const normalizedPrevious = previous ? normalizeLivingHistoryResult(previous) : null;
   if (normalizedPrevious && normalizedPrevious.source.conversationId !== conversationId) {
     throw new Error('previous living history belongs to another conversation');
@@ -172,7 +218,38 @@ export function buildLivingHistoryRequest(
     }
   }
   const previousCount = normalizedPrevious?.source.messageCount ?? 0;
-  const turns = normalizedMessages.slice(previousCount);
+  const boundaries = eligibleBoundaries === undefined
+    ? normalizedMessages.flatMap((_message, index) => {
+      if (
+        index <= previousCount
+        || normalizedMessages[index].role !== 'assistant'
+        || normalizedMessages[index - 1]?.role !== 'user'
+        || !normalizedMessages[index].content
+        || !normalizedMessages[index - 1].content
+      ) return [];
+      return [sourceForNormalizedMessages(conversationId, normalizedMessages.slice(0, index + 1))];
+    })
+    : eligibleBoundaries.map((boundary) => normalizeLivingHistorySource(boundary));
+  if (boundaries.length < 1 || boundaries.length > 500) {
+    throw new Error('living-history eligible boundaries must contain between 1 and 500 completed responses');
+  }
+  boundaries.forEach((boundary, index) => {
+    const priorBoundary = boundaries[index - 1];
+    if (
+      boundary.conversationId !== conversationId
+      || boundary.messageCount <= previousCount
+      || boundary.messageCount > normalizedMessages.length
+      || (priorBoundary && boundary.messageCount <= priorBoundary.messageCount)
+      || !livingHistorySourceMatchesMessages(boundary, conversationId, normalizedMessages)
+    ) throw new Error('living-history eligible boundary does not match the transcript');
+  });
+  if (!livingHistorySourcesMatch(boundaries.at(-1), latestSource)) {
+    throw new Error('living-history eligible boundaries must end at the latest completed response');
+  }
+  const turns = boundaries.flatMap((boundary) => [
+    normalizedMessages[boundary.messageIndex - 1],
+    normalizedMessages[boundary.messageIndex]
+  ]);
   if (turns.reduce((total, message) => total + message.role.length + message.content.length, 0) > LIVING_HISTORY_MAX_UNSUMMARIZED_CHARS) {
     throw new Error(`living-history unsummarized messages exceed ${LIVING_HISTORY_MAX_UNSUMMARIZED_CHARS} characters`);
   }
@@ -181,16 +258,14 @@ export function buildLivingHistoryRequest(
     kind: 'living_history',
     source: {
       conversationId,
-      messageCount: normalizedMessages.length,
-      messageIndex,
-      fingerprint: transcriptFingerprint(normalizedMessages),
-      turnFingerprint: latestTurnFingerprint(user, assistant.content)
+      ...latestSource
     },
     previous: {
       revision: normalizedPrevious?.output.revision ?? 0,
       summary: normalizedPrevious?.output.summary ?? '',
       source: normalizedPrevious ? { ...normalizedPrevious.source } : null
     },
+    boundaries,
     turns
   };
 }
@@ -210,26 +285,45 @@ export function normalizeLivingHistoryRequest(value: unknown): LivingHistoryRequ
   if (previousSource && (previousSource.conversationId !== source.conversationId || previousSource.messageCount >= source.messageCount)) {
     throw new Error('living-history previous source is invalid for this update');
   }
+  if (!Array.isArray(value.boundaries) || value.boundaries.length < 1 || value.boundaries.length > 500) {
+    throw new Error('living-history eligible boundaries must contain between 1 and 500 completed responses');
+  }
+  const boundaries = value.boundaries.map((boundary) => normalizeLivingHistorySource(boundary));
+  boundaries.forEach((boundary, index) => {
+    const priorBoundary = boundaries[index - 1];
+    if (
+      boundary.conversationId !== source.conversationId
+      || boundary.messageCount <= (previousSource?.messageCount ?? 0)
+      || boundary.messageCount > source.messageCount
+      || (priorBoundary && boundary.messageCount <= priorBoundary.messageCount)
+    ) throw new Error('living-history eligible boundary sequence is invalid');
+  });
+  if (!livingHistorySourcesMatch(boundaries.at(-1), source)) {
+    throw new Error('living-history eligible boundaries must end at the source response');
+  }
   if (!Array.isArray(value.turns)) throw new Error('living-history unsummarized messages must be an array');
   const turns = normalizedTranscript(value.turns as TranscriptMessage[]);
-  const expectedTurns = source.messageCount - (previousSource?.messageCount ?? 0);
-  if (turns.length !== expectedTurns || turns.length < 2) {
-    throw new Error('living-history unsummarized messages do not cover the complete source delta');
+  if (turns.length !== boundaries.length * 2) {
+    throw new Error('living-history unsummarized messages must contain two messages per eligible boundary');
   }
   if (turns.reduce((total, message) => total + message.role.length + message.content.length, 0) > LIVING_HISTORY_MAX_UNSUMMARIZED_CHARS) {
     throw new Error(`living-history unsummarized messages exceed ${LIVING_HISTORY_MAX_UNSUMMARIZED_CHARS} characters`);
   }
-  const prior = turns.at(-2);
-  const assistantMessage = turns.at(-1);
-  if (prior?.role !== 'user' || !assistantMessage || assistantMessage.role !== 'assistant' || !assistantMessage.content) {
-    throw new Error('living-history unsummarized messages must end in a completed user-assistant turn');
+  boundaries.forEach((boundary, index) => {
+    const user = turns[index * 2];
+    const assistant = turns[index * 2 + 1];
+    if (user?.role !== 'user' || !user.content || assistant?.role !== 'assistant' || !assistant.content) {
+      throw new Error('living-history unsummarized messages must contain completed user-assistant turns');
+    }
+    if (boundary.turnFingerprint !== latestTurnFingerprint(user.content, assistant.content)) {
+      throw new Error('living-history boundary turn fingerprint does not match the supplied turn');
+    }
+  });
+  const completeDeltaLength = source.messageCount - (previousSource?.messageCount ?? 0);
+  if (turns.length === completeDeltaLength) {
+    const chainedFingerprint = transcriptFingerprint(turns, previousSource?.fingerprint ?? TRANSCRIPT_SEED);
+    if (source.fingerprint !== chainedFingerprint) throw new Error('living-history source transcript fingerprint does not match the complete message delta');
   }
-  const user = prior.content;
-  const assistant = assistantMessage.content;
-  const turnFingerprint = latestTurnFingerprint(user, assistant);
-  if (source.turnFingerprint !== turnFingerprint) throw new Error('living-history source turn fingerprint does not match the supplied turn');
-  const chainedFingerprint = transcriptFingerprint(turns, previousSource?.fingerprint ?? TRANSCRIPT_SEED);
-  if (source.fingerprint !== chainedFingerprint) throw new Error('living-history source transcript fingerprint does not match the complete message delta');
   return {
     spec: LIVING_HISTORY_REQUEST_SPEC,
     kind: 'living_history',
@@ -241,6 +335,7 @@ export function normalizeLivingHistoryRequest(value: unknown): LivingHistoryRequ
       turnFingerprint
     },
     previous: { revision, summary, source: previousSource },
+    boundaries,
     turns
   };
 }
@@ -361,7 +456,7 @@ export function livingHistoryResultMatchesMessages(
   const normalizedResult = normalizeLivingHistoryResult(result);
   let source: LivingHistorySource;
   try {
-    source = buildLivingHistoryRequest(conversationId, messages, null).source;
+    source = livingHistorySourceForMessages(conversationId, messages);
   } catch {
     return false;
   }
@@ -387,17 +482,7 @@ export function livingHistoryResultAppliesToMessages(
     normalizedResult.source.conversationId !== conversationId
     || normalizedResult.source.messageCount > messages.length
   ) return false;
-  let source: LivingHistorySource;
-  try {
-    source = buildLivingHistoryRequest(
-      conversationId,
-      messages.slice(0, normalizedResult.source.messageCount),
-      null
-    ).source;
-  } catch {
-    return false;
-  }
-  return livingHistorySourcesMatch(normalizedResult.source, source);
+  return livingHistorySourceMatchesMessages(normalizedResult.source, conversationId, messages);
 }
 
 export function livingHistoryLorebook(result: LivingHistoryResult): ImportedLorebook {
