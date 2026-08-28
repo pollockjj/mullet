@@ -11,6 +11,7 @@ import {
   createLivingHistoryResult,
   livingHistoryLorebook,
   livingHistoryModelInput,
+  livingHistoryResultAppliesToMessages,
   livingHistoryResultMatchesMessages,
   livingHistoryResultMatchesRequest,
   normalizeLivingHistoryRequest,
@@ -40,14 +41,19 @@ test('builds a bounded isolated latest-turn request without mutating canonical m
 });
 
 test('sends only the previous ledger and latest completed turn to the model branch', () => {
-  const previousRequest = buildLivingHistoryRequest(conversationId, [messages[0]], null);
+  const previousRequest = buildLivingHistoryRequest(conversationId, messages, null);
   const previous = createLivingHistoryResult(previousRequest, 'gemma-4-ortenzya', 'Gan is dead.');
-  const request = buildLivingHistoryRequest(conversationId, messages, previous);
+  const nextMessages = [
+    ...messages,
+    { role: 'user', content: 'What does Blake decide?' },
+    { role: 'assistant', content: 'Blake orders a course for Horizon.' }
+  ];
+  const request = buildLivingHistoryRequest(conversationId, nextMessages, previous);
   assert.deepEqual(JSON.parse(livingHistoryModelInput(request)), {
     previous_summary: 'Gan is dead.',
     latest_turn: {
-      user: messages[1].content,
-      assistant: messages[2].content
+      user: nextMessages[3].content,
+      assistant: nextMessages[4].content
     }
   });
   assert.equal(request.previous.revision, 1);
@@ -80,7 +86,9 @@ test('compiles the replacement ledger into one always-active native ST World Inf
   assert.equal(book.format, 'sillytavern');
   assert.equal(book.entries.length, 1);
   assert.equal(book.entries[0].constant, true);
-  assert.equal(book.entries[0].position, 1);
+  assert.equal(book.entries[0].position, 4);
+  assert.equal(book.entries[0].depth, 2);
+  assert.equal(book.origin, 'generated');
   assert.equal(book.entries[0].excludeRecursion, true);
   assert.equal(book.entries[0].preventRecursion, true);
   assert.equal(book.raw.entries['0'].uid, 0);
@@ -98,7 +106,7 @@ test('rejects a mismatched turn fingerprint and previous history from another co
     /turn fingerprint does not match/
   );
   const other = createLivingHistoryResult(
-    buildLivingHistoryRequest('748b08b7-20bb-4138-a402-0188cc04d2ea', [messages[0]], null),
+    buildLivingHistoryRequest('748b08b7-20bb-4138-a402-0188cc04d2ea', [messages[1], messages[2]], null),
     'gemma-4-ortenzya',
     'Other conversation.'
   );
@@ -117,15 +125,44 @@ test('binds history to the complete normalized transcript branch', () => {
   assert.deepEqual(normalizeLivingHistoryRequest(whitespaceRequest), whitespaceRequest);
 
   const earlier = createLivingHistoryResult(
-    buildLivingHistoryRequest(conversationId, [messages[0]], null),
+    buildLivingHistoryRequest(conversationId, messages, null),
     'gemma-4-ortenzya',
     'Gan is dead.'
   );
+  const continued = [
+    ...messages,
+    { role: 'user', content: 'What now?' },
+    { role: 'assistant', content: 'Blake orders a course for Horizon.' }
+  ];
   const changedBranch = [
     { ...messages[0], content: 'Gan survived.' },
-    messages[1],
-    messages[2]
+    ...continued.slice(1)
   ];
-  assert.notEqual(buildLivingHistoryRequest(conversationId, changedBranch, null).source.fingerprint, request.source.fingerprint);
+  assert.notEqual(buildLivingHistoryRequest(conversationId, changedBranch, null).source.fingerprint, buildLivingHistoryRequest(conversationId, continued, null).source.fingerprint);
   assert.throws(() => buildLivingHistoryRequest(conversationId, changedBranch, earlier), /transcript branch/);
+});
+
+test('rejects opening greetings and unfinished assistant turns', () => {
+  assert.throws(() => buildLivingHistoryRequest(conversationId, [messages[0]], null), /between 2 and 1000/);
+  assert.throws(
+    () => buildLivingHistoryRequest(conversationId, [messages[0], messages[1], { role: 'assistant', content: '   ' }], null),
+    /non-empty assistant response/
+  );
+  assert.throws(
+    () => buildLivingHistoryRequest(conversationId, [messages[0], { role: 'assistant', content: 'Not a user pair.' }], null),
+    /must follow a non-empty user turn/
+  );
+});
+
+test('applies a result only to its unchanged transcript prefix', () => {
+  const result = createLivingHistoryResult(
+    buildLivingHistoryRequest(conversationId, messages, null),
+    'gemma-4-ortenzya',
+    'Gan is dead. Blake remains in command.'
+  );
+  const suffix = [...messages, { role: 'user', content: 'What now?' }];
+  assert.equal(livingHistoryResultAppliesToMessages(result, conversationId, messages), true);
+  assert.equal(livingHistoryResultAppliesToMessages(result, conversationId, suffix), true);
+  assert.equal(livingHistoryResultAppliesToMessages(result, conversationId, [{ ...messages[0], content: 'Gan survived.' }, ...messages.slice(1)]), false);
+  assert.equal(livingHistoryResultAppliesToMessages(result, '748b08b7-20bb-4138-a402-0188cc04d2ea', messages), false);
 });

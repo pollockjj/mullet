@@ -5,7 +5,7 @@ import {
   type JsonObject
 } from './character-card.ts';
 
-export type LorebookOrigin = 'embedded' | 'imported';
+export type LorebookOrigin = 'embedded' | 'imported' | 'generated';
 export type LorebookFormat = 'character_book' | 'sillytavern' | 'lorebook_v3' | 'novelai' | 'agnai' | 'risu';
 
 export type LorebookSettings = {

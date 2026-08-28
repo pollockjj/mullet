@@ -103,13 +103,51 @@ function transcriptFingerprint(messages: readonly TranscriptMessage[]): string {
   return expressionSourceFingerprint(JSON.stringify(normalizedTranscript(messages)));
 }
 
+export function normalizeLivingHistorySource(value: unknown): LivingHistorySource {
+  if (!isRecord(value) || !isSidecarConversationId(value.conversationId)) {
+    throw new Error('living-history source conversationId must be a UUID');
+  }
+  const messageCount = integer(value.messageCount, 'living-history source messageCount', 2, 1000);
+  const messageIndex = integer(value.messageIndex, 'living-history source messageIndex', 1, 999);
+  if (
+    messageIndex !== messageCount - 1
+    || typeof value.fingerprint !== 'string'
+    || !FINGERPRINT_PATTERN.test(value.fingerprint)
+    || typeof value.turnFingerprint !== 'string'
+    || !FINGERPRINT_PATTERN.test(value.turnFingerprint)
+  ) {
+    throw new Error('living-history source is invalid');
+  }
+  return {
+    conversationId: value.conversationId,
+    messageCount,
+    messageIndex,
+    fingerprint: value.fingerprint,
+    turnFingerprint: value.turnFingerprint
+  };
+}
+
+export function livingHistorySourcesMatch(left: unknown, right: unknown): boolean {
+  try {
+    const normalizedLeft = normalizeLivingHistorySource(left);
+    const normalizedRight = normalizeLivingHistorySource(right);
+    return normalizedLeft.conversationId === normalizedRight.conversationId
+      && normalizedLeft.messageCount === normalizedRight.messageCount
+      && normalizedLeft.messageIndex === normalizedRight.messageIndex
+      && normalizedLeft.fingerprint === normalizedRight.fingerprint
+      && normalizedLeft.turnFingerprint === normalizedRight.turnFingerprint;
+  } catch {
+    return false;
+  }
+}
+
 export function buildLivingHistoryRequest(
   conversationId: string,
   messages: readonly TranscriptMessage[],
   previous: LivingHistoryResult | null
 ): LivingHistoryRequest {
   if (!isSidecarConversationId(conversationId)) throw new Error('conversationId must be a UUID');
-  if (messages.length < 1 || messages.length > 1000) throw new Error('messages must contain between 1 and 1000 items');
+  if (messages.length < 2 || messages.length > 1000) throw new Error('messages must contain between 2 and 1000 items');
   const normalizedMessages = normalizedTranscript(messages);
   const messageIndex = normalizedMessages.length - 1;
   const assistant = normalizedMessages[messageIndex];
@@ -117,7 +155,10 @@ export function buildLivingHistoryRequest(
     throw new Error('the latest message must be a non-empty assistant response');
   }
   const prior = normalizedMessages[messageIndex - 1];
-  const user = prior?.role === 'user' ? prior.content : '';
+  if (prior?.role !== 'user' || prior.content.length === 0) {
+    throw new Error('the latest assistant response must follow a non-empty user turn');
+  }
+  const user = prior.content;
   const normalizedPrevious = previous ? normalizeLivingHistoryResult(previous) : null;
   if (normalizedPrevious && normalizedPrevious.source.conversationId !== conversationId) {
     throw new Error('previous living history belongs to another conversation');
@@ -150,12 +191,7 @@ export function normalizeLivingHistoryRequest(value: unknown): LivingHistoryRequ
   if (!isRecord(value) || value.spec !== LIVING_HISTORY_REQUEST_SPEC || value.kind !== 'living_history') {
     throw new Error('invalid living-history request spec');
   }
-  if (!isRecord(value.source) || !isSidecarConversationId(value.source.conversationId)) {
-    throw new Error('living-history source conversationId must be a UUID');
-  }
-  const messageCount = integer(value.source.messageCount, 'living-history source messageCount', 1, 1000);
-  const messageIndex = integer(value.source.messageIndex, 'living-history source messageIndex', 0, 999);
-  if (messageIndex !== messageCount - 1) throw new Error('living-history source must identify the latest response');
+  const source = normalizeLivingHistorySource(value.source);
   if (!isRecord(value.previous)) throw new Error('living-history previous state must be an object');
   const revision = integer(value.previous.revision, 'living-history revision', 0, 1_000_000);
   const summary = boundedSummary(value.previous.summary, 'living-history previous summary', 0);
@@ -163,18 +199,15 @@ export function normalizeLivingHistoryRequest(value: unknown): LivingHistoryRequ
   const user = boundedText(value.turn.user, 'living-history user turn', 0, 100_000);
   const assistant = boundedText(value.turn.assistant, 'living-history assistant turn', 1, 100_000);
   const turnFingerprint = latestTurnFingerprint(user, assistant);
-  if (value.source.turnFingerprint !== turnFingerprint) throw new Error('living-history source turn fingerprint does not match the supplied turn');
-  if (typeof value.source.fingerprint !== 'string' || !FINGERPRINT_PATTERN.test(value.source.fingerprint)) {
-    throw new Error('living-history source transcript fingerprint is invalid');
-  }
+  if (source.turnFingerprint !== turnFingerprint) throw new Error('living-history source turn fingerprint does not match the supplied turn');
   return {
     spec: LIVING_HISTORY_REQUEST_SPEC,
     kind: 'living_history',
     source: {
-      conversationId: value.source.conversationId,
-      messageCount,
-      messageIndex,
-      fingerprint: value.source.fingerprint,
+      conversationId: source.conversationId,
+      messageCount: source.messageCount,
+      messageIndex: source.messageIndex,
+      fingerprint: source.fingerprint,
       turnFingerprint
     },
     previous: { revision, summary },
@@ -247,30 +280,13 @@ export function normalizeLivingHistoryResult(value: unknown): LivingHistoryResul
   if (!isRecord(value) || value.spec !== LIVING_HISTORY_RESULT_SPEC || value.kind !== 'living_history') {
     throw new Error('invalid living-history result spec');
   }
-  if (!isRecord(value.source) || !isSidecarConversationId(value.source.conversationId)) {
-    throw new Error('living-history result source is invalid');
-  }
-  const messageCount = integer(value.source.messageCount, 'living-history result messageCount', 1, 1000);
-  const messageIndex = integer(value.source.messageIndex, 'living-history result messageIndex', 0, 999);
-  if (
-    messageIndex !== messageCount - 1
-    || typeof value.source.fingerprint !== 'string'
-    || !FINGERPRINT_PATTERN.test(value.source.fingerprint)
-    || typeof value.source.turnFingerprint !== 'string'
-    || !FINGERPRINT_PATTERN.test(value.source.turnFingerprint)
-  ) {
-    throw new Error('living-history result source is invalid');
-  }
+  const source = normalizeLivingHistorySource(value.source);
   if (!isRecord(value.output)) throw new Error('living-history result output is invalid');
   return {
     spec: LIVING_HISTORY_RESULT_SPEC,
     kind: 'living_history',
     source: {
-      conversationId: value.source.conversationId,
-      messageCount,
-      messageIndex,
-      fingerprint: value.source.fingerprint,
-      turnFingerprint: value.source.turnFingerprint
+      ...source
     },
     model: boundedText(value.model, 'living-history result model', 1, 200),
     output: {
@@ -313,6 +329,34 @@ export function livingHistoryResultMatchesMessages(
     && normalizedResult.source.turnFingerprint === source.turnFingerprint;
 }
 
+export function livingHistoryResultAppliesToMessages(
+  result: LivingHistoryResult,
+  conversationId: string,
+  messages: readonly TranscriptMessage[]
+): boolean {
+  let normalizedResult: LivingHistoryResult;
+  try {
+    normalizedResult = normalizeLivingHistoryResult(result);
+  } catch {
+    return false;
+  }
+  if (
+    normalizedResult.source.conversationId !== conversationId
+    || normalizedResult.source.messageCount > messages.length
+  ) return false;
+  let source: LivingHistorySource;
+  try {
+    source = buildLivingHistoryRequest(
+      conversationId,
+      messages.slice(0, normalizedResult.source.messageCount),
+      null
+    ).source;
+  } catch {
+    return false;
+  }
+  return livingHistorySourcesMatch(normalizedResult.source, source);
+}
+
 export function livingHistoryLorebook(result: LivingHistoryResult): ImportedLorebook {
   const normalized = normalizeLivingHistoryResult(result);
   const raw = {
@@ -324,17 +368,44 @@ export function livingHistoryLorebook(result: LivingHistoryResult): ImportedLore
         key: [],
         keysecondary: [],
         comment: `Session continuity · revision ${normalized.output.revision}`,
-        content: `Session continuity through turn ${normalized.source.messageIndex + 1}:\n${normalized.output.summary}`,
+        content: `CURRENT CONTINUITY:\n${normalized.output.summary}`,
         constant: true,
+        vectorized: false,
         selective: false,
+        selectiveLogic: 0,
+        addMemo: true,
         order: 950,
-        position: 1,
+        position: 4,
         disable: false,
+        ignoreBudget: false,
+        excludeRecursion: true,
+        preventRecursion: true,
+        matchPersonaDescription: false,
+        matchCharacterDescription: false,
+        matchCharacterPersonality: false,
+        matchCharacterDepthPrompt: false,
+        matchScenario: false,
+        matchCreatorNotes: false,
+        delayUntilRecursion: 0,
         probability: 100,
         useProbability: true,
+        depth: 2,
+        outletName: '',
+        group: '',
+        groupOverride: false,
+        groupWeight: 100,
+        scanDepth: null,
+        caseSensitive: null,
+        matchWholeWords: null,
+        useGroupScoring: null,
+        automationId: 'mullet-living-history-current',
+        role: 0,
+        sticky: null,
+        cooldown: null,
+        delay: null,
+        triggers: [],
+        displayIndex: 0,
         extensions: {
-          exclude_recursion: true,
-          prevent_recursion: true,
           mullet: {
             kind: 'living_history',
             conversation_id: normalized.source.conversationId,
@@ -352,5 +423,5 @@ export function livingHistoryLorebook(result: LivingHistoryResult): ImportedLore
       }
     }
   };
-  return normalizeLorebook(raw, LIVING_HISTORY_LOREBOOK_NAME, 'imported');
+  return normalizeLorebook(raw, LIVING_HISTORY_LOREBOOK_NAME, 'generated');
 }
