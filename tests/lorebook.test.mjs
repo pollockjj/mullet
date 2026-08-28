@@ -10,6 +10,7 @@ import {
   lorePromptContextTokens,
   normalizeLoreTimedState,
   normalizeLorebook,
+  reconcileLorebookRecursionControls,
   resolveLorebookSettings,
   scanLorebooks
 } from '../src/lib/lorebook.ts';
@@ -97,6 +98,44 @@ test('matches the operator SillyTavern lore settings and UI ranges', async () =>
   assert.throws(() => resolveLorebookSettings({ budgetPercent: 0 }), /between 1 and 100/);
   assert.throws(() => resolveLorebookSettings({ characterStrategy: -1 }), /between 0 and 2/);
   assert.throws(() => resolveLorebookSettings({ characterStrategy: 3 }), /between 0 and 2/);
+  assert.throws(
+    () => resolveLorebookSettings({ minActivations: 2, maxRecursionSteps: 1 }),
+    /mutually exclusive/
+  );
+  const maxWins = reconcileLorebookRecursionControls(
+    { ...DEFAULT_LOREBOOK_SETTINGS, minActivations: 2, maxRecursionSteps: 1 },
+    'maxRecursionSteps'
+  );
+  assert.equal(maxWins.minActivations, 0);
+  assert.equal(maxWins.maxRecursionSteps, 1);
+  const minimumWins = reconcileLorebookRecursionControls(
+    { ...DEFAULT_LOREBOOK_SETTINGS, minActivations: 2, maxRecursionSteps: 1 },
+    'minActivations'
+  );
+  assert.equal(minimumWins.minActivations, 2);
+  assert.equal(minimumWins.maxRecursionSteps, 0);
+});
+
+test('keeps minimum-depth expansion and maximum recursion caps as distinct modes', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Older key', key: ['older'], content: 'OLDER' }),
+    nativeEntry({ uid: 1, comment: 'Recursion seed', key: ['recent'], content: 'recursive-key' }),
+    nativeEntry({ uid: 2, comment: 'Recursive result', key: ['recursive-key'], content: 'RECURSIVE' })
+  ]);
+  const minimumMode = await scanLorebooks([book], history('older', 'recent'), {
+    scanDepth: 1,
+    minActivations: 2,
+    maxRecursionSteps: 0,
+    recursive: false
+  });
+  assert.deepEqual(minimumMode.activated.map((entry) => entry.name), ['Recursion seed', 'Older key']);
+
+  const cappedMode = await scanLorebooks([book], history('recent'), {
+    minActivations: 0,
+    maxRecursionSteps: 1,
+    recursive: true
+  });
+  assert.deepEqual(cappedMode.activated.map((entry) => entry.name), ['Recursion seed']);
 });
 
 test('matches SillyTavern embedded-character and imported-global insertion strategies', async () => {

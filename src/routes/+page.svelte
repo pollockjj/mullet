@@ -17,9 +17,11 @@
     normalizeLorebook,
     normalizeLoreTimedState,
     parseLorebookJson,
+    reconcileLorebookRecursionControls,
     resolveLorebookSettings,
     type ImportedLorebook,
     type LoreActivation,
+    type LorebookRecursionControl,
     type LorebookSettings
     , type LoreTimedState
   } from '$lib/lorebook';
@@ -437,8 +439,9 @@
     lastLoreBudget = 0;
   }
 
-  function persistLoreSettings() {
+  function persistLoreSettings(changed?: LorebookRecursionControl) {
     try {
+      if (changed) loreSettings = reconcileLorebookRecursionControls(loreSettings, changed);
       loreSettings = resolveLorebookSettings(loreSettings);
       if (browser) localStorage.setItem(loreSettingsStorageKey, JSON.stringify(loreSettings));
       lastLoreActivations = null;
@@ -737,11 +740,15 @@
             </label>
             <label>
               <span>Minimum fired</span>
-              <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivations} on:change={persistLoreSettings} disabled={streaming} />
+              <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivations} on:change={() => persistLoreSettings('minActivations')} disabled={streaming} />
             </label>
             <label>
               <span>Maximum depth</span>
               <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivationsDepthMax} on:change={persistLoreSettings} disabled={streaming} />
+            </label>
+            <label>
+              <span>Recursion cap</span>
+              <input type="number" min="0" max="10" step="1" bind:value={loreSettings.maxRecursionSteps} on:change={() => persistLoreSettings('maxRecursionSteps')} disabled={streaming} />
             </label>
             <label>
               <span>Insertion strategy</span>
@@ -754,6 +761,7 @@
           </div>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={persistLoreSettings} disabled={streaming} /> Recursive scanning</label>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={persistLoreSettings} disabled={streaming} /> Whole-word matching</label>
+          <small>Minimum fired and recursion cap are mutually exclusive; the last nonzero edit wins.</small>
           <small>{lastLoreBudget || Math.round(loreSettings.budgetPercent * Math.max(1, loreSettings.maxContextTokens - tokenLimit) / 100)}-token budget · server tokenizer</small>
         </details>
       </section>

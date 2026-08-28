@@ -24,6 +24,8 @@ export type LorebookSettings = {
   characterStrategy: 0 | 1 | 2;
 };
 
+export type LorebookRecursionControl = 'minActivations' | 'maxRecursionSteps';
+
 export const DEFAULT_LOREBOOK_SETTINGS: LorebookSettings = Object.freeze({
   scanDepth: 228,
   minActivations: 0,
@@ -528,9 +530,14 @@ export function resolveLorebookSettings(
 ): LorebookSettings {
   if (value !== undefined && value !== null && !isRecord(value)) throw new Error('lorebookSettings must be an object');
   const input = isRecord(value) ? value : {};
+  const minActivations = integerSetting(input.minActivations, 'minActivations', 0, 100, DEFAULT_LOREBOOK_SETTINGS.minActivations);
+  const maxRecursionSteps = integerSetting(input.maxRecursionSteps, 'maxRecursionSteps', 0, 10, DEFAULT_LOREBOOK_SETTINGS.maxRecursionSteps);
+  if (minActivations > 0 && maxRecursionSteps > 0) {
+    throw new Error('minActivations and maxRecursionSteps are mutually exclusive');
+  }
   return {
     scanDepth: integerSetting(input.scanDepth, 'scanDepth', 0, 1000, DEFAULT_LOREBOOK_SETTINGS.scanDepth),
-    minActivations: integerSetting(input.minActivations, 'minActivations', 0, 100, DEFAULT_LOREBOOK_SETTINGS.minActivations),
+    minActivations,
     minActivationsDepthMax: integerSetting(input.minActivationsDepthMax, 'minActivationsDepthMax', 0, 100, DEFAULT_LOREBOOK_SETTINGS.minActivationsDepthMax),
     budgetPercent: integerSetting(input.budgetPercent, 'budgetPercent', 1, 100, DEFAULT_LOREBOOK_SETTINGS.budgetPercent),
     includeNames: booleanSetting(input.includeNames, 'includeNames', DEFAULT_LOREBOOK_SETTINGS.includeNames),
@@ -539,7 +546,7 @@ export function resolveLorebookSettings(
     matchWholeWords: booleanSetting(input.matchWholeWords, 'matchWholeWords', DEFAULT_LOREBOOK_SETTINGS.matchWholeWords),
     maxContextTokens: integerSetting(maxContextTokens, 'maxContextTokens', 1, 2_000_000, DEFAULT_LOREBOOK_SETTINGS.maxContextTokens),
     budgetCap: integerSetting(input.budgetCap, 'budgetCap', 0, 65_536, DEFAULT_LOREBOOK_SETTINGS.budgetCap),
-    maxRecursionSteps: integerSetting(input.maxRecursionSteps, 'maxRecursionSteps', 0, 10, DEFAULT_LOREBOOK_SETTINGS.maxRecursionSteps),
+    maxRecursionSteps,
     useGroupScoring: booleanSetting(input.useGroupScoring, 'useGroupScoring', DEFAULT_LOREBOOK_SETTINGS.useGroupScoring),
     characterStrategy: integerSetting(
       input.characterStrategy,
@@ -549,6 +556,16 @@ export function resolveLorebookSettings(
       DEFAULT_LOREBOOK_SETTINGS.characterStrategy
     ) as 0 | 1 | 2
   };
+}
+
+export function reconcileLorebookRecursionControls(
+  settings: LorebookSettings,
+  changed: LorebookRecursionControl
+): LorebookSettings {
+  const next = { ...settings };
+  if (changed === 'minActivations' && next.minActivations > 0) next.maxRecursionSteps = 0;
+  if (changed === 'maxRecursionSteps' && next.maxRecursionSteps > 0) next.minActivations = 0;
+  return next;
 }
 
 export function lorePromptContextTokens(modelContextTokens: number, responseTokenLimit: number): number {
