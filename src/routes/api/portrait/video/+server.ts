@@ -2,12 +2,15 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   PORTRAIT_VIDEO_TIMEOUT_MS,
+  PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   normalizePortraitVideoRequest,
-  portraitVideoDimensions
+  portraitVideoDimensions,
+  portraitVideoEndFrameSeed
 } from '$lib/portrait-video';
 import {
   ComfyPortraitVideoOutputTooLargeError,
   loadPortraitVideoCapabilities,
+  runComfyPortraitEndFrame,
   runComfyPortraitVideo,
   sha256Hex,
   uploadPortraitVideoInput,
@@ -97,27 +100,48 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const timeoutSignal = AbortSignal.timeout(PORTRAIT_VIDEO_TIMEOUT_MS);
   const signal = AbortSignal.any([request.signal, timeoutSignal]);
   try {
-    await loadPortraitVideoCapabilities(fetch, baseUrl, signal);
+    const capabilities = await loadPortraitVideoCapabilities(fetch, baseUrl, signal);
+    if (!capabilities.modes.some(({ id }) => id === portraitVideoRequest.mode)) {
+      throw error(503, 'The selected portrait-motion mode is unavailable.');
+    }
     const input = await uploadPortraitVideoInput(fetch, baseUrl, imageBytes, imageSha256, signal);
-    const result = await runComfyPortraitVideo(fetch, baseUrl, portraitVideoRequest, input, seed, signal);
+    let endFrame: Awaited<ReturnType<typeof runComfyPortraitEndFrame>> | null = null;
+    let endFrameInput;
+    let endFrameSeed: number | null = null;
+    if (portraitVideoRequest.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
+      endFrameSeed = portraitVideoEndFrameSeed(seed);
+      endFrame = await runComfyPortraitEndFrame(fetch, baseUrl, portraitVideoRequest, input, endFrameSeed, signal);
+      if (endFrame.sha256 === imageSha256) throw new Error('Generated portrait end frame did not differ from its source.');
+      endFrameInput = await uploadPortraitVideoInput(fetch, baseUrl, endFrame.bytes, endFrame.sha256, signal);
+    }
+    const result = await runComfyPortraitVideo(fetch, baseUrl, portraitVideoRequest, input, seed, signal, endFrameInput);
     const dimensions = portraitVideoDimensions(portraitVideoRequest.aspectRatio);
+    const headers: Record<string, string> = {
+      'content-type': result.contentType,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'x-mullet-prompt-id': result.promptId,
+      'x-mullet-seed': String(seed),
+      'x-mullet-width': String(dimensions.width),
+      'x-mullet-height': String(dimensions.height),
+      'x-mullet-frames': String(dimensions.frames),
+      'x-mullet-fps': String(dimensions.fps),
+      'x-mullet-duration-seconds': String(portraitVideoRequest.durationSeconds),
+      'x-mullet-model-template': portraitVideoRequest.modelTemplate,
+      'x-mullet-video-mode': portraitVideoRequest.mode,
+      'x-mullet-input-sha256': imageSha256,
+      'x-mullet-video-sha256': result.sha256
+    };
+    if (endFrame && endFrameSeed !== null && portraitVideoRequest.endFrameModelTemplate) {
+      headers['x-mullet-end-frame-model-template'] = portraitVideoRequest.endFrameModelTemplate;
+      headers['x-mullet-end-frame-prompt-id'] = endFrame.promptId;
+      headers['x-mullet-end-frame-seed'] = String(endFrameSeed);
+      headers['x-mullet-end-frame-width'] = String(portraitVideoRequest.source.portraitWidth);
+      headers['x-mullet-end-frame-height'] = String(portraitVideoRequest.source.portraitHeight);
+      headers['x-mullet-end-frame-sha256'] = endFrame.sha256;
+    }
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
-      headers: {
-        'content-type': result.contentType,
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        'x-mullet-prompt-id': result.promptId,
-        'x-mullet-seed': String(seed),
-        'x-mullet-width': String(dimensions.width),
-        'x-mullet-height': String(dimensions.height),
-        'x-mullet-frames': String(dimensions.frames),
-        'x-mullet-fps': String(dimensions.fps),
-        'x-mullet-duration-seconds': String(portraitVideoRequest.durationSeconds),
-        'x-mullet-model-template': portraitVideoRequest.modelTemplate,
-        'x-mullet-video-mode': portraitVideoRequest.mode,
-        'x-mullet-input-sha256': imageSha256,
-        'x-mullet-video-sha256': result.sha256
-      }
+      headers
     });
   } catch (cause) {
     if (cause && typeof cause === 'object' && 'status' in cause) throw cause;
