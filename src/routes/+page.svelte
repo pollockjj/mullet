@@ -1080,16 +1080,16 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      if (video.type !== 'video/webm' || video.size < 4) {
+      if (video.type !== 'video/mp4' || video.size < 12) {
         throw new Error('Inline-scene motion generator returned an invalid video.');
       }
-      const signature = new Uint8Array(await video.slice(0, 4).arrayBuffer());
+      const signature = new Uint8Array(await video.slice(0, 12).arrayBuffer());
       if (
-        signature[0] !== 0x1a
-        || signature[1] !== 0x45
-        || signature[2] !== 0xdf
-        || signature[3] !== 0xa3
-      ) throw new Error('Inline-scene motion generator returned an invalid WebM signature.');
+        signature[4] !== 0x66
+        || signature[5] !== 0x74
+        || signature[6] !== 0x79
+        || signature[7] !== 0x70
+      ) throw new Error('Inline-scene motion generator returned an invalid MP4 signature.');
       const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
       const mode = response.headers.get('x-mullet-video-mode') ?? '';
       const sourcePromptId = response.headers.get('x-mullet-source-prompt-id') ?? '';
@@ -3261,7 +3261,7 @@
                   <option value={inlineSceneVideoCapabilities.template.id}>{inlineSceneVideoCapabilities.template.label}</option>
                 </select>
               </label>
-              <small>Replay loop · I2V · 49 frames @ 24 FPS · 2 seconds · VP9 WebM</small>
+              <small>Replay loop · MiniMax H3 FL2VA · 124 frames @ 24 FPS · 5-second span · H.264/AAC MP4</small>
               {#if generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.frames} frames</small>{/if}
               {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
               <button
@@ -3460,6 +3460,7 @@
                       autoplay
                       muted
                       loop
+                      controls
                       playsinline
                       on:error={handleInlineSceneVideoDecodeError}
                       aria-label="Generated landscape motion for this finalized response"
@@ -3472,7 +3473,7 @@
                     </div>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible ? 'Current response · replay-looping I2V' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    <span>{inlineSceneVideoVisible ? 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.durationSeconds} sec</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>
