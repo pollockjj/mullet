@@ -19,6 +19,33 @@ test('reads H.264 video and AAC audio metadata from MP4 bytes', () => {
     audioDurationSeconds: 166_358 / 32_000,
     presentationDurationSeconds: 5.167
   });
+  assert.deepEqual(
+    validateH264AacMp4(buildH264AacMp4Fixture({ useCo64: true }), expected),
+    validateH264AacMp4(buildH264AacMp4Fixture(), expected)
+  );
+  assert.deepEqual(
+    validateH264AacMp4(buildH264AacMp4Fixture({ mdatPayloadBytes: 512 }), expected),
+    validateH264AacMp4(buildH264AacMp4Fixture(), expected)
+  );
+});
+
+test('rejects truncated or out-of-range MP4 sample data', () => {
+  assert.throws(
+    () => validateH264AacMp4(buildH264AacMp4Fixture({ mdatPayloadBytes: 1 }), expected),
+    /sample data/
+  );
+  assert.throws(
+    () => validateH264AacMp4(buildH264AacMp4Fixture({ mdatPayloadBytes: 286 }), expected),
+    /sample data/
+  );
+  assert.throws(
+    () => validateH264AacMp4(buildH264AacMp4Fixture({ videoChunkOffsetDelta: -8 }), expected),
+    /sample data/
+  );
+  assert.throws(
+    () => validateH264AacMp4(buildH264AacMp4Fixture({ audioChunkOffsetDelta: 1_000_000 }), expected),
+    /sample data/
+  );
 });
 
 test('rejects MP4 with wrong dimensions, frame count, frame rate, codec, or missing audio', () => {
