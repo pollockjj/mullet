@@ -57,12 +57,14 @@
     type InlineSceneAspectRatio,
     type InlineSceneCapabilities,
     type InlineSceneImageRequest,
+    type InlineSceneLora,
     type InlineSceneMegapixels,
     type InlineSceneRequest,
     type InlineSceneResult
   } from '$lib/inline-scene';
   import {
     STORED_INLINE_SCENE_SPEC,
+    StoredInlineSceneIntegrityError,
     clearStoredInlineScene,
     commitStoredInlineScene,
     loadStoredInlineScene,
@@ -373,7 +375,8 @@
     generatedInlineScene,
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
-    inlineSceneLora
+    inlineSceneLora,
+    inlineSceneCapabilities
   );
   $: scheduleExpressionReconciliation(
     expressionsEnabled,
@@ -643,14 +646,23 @@
     scene: StoredInlineScene | null,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    lora: string
+    lora: string,
+    capabilities: InlineSceneCapabilities | null
   ): boolean {
+    const selectedLora = inlineSceneLoraDescriptor(capabilities, lora);
     return Boolean(
       scene
       && scene.request.aspectRatio === aspectRatio
       && scene.request.megapixels === megapixels
-      && scene.request.lora === (lora || null)
+      && scene.request.lora?.path === selectedLora?.path
+      && scene.request.lora?.trigger === selectedLora?.trigger
+      && scene.request.lora?.modelHash === selectedLora?.modelHash
     );
+  }
+
+  function inlineSceneLoraDescriptor(capabilities: InlineSceneCapabilities | null, path: string): InlineSceneLora | null {
+    if (!path) return null;
+    return capabilities?.loras.find((lora) => lora.path === path) ?? null;
   }
 
   function removeInstalledInlineScene() {
@@ -697,6 +709,7 @@
       await restoreStoredInlineScene({
         exclusive: runStoredInlineSceneExclusive,
         load: loadStoredInlineScene,
+        discardInvalid: clearStoredInlineScene,
         isCurrent: () => generation === inlineSceneGeneration
           && epoch === inlineSceneEpoch
           && Boolean(source && finalizedInlineSceneSource && livingHistorySourcesMatch(source, finalizedInlineSceneSource))
@@ -708,12 +721,9 @@
         install: installGeneratedInlineScene
       });
     } catch (cause) {
-      try {
-        await runStoredInlineSceneExclusive(clearStoredInlineScene);
+      if (cause instanceof StoredInlineSceneIntegrityError) {
         inlineSceneError = cause instanceof Error ? cause.message : 'Stored inline-scene integrity verification failed.';
-      } catch (clearCause) {
-        disableInlineScenePersistence(clearCause);
-      }
+      } else disableInlineScenePersistence(cause);
     } finally {
       endInlineScenePersistenceOperation();
     }
@@ -802,7 +812,7 @@
     if (!result) return true;
     try {
       const liveImageRequest = buildInlineSceneImageRequest(result, {
-        lora: inlineSceneLora || null,
+        lora: inlineSceneLoraDescriptor(inlineSceneCapabilities, inlineSceneLora),
         aspectRatio: inlineSceneAspectRatio,
         megapixels: inlineSceneMegapixels
       });
@@ -834,6 +844,8 @@
     ) return;
     const generation = inlineSceneGeneration;
     const epoch = inlineSceneEpoch;
+    const selectedLoraDescriptor = inlineSceneLoraDescriptor(inlineSceneCapabilities, selectedLora);
+    if (selectedLora && !selectedLoraDescriptor) return;
     lastInlineSceneAttemptKey = inlineSceneAttemptKey(selectedSidecarRequest, selectedAspectRatio, selectedMegapixels, selectedLora);
     inlineSceneBusy = true;
     inlineSceneError = '';
@@ -863,7 +875,7 @@
         throw new Error('Inline-scene sidecar returned a mismatched finalized source.');
       }
       const imageRequest = buildInlineSceneImageRequest(result, {
-        lora: selectedLora || null,
+        lora: selectedLoraDescriptor,
         aspectRatio: selectedAspectRatio,
         megapixels: selectedMegapixels
       });
@@ -2882,7 +2894,12 @@
               <span class="speaker">{message.role === 'user' ? 'You' : activeCard?.data.name ?? data.model}</span>
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
               {#if inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
-                <figure class:stale={inlineSceneApplies && !inlineSceneCurrent} class="scene-card" aria-busy={inlineSceneBusy}>
+                <figure
+                  class:stale={inlineSceneApplies && !inlineSceneCurrent}
+                  class="scene-card"
+                  aria-busy={inlineSceneBusy}
+                  style={`--scene-ratio: ${generatedInlineScene && inlineSceneApplies ? `${generatedInlineScene.width} / ${generatedInlineScene.height}` : '16 / 9'}`}
+                >
                   {#if generatedInlineSceneUrl && inlineSceneApplies}
                     <img src={generatedInlineSceneUrl} alt="Generated landscape still for this finalized response" />
                   {:else}
@@ -3072,7 +3089,7 @@
   .content { color: #e8e2d9; font: 16px/1.72 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
   .scene-card { position: relative; overflow: hidden; margin: 18px 0 0; border: 1px solid #435344; border-radius: 13px; background: #171b18; box-shadow: 0 18px 42px rgba(0,0,0,.24); }
   .scene-card.stale { border-color: #6d573d; }
-  .scene-card img, .scene-placeholder { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
+  .scene-card img, .scene-placeholder { display: block; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
   .scene-placeholder { min-height: 180px; display: grid; place-items: center; color: #8ea491; font: 700 10px/1.4 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
   .scene-placeholder:not(.error-state) { background: linear-gradient(110deg, #171918 25%, #263028 45%, #171918 65%); background-size: 240% 100%; animation: scene-shimmer 1.8s linear infinite; }
   .scene-placeholder.error-state { color: #d4a99e; background: #251918; }
