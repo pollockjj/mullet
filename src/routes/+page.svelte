@@ -1178,6 +1178,12 @@
         inlineSceneLora = '';
         localStorage.removeItem(inlineSceneLoraStorageKey);
       }
+      await tick();
+      if (
+        inlineSceneMotionEnabled
+        && inlineSceneVideoPersistenceReady
+        && !generatedInlineSceneVideo
+      ) await restoreGeneratedInlineSceneVideo();
     } catch (cause) {
       inlineSceneCapabilities = null;
       inlineSceneError = cause instanceof Error ? cause.message : 'Inline-scene generator is unavailable.';
