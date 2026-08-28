@@ -12,10 +12,10 @@ import {
 import {
   INLINE_SCENE_VIDEO_DIMENSIONS,
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
-  LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
   buildInlineSceneVideoPrompt,
   buildInlineSceneVideoRequest,
-  buildLtx25InlineSceneVideoWorkflow,
+  buildMiniMaxH3InlineSceneVideoWorkflow,
   inlineSceneVideoDimensions,
   inlineSceneVideoReconciliationAllowed,
   inlineSceneVideoRequestKey,
@@ -94,18 +94,19 @@ test('binds motion to every static-scene provenance field', () => {
 
 test('uses the fixed live-tested landscape video envelope', () => {
   assert.deepEqual(INLINE_SCENE_VIDEO_DIMENSIONS, [
-    { aspectRatio: '3:2', width: 576, height: 384 },
-    { aspectRatio: '4:3', width: 512, height: 384 },
-    { aspectRatio: '5:4', width: 640, height: 512 },
-    { aspectRatio: '16:9', width: 1024, height: 576 }
+    { aspectRatio: '3:2', width: 1152, height: 768 },
+    { aspectRatio: '4:3', width: 1024, height: 768 },
+    { aspectRatio: '5:4', width: 960, height: 768 },
+    { aspectRatio: '16:9', width: 1344, height: 768 }
   ]);
   for (const entry of INLINE_SCENE_VIDEO_DIMENSIONS) {
     const dimensions = inlineSceneVideoDimensions(entry.aspectRatio);
     assert.equal(dimensions.width, entry.width);
     assert.equal(dimensions.height, entry.height);
-    assert.equal(dimensions.width % LTX25_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
-    assert.equal(dimensions.height % LTX25_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
-    assert.equal(dimensions.frames, 49);
+    assert.equal(dimensions.width % MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
+    assert.equal(dimensions.height % MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
+    assert.ok(dimensions.width * dimensions.height <= MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.maxPixels);
+    assert.equal(dimensions.frames, 124);
     assert.equal(dimensions.fps, 24);
   }
 });
@@ -140,7 +141,7 @@ test('rejects missing, empty, and non-canonical integer provenance headers', () 
   }
 });
 
-test('builds a landscape I2V graph that preserves the static prompt and namespace', () => {
+test('builds the pinned MiniMax H3 FL2VA I2V graph with native audio', () => {
   const request = buildInlineSceneVideoRequest(staticScene('3:2', 0.5));
   const input = {
     name: 'scene-motion-33333333-3333-4333-8333-333333333333.png',
@@ -148,15 +149,24 @@ test('builds a landscape I2V graph that preserves the static prompt and namespac
     type: 'input',
     imageSha256: request.source.sceneImageSha256
   };
-  const graph = buildLtx25InlineSceneVideoWorkflow(request, input, 42);
-  assert.deepEqual(graph['11'].inputs, { width: 288, height: 192, length: 49, batch_size: 1 });
-  assert.equal(graph['31'].inputs.filename_prefix, 'mullet/scene-motion');
-  assert.equal(graph['31'].inputs.fps, 24);
-  assert.match(graph['8'].inputs.text, /damaged starship flight deck/);
-  assert.match(graph['8'].inputs.text, /preserving every visible subject/);
-  assert.match(buildInlineSceneVideoPrompt(request), /final pose returns close to the first pose/);
+  const graph = buildMiniMaxH3InlineSceneVideoWorkflow(request, input, 42);
+  assert.equal(graph['1'].inputs.unet_name, 'minimax_h3_fl2va_pruned_int8_convrot.safetensors');
+  assert.equal(graph['2'].inputs.type, 'minimax');
+  assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);
+  assert.equal(graph['6'].inputs.width, 1152);
+  assert.equal(graph['6'].inputs.height, 768);
+  assert.equal(graph['6'].inputs.length, 124);
+  assert.equal(graph['8'].inputs.sampler_name, 'res_multistep');
+  assert.deepEqual(graph['9'].inputs, { model: ['16', 0], scheduler: 'simple', steps: 4, denoise: 1 });
+  assert.deepEqual(graph['14'].inputs.audio, ['13', 0]);
+  assert.equal(graph['15'].inputs.filename_prefix, 'mullet/scene-motion');
+  assert.equal(graph['15'].inputs.format, 'auto');
+  assert.equal(graph['16'].inputs.lora_name, 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors');
+  assert.match(graph['6'].inputs.prompt, /damaged starship flight deck/);
+  assert.match(graph['6'].inputs.prompt, /Preserve every visible subject/);
+  assert.match(buildInlineSceneVideoPrompt(request), /synchronized diegetic room tone/);
   assert.throws(
-    () => buildLtx25InlineSceneVideoWorkflow(request, { ...input, imageSha256: 'b'.repeat(64) }, 42),
+    () => buildMiniMaxH3InlineSceneVideoWorkflow(request, { ...input, imageSha256: 'b'.repeat(64) }, 42),
     /input reference/
   );
 });
