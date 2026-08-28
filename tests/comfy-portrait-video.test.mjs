@@ -6,7 +6,7 @@ import {
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODE_I2V,
   PORTRAIT_VIDEO_MODE_LOOP_FLF,
-  MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
+  FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
   buildPortraitVideoRequest
 } from '../src/lib/portrait-video.ts';
 import {
@@ -77,19 +77,15 @@ function dynamicInfo(node, section, inputName, options) {
 
 function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, lengthMaximum = 3600) {
   const files = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
-  const endFiles = MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
+  const endFiles = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
   if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [files.unet, endFiles.unet]);
   if (node === 'CLIPLoader') return { [node]: { input: { required: {
     clip_name: [[files.clip, endFiles.clip]],
-    type: [['minimax', 'mage']]
+    type: [['minimax', 'flux2']]
   } } } };
   if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, endFiles.vae]);
   if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [files.turboLora]);
-  if (node === 'KSampler') return { [node]: { input: { required: {
-    sampler_name: [['euler']],
-    scheduler: [['simple']]
-  } } } };
-  if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['res_multistep']);
+  if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['res_multistep', 'euler']);
   if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
   if (node === 'SaveVideo') return { [node]: { input: {
     required: { format: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'mp4' }] }] },
@@ -118,7 +114,7 @@ test('requires the exact installed H3 FL2VA stack and native first/last-frame in
   const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://comfy');
   assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v5');
   assert.equal(capabilities.template.id, 'minimax-h3-fl2va-portrait-v1');
-  assert.equal(capabilities.endFrameTemplate?.id, 'mage-flow-edit-turbo-4step-v1');
+  assert.equal(capabilities.endFrameTemplate?.id, 'flux2-klein-9b-distilled-end-frame-v1');
   assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
   assert.deepEqual(capabilities.durations, [3, 5]);
 
@@ -139,7 +135,7 @@ test('requires the exact installed H3 FL2VA stack and native first/last-frame in
 
   const withoutEndFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
-    if (node === 'KSampler') return new Response('missing', { status: 404 });
+    if (node === 'ReferenceLatent') return new Response('missing', { status: 404 });
     return Response.json(capabilityResponse(node));
   }, 'http://comfy');
   assert.equal(withoutEndFrame.endFrameTemplate, null);
@@ -235,7 +231,7 @@ test('queues and validates the selected five-second 124-frame natural loop', asy
   assert.deepEqual(result.bytes, mp4Five);
 });
 
-test('queues generated-keyframe FLF with the distinct Mage-Flow image as H3 last frame', async () => {
+test('queues generated-keyframe FLF with the distinct FLUX.2 Klein image as H3 last frame', async () => {
   const { queued, observed } = await runMode(requests.generated, 'portrait-motion-generated-flf_00001_.mp4', endInput);
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['17', 0]);
@@ -243,7 +239,7 @@ test('queues generated-keyframe FLF with the distinct Mage-Flow image as H3 last
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion-generated-flf_00001_.mp4&subfolder=mullet&type=output');
 });
 
-test('queues and validates the exact Mage-Flow portrait end-frame PNG', async () => {
+test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async () => {
   const observed = [];
   const png = new Uint8Array(24);
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
@@ -258,7 +254,7 @@ test('queues and validates the exact Mage-Flow portrait end-frame PNG', async ()
     if (value.includes('/history/')) return Response.json({
       '66666666-6666-4666-8666-666666666666': {
         status: { completed: true, status_str: 'success' },
-        outputs: { '8': { images: [{ filename: 'portrait-generated-end-frame_00001_.png', subfolder: 'mullet', type: 'output' }] } }
+        outputs: { '18': { images: [{ filename: 'portrait-generated-end-frame_00001_.png', subfolder: 'mullet', type: 'output' }] } }
       }
     });
     if (value.includes('/view?')) return new Response(png, { headers: { 'content-type': 'image/png' } });
@@ -267,9 +263,12 @@ test('queues and validates the exact Mage-Flow portrait end-frame PNG', async ()
   const result = await runComfyPortraitEndFrame(fetcher, 'http://comfy/', requests.generated, input, 43);
   const queued = JSON.parse(observed[0].init.body);
   assert.equal(queued.client_id, 'mullet-portrait-end-frame');
-  assert.equal(queued.prompt['1'].inputs.unet_name, MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-  assert.equal(queued.prompt['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(queued.prompt['6'].inputs.seed, 43);
+  assert.equal(queued.prompt['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+  assert.equal(queued.prompt['2'].inputs.type, 'flux2');
+  assert.equal(queued.prompt['5'].class_type, 'ImageScaleToTotalPixels');
+  assert.equal(queued.prompt['5'].inputs.megapixels, 0.5);
+  assert.deepEqual(queued.prompt['11'].inputs, { width: 704, height: 704, batch_size: 1 });
+  assert.equal(queued.prompt['12'].inputs.noise_seed, 43);
   assert.equal(result.contentType, 'image/png');
   assert.deepEqual(result.bytes, png);
 });
