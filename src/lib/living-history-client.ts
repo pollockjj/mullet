@@ -71,6 +71,12 @@ export function livingHistoryReadyForChat(enabled: boolean, persistenceReady: bo
   return !enabled || persistenceReady;
 }
 
+export function parseLivingHistoryActiveHeader(value: string | null): boolean | null {
+  if (value === '1') return true;
+  if (value === '0') return false;
+  return null;
+}
+
 export function authoritativeLivingHistoryEpoch(currentEpoch: string, storedEpoch: unknown): string {
   return isSidecarConversationId(storedEpoch) ? storedEpoch : currentEpoch;
 }
