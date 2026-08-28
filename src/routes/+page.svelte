@@ -1857,6 +1857,7 @@
     lastLivingHistoryAttemptKey = '';
     conversationId = crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
+    await resetInlineSceneForConversation();
     await resetPortraitForConversation();
     await clearLivingHistory();
     sidecarState = emptySidecarState(conversationId);
@@ -2329,6 +2330,11 @@
     portraitVideoController?.abort();
     portraitVideoBusy = false;
     lastPortraitVideoAttemptKey = '';
+    inlineSceneGeneration += 1;
+    inlineSceneController?.abort();
+    inlineSceneController = null;
+    inlineSceneBusy = false;
+    lastInlineSceneAttemptKey = '';
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
@@ -2415,7 +2421,10 @@
     } finally {
       streaming = false;
       controller = null;
-      if (completedResponse) recordFinalizedLivingHistoryBoundary();
+      if (completedResponse) {
+        recordFinalizedLivingHistoryBoundary();
+        publishFinalizedInlineSceneSource();
+      }
       await scrollToLatest();
     }
   }
@@ -2442,7 +2451,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || sidecarBusy || portraitBusy || portraitVideoBusy || livingHistoryBusy} class="dot"></span>
+      <span class:live={streaming || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || livingHistoryBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
