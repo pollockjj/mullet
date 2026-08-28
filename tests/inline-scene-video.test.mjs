@@ -16,6 +16,7 @@ import {
   buildInlineSceneVideoPrompt,
   buildInlineSceneVideoRequest,
   buildMiniMaxH3InlineSceneVideoWorkflow,
+  inlineSceneMasterToggleEnabled,
   inlineSceneVideoDimensions,
   inlineSceneVideoMasterToggleAction,
   inlineSceneVideoReconciliationAllowed,
@@ -137,6 +138,13 @@ test('restores persisted motion when the master scene toggle is re-enabled', () 
   assert.equal(inlineSceneVideoMasterToggleAction(true, true, true), 'restore');
   assert.equal(inlineSceneVideoMasterToggleAction(true, false, true), 'none');
   assert.equal(inlineSceneVideoMasterToggleAction(true, true, false), 'none');
+});
+
+test('blocks the master scene toggle while a motion persistence operation is queued', () => {
+  assert.equal(inlineSceneMasterToggleEnabled(true, true, true), true);
+  assert.equal(inlineSceneMasterToggleEnabled(true, true, false), false);
+  assert.equal(inlineSceneMasterToggleEnabled(false, true, true), false);
+  assert.equal(inlineSceneMasterToggleEnabled(true, false, true), false);
 });
 
 test('rejects missing, empty, and non-canonical integer provenance headers', () => {

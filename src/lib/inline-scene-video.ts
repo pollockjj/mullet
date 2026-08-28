@@ -283,6 +283,14 @@ export function inlineSceneVideoMasterToggleAction(
   return 'none';
 }
 
+export function inlineSceneMasterToggleEnabled(
+  scenePersistenceReady: boolean,
+  scenePersistenceAvailable: boolean,
+  videoPersistenceReady: boolean
+): boolean {
+  return scenePersistenceReady && scenePersistenceAvailable && videoPersistenceReady;
+}
+
 export function parseInlineSceneVideoIntegerHeader(
   value: string | null,
   name: string,

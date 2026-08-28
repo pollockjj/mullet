@@ -68,6 +68,7 @@
     INLINE_SCENE_VIDEO_FRAMES,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     buildInlineSceneVideoRequest,
+    inlineSceneMasterToggleEnabled,
     inlineSceneVideoMasterToggleAction,
     inlineSceneVideoReconciliationAllowed,
     inlineSceneVideoRequestKey,
@@ -3215,7 +3216,11 @@
               type="checkbox"
               bind:checked={inlineScenesEnabled}
               on:change={persistInlineScenesEnabled}
-              disabled={!inlineScenePersistenceReady || !inlineScenePersistenceAvailable}
+              disabled={!inlineSceneMasterToggleEnabled(
+                inlineScenePersistenceReady,
+                inlineScenePersistenceAvailable,
+                inlineSceneVideoPersistenceReady
+              )}
             />
             <span>{inlineScenesEnabled ? 'On' : 'Off'}</span>
           </label>
