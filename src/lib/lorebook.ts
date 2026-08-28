@@ -75,6 +75,9 @@ export type NormalizedLoreEntry = {
   matchCharacterDepthPrompt: boolean;
   matchScenario: boolean;
   matchCreatorNotes: boolean;
+  sticky: number;
+  cooldown: number;
+  delay: number;
   characterFilter: {
     names: string[];
     tags: string[];
@@ -97,6 +100,18 @@ export type LoreActivation = {
   book: string;
   entryId: string;
   name: string;
+};
+
+export type LoreTimedEffect = {
+  fingerprint: number;
+  start: number;
+  end: number;
+  protected: boolean;
+};
+
+export type LoreTimedState = {
+  sticky: Record<string, LoreTimedEffect>;
+  cooldown: Record<string, LoreTimedEffect>;
 };
 
 export type LoreDepthInjection = {
@@ -134,6 +149,7 @@ export type LoreScanResult = {
   skipped: string[];
   budgetTokens: number;
   usedTokens: number;
+  timedState: LoreTimedState;
 };
 
 export type RegexTestResult = {
@@ -155,6 +171,7 @@ type ScanOptions = {
   tokenCount?: (value: string) => number | Promise<number>;
   regexTest?: (source: string, flags: string, haystack: string) => RegexTestResult | Promise<RegexTestResult>;
   generationTrigger?: string;
+  timedState?: unknown;
 };
 
 function isRecord(value: unknown): value is JsonObject {
@@ -171,6 +188,46 @@ function stringArray(value: unknown): string[] {
 
 function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function timedDuration(value: unknown): number {
+  return Math.max(0, Math.min(999_999, Math.trunc(finiteNumber(value, 0))));
+}
+
+export function emptyLoreTimedState(): LoreTimedState {
+  return { sticky: {}, cooldown: {} };
+}
+
+function normalizeTimedEffects(value: unknown, name: string): Record<string, LoreTimedEffect> {
+  if (value === undefined || value === null) return {};
+  if (!isRecord(value)) throw new Error(`loreTimedState.${name} must be an object`);
+  const pairs = Object.entries(value);
+  if (pairs.length > 20_000) throw new Error(`loreTimedState.${name} may contain at most 20000 effects`);
+  const normalized: Array<[string, LoreTimedEffect]> = pairs.map(([key, effect]) => {
+    if (key.length > 1_000 || !isRecord(effect)) throw new Error(`invalid loreTimedState.${name} effect`);
+    const fingerprint = effect.fingerprint;
+    const start = effect.start;
+    const end = effect.end;
+    if (
+      !Number.isSafeInteger(fingerprint) || fingerprint < 0 ||
+      !Number.isInteger(start) || start < 0 || start > 2_000_000 ||
+      !Number.isInteger(end) || end < start || end > 2_000_000 ||
+      typeof effect.protected !== 'boolean'
+    ) {
+      throw new Error(`invalid loreTimedState.${name} effect`);
+    }
+    return [key, { fingerprint, start, end, protected: effect.protected }];
+  });
+  return Object.fromEntries(normalized);
+}
+
+export function normalizeLoreTimedState(value: unknown): LoreTimedState {
+  if (value === undefined || value === null) return emptyLoreTimedState();
+  if (!isRecord(value)) throw new Error('loreTimedState must be an object');
+  return {
+    sticky: normalizeTimedEffects(value.sticky, 'sticky'),
+    cooldown: normalizeTimedEffects(value.cooldown, 'cooldown')
+  };
 }
 
 function nullableBoolean(value: unknown): boolean | null {
@@ -282,6 +339,9 @@ function normalizeEntry(value: unknown, id: string, index: number, format: Loreb
     matchCharacterDepthPrompt: extensionValue(value, 'matchCharacterDepthPrompt', 'match_character_depth_prompt') === true,
     matchScenario: extensionValue(value, 'matchScenario', 'match_scenario') === true,
     matchCreatorNotes: extensionValue(value, 'matchCreatorNotes', 'match_creator_notes') === true,
+    sticky: timedDuration(extensionValue(value, 'sticky', 'sticky')),
+    cooldown: timedDuration(extensionValue(value, 'cooldown', 'cooldown')),
+    delay: timedDuration(extensionValue(value, 'delay', 'delay')),
     characterFilter: normalizeCharacterFilter(value.characterFilter ?? extensionValue(value, 'characterFilter', 'character_filter')),
     raw: cloneJsonObject(value),
     sourceIndex: index
@@ -549,14 +609,129 @@ type Candidate = {
   bookIndex: number;
   entry: NormalizedLoreEntry;
   identity: string;
+  timedKey: string;
+  fingerprint: number;
   score: number;
 };
+
+function getStringHash(value: string): number {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2_654_435_761);
+    h2 = Math.imul(h2 ^ code, 1_597_334_677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2_246_822_507) ^ Math.imul(h2 ^ (h2 >>> 13), 3_269_909_909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2_246_822_507) ^ Math.imul(h1 ^ (h1 >>> 13), 3_269_909_909);
+  return 4_294_967_296 * (2_097_151 & h2) + (h1 >>> 0);
+}
+
+function timedFingerprint(book: ImportedLorebook, entry: NormalizedLoreEntry): number {
+  return getStringHash(JSON.stringify({
+    ...entry.raw,
+    world: book.name,
+    uid: entry.id,
+    decorators: entry.decorators,
+    content: entry.content
+  }));
+}
+
+type TimedRuntime = {
+  state: LoreTimedState;
+  sticky: Set<string>;
+  cooldown: Set<string>;
+  delay: Set<string>;
+};
+
+function prepareTimedRuntime(candidates: Candidate[], input: unknown, messageCount: number): TimedRuntime {
+  const state = normalizeLoreTimedState(input);
+  const byKey = new Map(candidates.map((candidate) => [candidate.timedKey, candidate]));
+  const sticky = new Set<string>();
+  const cooldown = new Set<string>();
+  const delay = new Set(candidates.filter(({ entry }) => entry.delay > 0 && messageCount < entry.delay).map(({ timedKey }) => timedKey));
+
+  for (const [key, effect] of Object.entries(state.sticky)) {
+    const candidate = byKey.get(key);
+    if (messageCount <= effect.start && !effect.protected) {
+      delete state.sticky[key];
+      continue;
+    }
+    if (!candidate || candidate.fingerprint !== effect.fingerprint) {
+      if (messageCount >= effect.end) delete state.sticky[key];
+      continue;
+    }
+    if (!candidate.entry.sticky) {
+      delete state.sticky[key];
+      continue;
+    }
+    if (messageCount >= effect.end) {
+      delete state.sticky[key];
+      if (candidate.entry.cooldown) {
+        state.cooldown[key] = {
+          fingerprint: candidate.fingerprint,
+          start: messageCount,
+          end: messageCount + candidate.entry.cooldown,
+          protected: true
+        };
+      }
+      continue;
+    }
+    sticky.add(key);
+  }
+
+  for (const [key, effect] of Object.entries(state.cooldown)) {
+    const candidate = byKey.get(key);
+    if (messageCount <= effect.start && !effect.protected) {
+      delete state.cooldown[key];
+      continue;
+    }
+    if (!candidate || candidate.fingerprint !== effect.fingerprint) {
+      if (messageCount >= effect.end) delete state.cooldown[key];
+      continue;
+    }
+    if (!candidate.entry.cooldown) {
+      delete state.cooldown[key];
+      continue;
+    }
+    if (messageCount >= effect.end) {
+      delete state.cooldown[key];
+      continue;
+    }
+    cooldown.add(key);
+  }
+
+  return { state, sticky, cooldown, delay };
+}
+
+function setTimedEffects(runtime: TimedRuntime, activated: Candidate[], messageCount: number): void {
+  for (const candidate of activated) {
+    const { entry, timedKey, fingerprint } = candidate;
+    if (entry.sticky && !runtime.state.sticky[timedKey]) {
+      runtime.state.sticky[timedKey] = {
+        fingerprint,
+        start: messageCount,
+        end: messageCount + entry.sticky,
+        protected: false
+      };
+    }
+    if (entry.cooldown && !runtime.state.cooldown[timedKey]) {
+      runtime.state.cooldown[timedKey] = {
+        fingerprint,
+        start: messageCount,
+        end: messageCount + entry.cooldown,
+        protected: false
+      };
+    }
+  }
+}
 
 function filterInclusionGroups(
   candidates: Candidate[],
   activatedGroups: Set<string>,
   random: () => number,
-  useGroupScoring: boolean
+  useGroupScoring: boolean,
+  timed: TimedRuntime
 ): Candidate[] {
   const survivors = new Set(candidates);
   const groups = new Map<string, Candidate[]>();
@@ -570,6 +745,14 @@ function filterInclusionGroups(
 
   for (const [group, members] of groups) {
     let available = members.filter((member) => survivors.has(member));
+    const stickyMembers = available.filter((member) => timed.sticky.has(member.timedKey));
+    if (stickyMembers.length > 0) {
+      available.filter((member) => !timed.sticky.has(member.timedKey)).forEach((member) => survivors.delete(member));
+      continue;
+    }
+    available.filter((member) => timed.cooldown.has(member.timedKey) || timed.delay.has(member.timedKey))
+      .forEach((member) => survivors.delete(member));
+    available = available.filter((member) => survivors.has(member));
     if (activatedGroups.has(group)) {
       available.forEach((member) => survivors.delete(member));
       continue;
@@ -697,6 +880,8 @@ export async function scanLorebooks(
     bookIndex,
     entry,
     identity: `${bookIndex}:${entry.id}`,
+    timedKey: JSON.stringify([book.name, entry.id]),
+    fingerprint: timedFingerprint(book, entry),
     score: 0
   })))
     .sort((a, b) => b.entry.insertionOrder - a.entry.insertionOrder
@@ -705,8 +890,9 @@ export async function scanLorebooks(
       || a.entry.sourceIndex - b.entry.sourceIndex);
   let budgetTokens = Math.round(settings.budgetPercent * settings.maxContextTokens / 100) || 1;
   if (settings.budgetCap > 0) budgetTokens = Math.min(budgetTokens, settings.budgetCap);
+  const timed = prepareTimedRuntime(candidates, options.timedState, history.length);
 
-  const activated = new Map<string, { book: ImportedLorebook; entry: NormalizedLoreEntry; content: string }>();
+  const activated = new Map<string, { candidate: Candidate; book: ImportedLorebook; entry: NormalizedLoreEntry; content: string }>();
   const activatedGroups = new Set<string>();
   const failedProbabilityChecks = new Set<string>();
   const recursion: string[] = [];
@@ -730,22 +916,32 @@ export async function scanLorebooks(
       if (activated.has(candidate.identity) || failedProbabilityChecks.has(candidate.identity) || !entry.enabled) continue;
       if (entry.triggers.length > 0 && !entry.triggers.includes(generationTrigger)) continue;
       if (!characterFilterAllows(entry, options)) continue;
-      if (scanState !== 'recursion' && entry.delayUntilRecursion > 0) continue;
-      if (scanState === 'recursion' && entry.delayUntilRecursion > currentRecursionDelayLevel) continue;
-      if (scanState === 'recursion' && settings.recursive && entry.excludeRecursion) continue;
+      const isSticky = timed.sticky.has(candidate.timedKey);
+      if (timed.delay.has(candidate.timedKey)) continue;
+      if (timed.cooldown.has(candidate.timedKey) && !isSticky) continue;
+      if (scanState !== 'recursion' && entry.delayUntilRecursion > 0 && !isSticky) continue;
+      if (scanState === 'recursion' && entry.delayUntilRecursion > currentRecursionDelayLevel && !isSticky) continue;
+      if (scanState === 'recursion' && settings.recursive && entry.excludeRecursion && !isSticky) continue;
       if (entry.decorators.includes('@@activate')) {
-        candidate.score = 0;
+        const haystack = scanText(historyNewestFirst, entry, settings, recursion, scanDepthSkew, scanState !== 'min_activations', options);
+        candidate.score = await entryMatchScore(haystack, entry, settings, substitute, regexTest);
         matched.push(candidate);
         continue;
       }
       if (entry.decorators.includes('@@dont_activate')) continue;
+      if (isSticky) {
+        candidate.score = 0;
+        matched.push(candidate);
+        continue;
+      }
       const haystack = scanText(historyNewestFirst, entry, settings, recursion, scanDepthSkew, scanState !== 'min_activations', options);
       if (!await entryMatches(haystack, entry, settings, substitute, regexTest)) continue;
       candidate.score = await entryMatchScore(haystack, entry, settings, substitute, regexTest);
       matched.push(candidate);
     }
 
-    matched = filterInclusionGroups(matched, activatedGroups, random, settings.useGroupScoring);
+    matched.sort((a, b) => Number(timed.sticky.has(b.timedKey)) - Number(timed.sticky.has(a.timedKey)));
+    matched = filterInclusionGroups(matched, activatedGroups, random, settings.useGroupScoring, timed);
     const priorTokens = await tokenCount(allActivatedText);
     let newContent = '';
     let remainingBudgetIgnored = matched.filter(({ entry }) => entry.ignoreBudget).length;
@@ -758,7 +954,7 @@ export async function scanLorebooks(
         if (remainingBudgetIgnored > 0) continue;
         break;
       }
-      if (entry.useProbability && entry.probability < 100 && random() * 100 > entry.probability) {
+      if (!timed.sticky.has(candidate.timedKey) && entry.useProbability && entry.probability < 100 && random() * 100 > entry.probability) {
         failedProbabilityChecks.add(candidate.identity);
         continue;
       }
@@ -771,7 +967,7 @@ export async function scanLorebooks(
         continue;
       }
 
-      activated.set(candidate.identity, { book, entry, content });
+      activated.set(candidate.identity, { candidate, book, entry, content });
       groupNames(entry).forEach((group) => activatedGroups.add(group));
       if (!entry.preventRecursion && content) newRecursion.push(content);
     }
@@ -803,6 +999,7 @@ export async function scanLorebooks(
   }
 
   const beforeCharacter: string[] = [];
+  setTimedEffects(timed, [...activated.values()].map(({ candidate }) => candidate), history.length);
   const afterCharacter: string[] = [];
   const authorNoteBefore: string[] = [];
   const authorNoteAfter: string[] = [];
@@ -843,7 +1040,8 @@ export async function scanLorebooks(
     activated: activatedReport,
     skipped,
     budgetTokens,
-    usedTokens
+    usedTokens,
+    timedState: timed.state
   };
 }
 

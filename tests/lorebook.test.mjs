@@ -434,6 +434,77 @@ test('advances open delayed-recursion levels even when global recursive scanning
   assert.deepEqual(result.activated.map((entry) => entry.name), ['Level one', 'Level two']);
 });
 
+test('persists sticky, cooldown, and delay state without polluting chat history', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Timed', key: ['alpha'], content: 'TIMED', probability: 50, sticky: 4, cooldown: 3 }),
+    nativeEntry({ uid: 1, comment: 'Delayed', key: ['alpha'], content: 'DELAYED', delay: 3 })
+  ], 'Timed book');
+  const sizedHistory = (length) => Array.from({ length }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: index === length - 1 ? 'alpha' : 'filler'
+  }));
+
+  const first = await scanLorebooks([book], sizedHistory(1), { recursive: false }, { random: () => 0.1 });
+  assert.deepEqual(first.activated.map((entry) => entry.name), ['Timed']);
+  assert.equal(Object.keys(first.timedState.sticky).length, 1);
+  assert.equal(Object.keys(first.timedState.cooldown).length, 1);
+
+  const continued = await scanLorebooks([book], sizedHistory(2), { recursive: false }, {
+    timedState: first.timedState,
+    random: () => { throw new Error('sticky entries must not reroll probability'); }
+  });
+  assert.deepEqual(continued.activated.map((entry) => entry.name), ['Timed']);
+
+  const regenerated = await scanLorebooks([book], sizedHistory(1), { recursive: false }, {
+    timedState: first.timedState,
+    random: () => 0.9
+  });
+  assert.deepEqual(regenerated.activated, []);
+  assert.deepEqual(regenerated.timedState, { sticky: {}, cooldown: {} });
+
+  const stickyExpired = await scanLorebooks([book], sizedHistory(5), { recursive: false }, { timedState: first.timedState });
+  assert.deepEqual(stickyExpired.activated, []);
+  assert.deepEqual(Object.keys(stickyExpired.timedState.sticky), []);
+  assert.deepEqual(Object.values(stickyExpired.timedState.cooldown)[0], {
+    fingerprint: Object.values(first.timedState.sticky)[0].fingerprint,
+    start: 5,
+    end: 8,
+    protected: true
+  });
+
+  const cooldownExpired = await scanLorebooks([book], sizedHistory(8), { recursive: false }, {
+    timedState: stickyExpired.timedState,
+    random: () => 0.1
+  });
+  assert.deepEqual(cooldownExpired.activated.map((entry) => entry.name), ['Timed', 'Delayed']);
+
+  const delaySuppressed = await scanLorebooks([book], sizedHistory(2), { recursive: false }, { random: () => 0.1 });
+  assert.deepEqual(delaySuppressed.activated.map((entry) => entry.name), ['Timed']);
+
+  const edited = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Timed', key: ['alpha'], content: 'EDITED', probability: 0, sticky: 4, cooldown: 3 })
+  ], 'Timed book');
+  const editedResult = await scanLorebooks([edited], sizedHistory(2), { recursive: false }, {
+    timedState: first.timedState,
+    random: () => 0.9
+  });
+  assert.deepEqual(editedResult.activated, []);
+});
+
+test('forces active sticky entries to win inclusion groups', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Sticky winner', key: ['alpha'], content: 'WINNER', group: 'choice', sticky: 4, groupWeight: 100 }),
+    nativeEntry({ uid: 1, comment: 'Other member', key: ['alpha'], content: 'OTHER', group: 'choice', groupWeight: 100 })
+  ], 'Group book');
+  const first = await scanLorebooks([book], history('alpha'), { recursive: false }, { random: () => 0 });
+  assert.deepEqual(first.activated.map((entry) => entry.name), ['Sticky winner']);
+  const next = await scanLorebooks([book], history('filler', 'alpha'), { recursive: false }, {
+    timedState: first.timedState,
+    random: () => 0.99
+  });
+  assert.deepEqual(next.activated.map((entry) => entry.name), ['Sticky winner']);
+});
+
 test('imports NovelAI naidata from a PNG lorebook', () => {
   const novel = { lorebookVersion: 1, entries: [{ keys: ['ship'], text: 'Liberator', enabled: true }] };
   const payload = Buffer.from(JSON.stringify(novel), 'utf8').toString('base64');
