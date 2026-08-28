@@ -116,6 +116,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         'x-mullet-model-template': videoRequest.modelTemplate,
         'x-mullet-video-mode': videoRequest.mode,
         'x-mullet-source-prompt-id': videoRequest.source.scenePromptId,
+        'x-mullet-source-seed': String(videoRequest.source.sceneSeed),
         'x-mullet-source-request-sha256': inlineSceneVideoSourceRequestSha256(videoRequest),
         'x-mullet-input-sha256': imageSha256,
         'x-mullet-video-sha256': result.sha256

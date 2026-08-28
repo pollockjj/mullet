@@ -44,6 +44,7 @@ export type InlineSceneVideoSource = {
   epoch: string;
   sceneRequestKey: string;
   scenePromptId: string;
+  sceneSeed: number;
   sceneGeneratedAt: number;
   sceneWidth: number;
   sceneHeight: number;
@@ -74,6 +75,7 @@ export type InlineSceneVideoInputScene = {
   requestKey: string;
   request: InlineSceneImageRequest;
   promptId: string;
+  seed: number;
   width: number;
   height: number;
   generatedAt: number;
@@ -127,6 +129,7 @@ export function buildInlineSceneVideoRequest(scene: InlineSceneVideoInputScene):
       epoch: scene.epoch,
       sceneRequestKey: scene.requestKey,
       scenePromptId: scene.promptId,
+      sceneSeed: scene.seed,
       sceneGeneratedAt: scene.generatedAt,
       sceneWidth: scene.width,
       sceneHeight: scene.height,
@@ -157,6 +160,7 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
     || !SHA256_PATTERN.test(value.source.sceneImageSha256)
   ) throw new Error('inline-scene video source provenance is invalid');
   const sceneGeneratedAt = integer(value.source.sceneGeneratedAt, 'inline-scene video source timestamp', 1, Number.MAX_SAFE_INTEGER);
+  const sceneSeed = integer(value.source.sceneSeed, 'inline-scene video source seed', 0, Number.MAX_SAFE_INTEGER);
   const sceneWidth = integer(value.source.sceneWidth, 'inline-scene video source width', 16, 8192);
   const sceneHeight = integer(value.source.sceneHeight, 'inline-scene video source height', 16, 8192);
   const staticDimensions = inlineSceneDimensions(sceneRequest.aspectRatio, sceneRequest.megapixels);
@@ -176,6 +180,7 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
       epoch: value.source.epoch,
       sceneRequestKey,
       scenePromptId: value.source.scenePromptId,
+      sceneSeed,
       sceneGeneratedAt,
       sceneWidth,
       sceneHeight,
@@ -194,6 +199,7 @@ export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): st
     normalized.source.epoch,
     normalized.source.sceneRequestKey,
     normalized.source.scenePromptId,
+    normalized.source.sceneSeed,
     normalized.source.sceneGeneratedAt,
     normalized.source.sceneWidth,
     normalized.source.sceneHeight,

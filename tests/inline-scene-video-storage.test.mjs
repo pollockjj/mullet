@@ -48,6 +48,7 @@ function request() {
     requestKey: inlineSceneImageRequestKey(sceneRequest),
     request: sceneRequest,
     promptId: staticPromptId,
+    seed: 42,
     width: dimensions.width,
     height: dimensions.height,
     generatedAt: 17,

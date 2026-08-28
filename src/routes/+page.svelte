@@ -1066,12 +1066,14 @@
       const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
       const mode = response.headers.get('x-mullet-video-mode') ?? '';
       const sourcePromptId = response.headers.get('x-mullet-source-prompt-id') ?? '';
+      const sourceSeed = inlineSceneVideoHeaderInteger(response, 'x-mullet-source-seed', 0, Number.MAX_SAFE_INTEGER);
       const sourceRequestSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-source-request-sha256');
       const inputImageSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-input-sha256');
       if (
         modelTemplate !== selectedRequest.modelTemplate
         || mode !== selectedRequest.mode
         || sourcePromptId !== selectedRequest.source.scenePromptId
+        || sourceSeed !== selectedRequest.source.sceneSeed
         || sourceRequestSha256 !== inlineSceneVideoSourceRequestSha256(selectedRequest)
         || inputImageSha256 !== selectedRequest.source.sceneImageSha256
       ) throw new Error('Inline-scene motion response provenance does not match its static scene.');

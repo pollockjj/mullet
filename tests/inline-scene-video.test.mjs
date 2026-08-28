@@ -45,6 +45,7 @@ function staticScene(aspectRatio = '16:9', megapixels = 1) {
     requestKey: inlineSceneImageRequestKey(request),
     request,
     promptId,
+    seed: 42,
     width: dimensions.width,
     height: dimensions.height,
     generatedAt: 123456789,
@@ -56,6 +57,7 @@ test('binds motion to every static-scene provenance field', () => {
   const scene = staticScene();
   const request = buildInlineSceneVideoRequest(scene);
   assert.equal(request.source.sceneRequestKey, scene.requestKey);
+  assert.equal(request.source.sceneSeed, 42);
   assert.equal(request.source.sceneRequest.source.promptSha256, scene.request.source.promptSha256);
   assert.equal(request.durationSeconds, INLINE_SCENE_VIDEO_DURATION_SECONDS);
   assert.throws(
@@ -81,6 +83,10 @@ test('binds motion to every static-scene provenance field', () => {
   assert.notEqual(
     inlineSceneVideoRequestKey(request),
     inlineSceneVideoRequestKey({ ...request, source: { ...request.source, sceneImageSha256: 'c'.repeat(64) } })
+  );
+  assert.notEqual(
+    inlineSceneVideoRequestKey(request),
+    inlineSceneVideoRequestKey({ ...request, source: { ...request.source, sceneSeed: 43 } })
   );
 });
 
