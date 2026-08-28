@@ -49,6 +49,19 @@ export type PortraitSource = {
   expression: ExpressionLabel;
 };
 
+export function isPortraitSource(value: unknown): value is PortraitSource {
+  if (!isRecord(value)) return false;
+  return isSidecarConversationId(value.conversationId)
+    && Number.isSafeInteger(value.messageCount)
+    && Number(value.messageCount) >= 1
+    && Number(value.messageCount) <= 1000
+    && Number.isSafeInteger(value.messageIndex)
+    && Number(value.messageIndex) === Number(value.messageCount) - 1
+    && typeof value.fingerprint === 'string'
+    && FINGERPRINT_PATTERN.test(value.fingerprint)
+    && isExpressionLabel(value.expression);
+}
+
 export type PortraitRequest = {
   spec: typeof PORTRAIT_REQUEST_SPEC;
   modelTemplate: typeof PORTRAIT_TEMPLATE_ID;
