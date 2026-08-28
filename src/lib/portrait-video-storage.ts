@@ -39,6 +39,7 @@ export type StoredPortraitVideo = {
   fps: typeof PORTRAIT_VIDEO_FPS;
   durationSeconds: PortraitVideoDurationSeconds;
   encodedDurationSeconds: number;
+  audioTracks: 0;
   generatedAt: number;
   inputImageSha256: string;
   endFrame: PortraitVideoEndFrameProvenance | null;
@@ -163,9 +164,10 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
   const encodedDurationSeconds = finiteNumber(
     value.encodedDurationSeconds,
     'stored portrait-video encoded duration',
-    request.durationSeconds,
-    request.durationSeconds + 1
+    expected.frames / expected.fps,
+    expected.frames / expected.fps
   );
+  const audioTracks = safeInteger(value.audioTracks, 'stored portrait-video audio-track count', 0, 0) as 0;
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored portrait-video input hash');
   if (inputImageSha256 !== request.source.portraitImageSha256) throw new Error('stored portrait-video input hash does not match its request');
   const endFrame = normalizeEndFrame(value.endFrame, request, inputImageSha256, seed);
@@ -188,6 +190,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     fps: PORTRAIT_VIDEO_FPS,
     durationSeconds: request.durationSeconds,
     encodedDurationSeconds,
+    audioTracks,
     generatedAt: safeInteger(value.generatedAt, 'stored portrait-video timestamp', 1, Number.MAX_SAFE_INTEGER),
     inputImageSha256,
     endFrame,

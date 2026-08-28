@@ -14,7 +14,7 @@ import {
 
 function request(overrides = {}) {
   return {
-    spec: 'mullet_portrait_video_request_v4',
+    spec: 'mullet_portrait_video_request_v5',
     modelTemplate: 'minimax-h3-fl2va-portrait-v1',
     endFrameModelTemplate: null,
     mode: 'i2v',
@@ -25,7 +25,7 @@ function request(overrides = {}) {
       portraitSeed: 41,
       portraitGeneratedAt: 17,
       portraitWidth: 768,
-      portraitHeight: 1152,
+      portraitHeight: 768,
       portraitImageSha256: 'a'.repeat(64),
       portraitSource: {
         conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -35,7 +35,7 @@ function request(overrides = {}) {
         expression: 'grief'
       }
     },
-    aspectRatio: '2:3',
+    aspectRatio: '1:1',
     durationSeconds: 3,
     ...overrides
   };
@@ -54,27 +54,29 @@ function stored(overrides = {}) {
     promptId: '22222222-2222-4222-8222-222222222222',
     seed: 42,
     width: 768,
-    height: 1152,
+    height: 768,
     frames,
     fps: 24,
     durationSeconds: motionRequest.durationSeconds,
     encodedDurationSeconds: frames / 24,
+    audioTracks: 0,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     endFrame: null,
     videoSha256: 'b'.repeat(64),
-    video: new Blob([buildH264AacMp4Fixture({ width: 768, height: 1152, frames })], { type: 'video/mp4' }),
+    video: new Blob([buildH264AacMp4Fixture({ width: 768, height: 768, frames, includeAudio: false })], { type: 'video/mp4' }),
     ...overrides
   };
 }
 
-test('normalizes a provenance-bound H.264/AAC MP4 without canonical transcript text', () => {
+test('normalizes a provenance-bound H.264 video-only MP4 without canonical transcript text', () => {
   const result = normalizeStoredPortraitVideo(stored());
   assert.equal(result.video.type, 'video/mp4');
   assert.equal(result.frames, 73);
   assert.equal(result.fps, 24);
   assert.equal(result.durationSeconds, 3);
   assert.equal(result.encodedDurationSeconds, 73 / 24);
+  assert.equal(result.audioTracks, 0);
   assert.equal(result.mode, 'i2v');
   assert.equal(result.endFrame, null);
   assert.equal(result.requestKey, portraitVideoRequestKey(result.request));
@@ -103,6 +105,8 @@ test('rejects unmatched request keys, conversations, hashes, timing, dimensions,
   assert.throws(() => normalizeStoredPortraitVideo(stored({ mode: 'flf2v_loop' })), /mode is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ frames: 72 })), /timing is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ encodedDurationSeconds: Number.NaN })), /encoded duration is invalid/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ encodedDurationSeconds: 73 / 24 + 0.001 })), /encoded duration is invalid/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ audioTracks: 1 })), /audio-track count is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ width: 512 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
 });
@@ -118,7 +122,7 @@ test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
   assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
 });
 
-test('discards obsolete v1/v2/v3 direct values and envelopes for automatic regeneration', () => {
+test('discards obsolete v1/v2/v3/v4 direct values and envelopes for automatic regeneration', () => {
   assert.equal(unwrapStoredPortraitVideo({ spec: 'mullet_stored_portrait_video_v1' }), null);
   assert.equal(unwrapStoredPortraitVideo({
     spec: 'mullet_stored_portrait_video_envelope_v1',
@@ -137,6 +141,12 @@ test('discards obsolete v1/v2/v3 direct values and envelopes for automatic regen
     writeId: 'legacy-writer',
     video: { spec: 'mullet_stored_portrait_video_v3' }
   }), null);
+  assert.equal(unwrapStoredPortraitVideo({ spec: 'mullet_stored_portrait_video_v4' }), null);
+  assert.equal(unwrapStoredPortraitVideo({
+    spec: 'mullet_stored_portrait_video_envelope_v4',
+    writeId: 'legacy-writer',
+    video: { spec: 'mullet_stored_portrait_video_v4' }
+  }), null);
 });
 
 test('requires exact generated end-frame provenance only for generated FLF mode', () => {
@@ -153,7 +163,7 @@ test('requires exact generated end-frame provenance only for generated FLF mode'
       promptId: '33333333-3333-4333-8333-333333333333',
       seed: 43,
       width: 768,
-      height: 1152,
+      height: 768,
       imageSha256: 'c'.repeat(64)
     }
   });

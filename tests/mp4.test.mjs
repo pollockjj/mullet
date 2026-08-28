@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { validateH264AacMp4 } from '../src/lib/mp4.ts';
+import { validateH264AacMp4, validateH264VideoOnlyMp4 } from '../src/lib/mp4.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 
 const expected = { width: 1344, height: 768, frames: 124, fps: 24 };
@@ -26,6 +26,30 @@ test('reads H.264 video and AAC audio metadata from MP4 bytes', () => {
   assert.deepEqual(
     validateH264AacMp4(buildH264AacMp4Fixture({ mdatPayloadBytes: 512 }), expected),
     validateH264AacMp4(buildH264AacMp4Fixture(), expected)
+  );
+});
+
+test('accepts exact H.264 video-only timing and rejects every audio track', () => {
+  assert.deepEqual(validateH264VideoOnlyMp4(
+    buildH264AacMp4Fixture({ includeAudio: false }),
+    expected
+  ), {
+    videoCodec: 'avc1',
+    width: 1344,
+    height: 768,
+    frameCount: 124,
+    fps: 24,
+    durationSeconds: 124 / 24,
+    audioTrackCount: 0,
+    presentationDurationSeconds: 5.167
+  });
+  assert.throws(
+    () => validateH264VideoOnlyMp4(buildH264AacMp4Fixture(), expected),
+    /must not contain an audio track/
+  );
+  assert.throws(
+    () => validateH264VideoOnlyMp4(buildH264AacMp4Fixture({ includeAudio: false, frames: 123 }), expected),
+    /frame count/
   );
 });
 

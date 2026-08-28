@@ -41,7 +41,6 @@ export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
     unet: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
     clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
     videoVae: 'minimax_h3_video_vae_fp16.safetensors',
-    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
     turboLora: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors'
   },
   requiredNodes: [
@@ -56,7 +55,6 @@ export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
     'RandomNoise',
     'SamplerCustomAdvanced',
     'VAEDecode',
-    'VAEDecodeAudio',
     'CreateVideo',
     'SaveVideo',
     'LoraLoaderModelOnly'
@@ -72,7 +70,7 @@ export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   format: 'auto',
   codec: 'auto',
   bitDepth: 8,
-  promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, native quiet ambience, no cuts'
+  promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, silent video-only output, no cuts'
 } as const);
 
 export const MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
@@ -323,7 +321,7 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
     'Hair and clothing move subtly.',
     loopInstruction,
     'No camera movement, no cuts, no speech, no text, no black frames.',
-    'Audio: quiet synchronized room tone and subtle clothing or hair movement only; no dialogue, narration, or music.'
+    'Silent video only; no dialogue, narration, music, room tone, or sound effects.'
   ].join(' ');
 }
 
@@ -438,7 +436,6 @@ export function buildMiniMaxH3PortraitVideoWorkflow(
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
-    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
     '5': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
     '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
       clip: ['2', 0],
@@ -456,8 +453,7 @@ export function buildMiniMaxH3PortraitVideoWorkflow(
     '10': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
     '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
     '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
-    '13': { class_type: 'VAEDecodeAudio', inputs: { samples: ['11', 0], vae: ['4', 0] } },
-    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps, audio: ['13', 0], bit_depth: template.bitDepth } },
+    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps, bit_depth: template.bitDepth } },
     '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: filenamePrefix, format: template.format, codec: template.codec } },
     '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
     ...(normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && endFrameInput

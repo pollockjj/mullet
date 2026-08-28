@@ -168,7 +168,7 @@
     type PortraitVideoMode,
     type PortraitVideoRequest
   } from '$lib/portrait-video';
-  import { validateH264AacMp4 } from '$lib/mp4';
+  import { validateH264VideoOnlyMp4 } from '$lib/mp4';
   import {
     STORED_PORTRAIT_VIDEO_SPEC,
     clearStoredPortraitVideo,
@@ -1937,7 +1937,7 @@
         || bytes[7] !== 0x70
         || await blobSha256(video.video) !== video.videoSha256
       ) throw new Error('stored portrait motion bytes are invalid');
-      const metadata = validateH264AacMp4(bytes, {
+      const metadata = validateH264VideoOnlyMp4(bytes, {
         width: video.width,
         height: video.height,
         frames: video.frames,
@@ -2117,6 +2117,7 @@
         fps: responseHeaderInteger(response, 'x-mullet-fps', 1, 1_000),
         durationSeconds: responseHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
         encodedDurationSeconds: responseHeaderNumber(response, 'x-mullet-encoded-duration-seconds', 1, 3_600),
+        audioTracks: responseHeaderInteger(response, 'x-mullet-audio-tracks', 0, 0),
         generatedAt: Date.now(),
         inputImageSha256,
         endFrame,
@@ -4141,8 +4142,8 @@
               </select>
             </label>
           {/if}
-          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · MiniMax H3 FL2VA · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s encoded H.264/AAC MP4</small>
-          {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded</small>{/if}
+          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · MiniMax H3 FL2VA · silent · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s encoded H.264 video-only MP4</small>
+          {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded · zero audio tracks</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button
             on:click={() => void generatePortraitVideo()}

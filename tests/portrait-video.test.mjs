@@ -40,7 +40,7 @@ function portrait(overrides = {}) {
     promptId: '11111111-1111-4111-8111-111111111111',
     seed: 41,
     width: 768,
-    height: 1152,
+    height: 768,
     generatedAt: 17,
     ...overrides
   };
@@ -60,25 +60,25 @@ const endInput = {
   imageSha256: 'b'.repeat(64)
 };
 
-test('maps the fixed 2:3 expression ratio and every duration to the bounded MiniMax frame grid', () => {
+test('maps the fixed 1:1 expression ratio and every duration to the bounded MiniMax frame grid', () => {
   assert.deepEqual(PORTRAIT_VIDEO_DURATIONS, [3, 5]);
-  assert.deepEqual(portraitVideoDimensions('2:3'), { width: 768, height: 1152, frames: 73, fps: 24 });
-  assert.deepEqual(portraitVideoDimensions('2:3', 5), { width: 768, height: 1152, frames: 124, fps: 24 });
+  assert.deepEqual(portraitVideoDimensions('1:1'), { width: 768, height: 768, frames: 73, fps: 24 });
+  assert.deepEqual(portraitVideoDimensions('1:1', 5), { width: 768, height: 768, frames: 124, fps: 24 });
   for (const duration of PORTRAIT_VIDEO_DURATIONS) {
-    const dimensions = portraitVideoDimensions('2:3', duration);
+    const dimensions = portraitVideoDimensions('1:1', duration);
     assert.equal(dimensions.width % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
     assert.equal(dimensions.height % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
     assert.equal(Math.min(dimensions.width, dimensions.height), 768);
     assert.equal((dimensions.frames - 5) % 17, 0);
   }
   assert.throws(() => portraitVideoDimensions('3:4'), /unsupported portrait-video aspect ratio/);
-  assert.equal((portraitVideoDimensions('2:3', 3).frames - 1) / PORTRAIT_VIDEO_FPS, PORTRAIT_VIDEO_DURATION_SECONDS);
-  assert.equal((portraitVideoDimensions('2:3', 5).frames - 1) / PORTRAIT_VIDEO_FPS, 5.125);
+  assert.equal((portraitVideoDimensions('1:1', 3).frames - 1) / PORTRAIT_VIDEO_FPS, PORTRAIT_VIDEO_DURATION_SECONDS);
+  assert.equal((portraitVideoDimensions('1:1', 5).frames - 1) / PORTRAIT_VIDEO_FPS, 5.125);
   assert.equal(PORTRAIT_VIDEO_FRAMES, 73);
 });
 
 test('defaults every portrait request to the identical-frame H3 loop', () => {
-  const built = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64));
+  const built = buildPortraitVideoRequest(portrait(), '1:1', 'a'.repeat(64));
   assert.equal(built.spec, PORTRAIT_VIDEO_REQUEST_SPEC);
   assert.equal(built.modelTemplate, PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(built.modelTemplate, 'minimax-h3-fl2va-portrait-v1');
@@ -88,25 +88,26 @@ test('defaults every portrait request to the identical-frame H3 loop', () => {
   assert.equal(JSON.stringify(built).includes('assistant'), false);
   assert.equal(JSON.stringify(built).includes('transcript'), false);
   assert.match(buildPortraitVideoPrompt(built), /identical supplied portrait is the first and final keyframe/);
-  assert.match(buildPortraitVideoPrompt(built), /quiet synchronized room tone/);
+  assert.match(buildPortraitVideoPrompt(built), /Silent video only/);
 });
 
-test('compiles first-frame-only MiniMax H3 I2V with native audio and H.264 output', () => {
-  const request = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_I2V);
+test('compiles first-frame-only MiniMax H3 I2V with H.264 video-only output', () => {
+  const request = buildPortraitVideoRequest(portrait(), '1:1', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_I2V);
   const graph = buildMiniMaxH3PortraitVideoWorkflow(request, firstInput, 42);
   assert.equal(graph['1'].inputs.unet_name, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet);
   assert.equal(graph['2'].inputs.clip_name, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip);
   assert.equal(graph['2'].inputs.type, 'minimax');
   assert.equal(graph['3'].inputs.vae_name, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.videoVae);
-  assert.equal(graph['4'].inputs.vae_name, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.audioVae);
+  assert.equal(Object.hasOwn(graph, '4'), false);
   assert.equal(graph['6'].class_type, 'MiniMaxH3ImageToVideo');
   assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);
   assert.equal(Object.hasOwn(graph['6'].inputs, 'last_frame'), false);
   assert.equal(graph['6'].inputs.width, 768);
-  assert.equal(graph['6'].inputs.height, 1152);
+  assert.equal(graph['6'].inputs.height, 768);
   assert.equal(graph['6'].inputs.length, 73);
   assert.equal(graph['10'].inputs.noise_seed, 42);
-  assert.equal(graph['13'].class_type, 'VAEDecodeAudio');
+  assert.equal(Object.hasOwn(graph, '13'), false);
+  assert.equal(Object.hasOwn(graph['14'].inputs, 'audio'), false);
   assert.equal(graph['15'].class_type, 'SaveVideo');
   assert.equal(graph['15'].inputs.format, 'auto');
   assert.equal(graph['15'].inputs.codec, 'auto');
@@ -114,7 +115,7 @@ test('compiles first-frame-only MiniMax H3 I2V with native audio and H.264 outpu
 });
 
 test('compiles the default loop by wiring the same image as first and last H3 frames', () => {
-  const request = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64));
+  const request = buildPortraitVideoRequest(portrait(), '1:1', 'a'.repeat(64));
   const graph = buildMiniMaxH3PortraitVideoWorkflow(request, firstInput, 42);
   assert.deepEqual(PORTRAIT_VIDEO_MODES.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
   assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);
@@ -126,7 +127,7 @@ test('compiles the default loop by wiring the same image as first and last H3 fr
 test('compiles the selected five-second loop as 124 identical-frame-conditioned frames', () => {
   const request = buildPortraitVideoRequest(
     portrait(),
-    '2:3',
+    '1:1',
     'a'.repeat(64),
     PORTRAIT_VIDEO_MODE_LOOP_FLF,
     5
@@ -141,7 +142,7 @@ test('compiles the selected five-second loop as 124 identical-frame-conditioned 
 test('compiles Mage-Flow end-frame generation followed by distinct H3 first/last conditioning', () => {
   const request = buildPortraitVideoRequest(
     portrait(),
-    '2:3',
+    '1:1',
     'a'.repeat(64),
     PORTRAIT_VIDEO_MODE_GENERATED_FLF
   );
@@ -156,7 +157,7 @@ test('compiles Mage-Flow end-frame generation followed by distinct H3 first/last
   assert.equal(endGraph['2'].inputs.type, 'mage');
   assert.equal(endGraph['5'].class_type, 'TextEncodeMageFlowEdit');
   assert.equal(endGraph['5'].inputs.width, 768);
-  assert.equal(endGraph['5'].inputs.height, 1152);
+  assert.equal(endGraph['5'].inputs.height, 768);
   assert.equal(endGraph['6'].inputs.seed, 43);
   assert.deepEqual(endGraph['8'].inputs.images, ['7', 0]);
 
@@ -168,7 +169,7 @@ test('compiles Mage-Flow end-frame generation followed by distinct H3 first/last
 });
 
 test('rejects arbitrary templates, durations, paths, and invalid end-frame usage', () => {
-  const built = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64));
+  const built = buildPortraitVideoRequest(portrait(), '1:1', 'a'.repeat(64));
   assert.throws(() => normalizePortraitVideoRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait-video model/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, aspectRatio: '3:4' }), /unsupported portrait-video aspect ratio/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, durationSeconds: 4 }), /unsupported portrait-video duration/);
@@ -178,10 +179,10 @@ test('rejects arbitrary templates, durations, paths, and invalid end-frame usage
     ...firstInput,
     name: '../escape.png'
   }, 1), /input reference is invalid/);
-  const generated = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_GENERATED_FLF);
+  const generated = buildPortraitVideoRequest(portrait(), '1:1', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_GENERATED_FLF);
   assert.throws(() => buildMiniMaxH3PortraitVideoWorkflow(generated, firstInput, 1), /end-frame input is required/);
   assert.throws(() => buildMiniMaxH3PortraitVideoWorkflow(generated, firstInput, 1, firstInput), /must differ/);
   assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(generated));
-  const fiveSeconds = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_LOOP_FLF, 5);
+  const fiveSeconds = buildPortraitVideoRequest(portrait(), '1:1', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_LOOP_FLF, 5);
   assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(fiveSeconds));
 });

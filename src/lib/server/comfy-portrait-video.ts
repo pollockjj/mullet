@@ -14,7 +14,7 @@ import {
   type PortraitVideoInputReference,
   type PortraitVideoRequest
 } from '../portrait-video.ts';
-import { validateH264AacMp4 } from '../mp4.ts';
+import { validateH264VideoOnlyMp4 } from '../mp4.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -25,6 +25,7 @@ export type ComfyPortraitVideo = {
   filename: string;
   sha256: string;
   durationSeconds: number;
+  audioTracks: 0;
 };
 
 export type ComfyPortraitEndFrame = {
@@ -138,7 +139,6 @@ export async function loadPortraitVideoCapabilities(
   requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'minimax', 'the MiniMax text-encoder mode');
   const vaes = optionList(info.VAELoader, 'VAELoader', 'vae_name');
   requireOption(vaes, template.modelFiles.videoVae, 'the MiniMax H3 video VAE');
-  requireOption(vaes, template.modelFiles.audioVae, 'the MiniMax H3 audio VAE');
   requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.turboLora, 'the MiniMax H3 four-step Turbo LoRA');
   requireOption(optionList(info.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), template.sampler, 'the res_multistep sampler');
   requireOption(optionList(info.BasicScheduler, 'BasicScheduler', 'scheduler'), template.scheduler, 'the simple scheduler');
@@ -166,7 +166,7 @@ export async function loadPortraitVideoCapabilities(
       info.MiniMaxH3ImageToVideo,
       'MiniMaxH3ImageToVideo',
       'length',
-      portraitVideoDimensions('2:3', durationSeconds).frames,
+      portraitVideoDimensions('1:1', durationSeconds).frames,
       17
     );
   }
@@ -526,7 +526,7 @@ export async function runComfyPortraitVideo(
       throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
     }
     const dimensions = portraitVideoDimensions(request.aspectRatio, request.durationSeconds);
-    const metadata = validateH264AacMp4(bytes, {
+    const metadata = validateH264VideoOnlyMp4(bytes, {
       width: dimensions.width,
       height: dimensions.height,
       frames: dimensions.frames,
@@ -538,7 +538,8 @@ export async function runComfyPortraitVideo(
       promptId: id,
       filename: video.filename,
       sha256: await sha256Hex(bytes),
-      durationSeconds: metadata.durationSeconds
+      durationSeconds: metadata.durationSeconds,
+      audioTracks: metadata.audioTrackCount
     };
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);

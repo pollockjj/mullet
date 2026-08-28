@@ -18,6 +18,17 @@ export type ExpectedMp4Video = {
   fps: number;
 };
 
+export type Mp4VideoOnlyMetadata = {
+  videoCodec: 'avc1' | 'avc3';
+  width: number;
+  height: number;
+  frameCount: number;
+  fps: number;
+  durationSeconds: number;
+  audioTrackCount: 0;
+  presentationDurationSeconds: number;
+};
+
 type Box = {
   type: string;
   dataStart: number;
@@ -554,6 +565,92 @@ export function validateH264AacMp4(bytes: Uint8Array, expected: ExpectedMp4Video
     durationSeconds,
     audioSampleCount: audio.sampleCount,
     audioDurationSeconds,
+    presentationDurationSeconds
+  };
+}
+
+export function validateH264VideoOnlyMp4(bytes: Uint8Array, expected: ExpectedMp4Video): Mp4VideoOnlyMetadata {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 32) throw new Error('MP4 is truncated');
+  const expectedWidth = safeInteger(expected.width, 'expected MP4 width', 1, 16_384);
+  const expectedHeight = safeInteger(expected.height, 'expected MP4 height', 1, 16_384);
+  const expectedFrames = safeInteger(expected.frames, 'expected MP4 frame count', 1, 100_000);
+  const expectedFps = safeInteger(expected.fps, 'expected MP4 frame rate', 1, 1_000);
+  const budget: ParseBudget = {
+    remainingBoxes: Math.min(
+      MAXIMUM_BOX_BUDGET,
+      Math.max(MINIMUM_BOX_BUDGET, expectedFrames * 8 + 1_024)
+    ),
+    remainingTableVisits: MAXIMUM_TABLE_VISITS
+  };
+  const root = boxes(bytes, 0, bytes.byteLength, budget);
+  const ftyp = exactlyOne(root, 'ftyp', 'file-type box');
+  if (ftyp.dataEnd - ftyp.dataStart < 8 || (ftyp.dataEnd - ftyp.dataStart) % 4 !== 0) {
+    throw new Error('MP4 file type is unsupported');
+  }
+  const brands = [fourcc(bytes, ftyp.dataStart, 'major brand')];
+  for (let offset = ftyp.dataStart + 8; offset + 4 <= ftyp.dataEnd; offset += 4) {
+    brands.push(fourcc(bytes, offset, 'compatible brand'));
+  }
+  if (!brands.some((brand) => ['isom', 'iso2', 'mp41', 'mp42', 'avc1'].includes(brand))) {
+    throw new Error('MP4 file type is unsupported');
+  }
+  const moov = exactlyOne(root, 'moov', 'movie box');
+  const mediaData = root.filter((entry) => entry.type === 'mdat');
+  if (mediaData.length < 1 || mediaData.every((entry) => entry.dataEnd === entry.dataStart)) {
+    throw new Error('MP4 contains no media data');
+  }
+  const movieChildren = childBoxes(bytes, moov, budget);
+  const movieTiming = fullBoxTiming(bytes, exactlyOne(movieChildren, 'mvhd', 'movie header'), 'movie header');
+  if (movieTiming.timescale < 1 || movieTiming.duration < 1) throw new Error('MP4 movie timing is invalid');
+  const tracks = movieChildren
+    .filter((entry) => entry.type === 'trak')
+    .map((entry) => parseTrack(bytes, entry, budget));
+  const videoTracks = tracks.filter((track) => track.handler === 'vide');
+  const audioTracks = tracks.filter((track) => track.handler === 'soun');
+  if (videoTracks.length !== 1) throw new Error('MP4 must contain exactly one video track');
+  if (audioTracks.length !== 0) throw new Error('MP4 must not contain an audio track');
+  const video = videoTracks[0];
+  if (video.codec !== 'avc1' && video.codec !== 'avc3') throw new Error('MP4 video codec is not H.264');
+  if (video.width !== expectedWidth || video.height !== expectedHeight) {
+    throw new Error('MP4 video dimensions do not match the request');
+  }
+  if (video.sampleCount !== expectedFrames) throw new Error('MP4 frame count does not match the request');
+  if (video.duration !== video.sampleDuration) throw new Error('MP4 video duration disagrees with its sample table');
+  const fps = video.sampleCount * video.timescale / video.sampleDuration;
+  if (!Number.isFinite(fps) || Math.abs(fps - expectedFps) > 1e-6) {
+    throw new Error('MP4 video frame rate does not match the request');
+  }
+  const durationSeconds = video.sampleDuration / video.timescale;
+  if (Math.abs(durationSeconds - expectedFrames / expectedFps) > 1 / video.timescale) {
+    throw new Error('MP4 video duration does not match the request');
+  }
+  if (video.presentationDuration !== movieTiming.duration) {
+    throw new Error('MP4 video presentation duration does not match the movie');
+  }
+  const referencedMediaBytes = validateTrackMediaData(bytes, video, mediaData, budget);
+  let availableMediaBytes = 0;
+  for (const entry of mediaData) {
+    availableMediaBytes = safeAdd(
+      availableMediaBytes,
+      entry.dataEnd - entry.dataStart,
+      'available media bytes'
+    );
+  }
+  if (referencedMediaBytes > availableMediaBytes) {
+    throw new Error('MP4 referenced sample data exceeds its media-data payloads');
+  }
+  const presentationDurationSeconds = movieTiming.duration / movieTiming.timescale;
+  if (Math.abs(presentationDurationSeconds - durationSeconds) > 1 / movieTiming.timescale) {
+    throw new Error('MP4 presentation duration does not match the video');
+  }
+  return {
+    videoCodec: video.codec,
+    width: video.width,
+    height: video.height,
+    frameCount: video.sampleCount,
+    fps: expectedFps,
+    durationSeconds,
+    audioTrackCount: 0,
     presentationDurationSeconds
   };
 }

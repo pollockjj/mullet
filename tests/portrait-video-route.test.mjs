@@ -19,11 +19,12 @@ const videoPromptId = '33333333-3333-4333-8333-333333333333';
 const endFramePromptId = '44444444-4444-4444-8444-444444444444';
 const mp4Bytes = buildH264AacMp4Fixture({
   width: 768,
-  height: 1152,
+  height: 768,
   frames: 73,
-  audioTimingEntries: [{ count: 95, delta: 1_024 }]
+  includeAudio: false
 });
-const mp4FiveBytes = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 124 });
+const mp4FiveBytes = buildH264AacMp4Fixture({ width: 768, height: 768, frames: 124, includeAudio: false });
+const audioMp4Bytes = buildH264AacMp4Fixture({ width: 768, height: 768, frames: 73 });
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -42,7 +43,7 @@ function png(width, height, marker = 0) {
 
 function motionRequest(imageSha256, mode = 'i2v', durationSeconds = 3) {
   return {
-    spec: 'mullet_portrait_video_request_v4',
+    spec: 'mullet_portrait_video_request_v5',
     modelTemplate: 'minimax-h3-fl2va-portrait-v1',
     endFrameModelTemplate: mode === 'flf2v_generated' ? 'mage-flow-edit-turbo-4step-v1' : null,
     mode,
@@ -53,7 +54,7 @@ function motionRequest(imageSha256, mode = 'i2v', durationSeconds = 3) {
       portraitSeed: 41,
       portraitGeneratedAt: 17,
       portraitWidth: 768,
-      portraitHeight: 1152,
+      portraitHeight: 768,
       portraitImageSha256: imageSha256,
       portraitSource: {
         conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -63,7 +64,7 @@ function motionRequest(imageSha256, mode = 'i2v', durationSeconds = 3) {
         expression: 'grief'
       }
     },
-    aspectRatio: '2:3',
+    aspectRatio: '1:1',
     durationSeconds
   };
 }
@@ -80,7 +81,7 @@ function capabilityResponse(node) {
     clip_name: [[files.clip, endFiles.clip]],
     type: [['minimax', 'mage']]
   } } } };
-  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, files.audioVae, endFiles.vae]);
+  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, endFiles.vae]);
   if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [files.turboLora]);
   if (node === 'KSampler') return { [node]: { input: { required: {
     sampler_name: [['euler']],
@@ -227,7 +228,7 @@ function fakeComfy() {
       }
       if (url.pathname === '/view') {
         if (url.searchParams.get('filename')?.endsWith('.png')) {
-          const endFrameBytes = png(768, 1152, 1);
+          const endFrameBytes = png(768, 768, 1);
           response.writeHead(200, {
             'content-type': 'image/png',
             'content-length': String(endFrameBytes.byteLength)
@@ -244,7 +245,9 @@ function fakeComfy() {
           return;
         }
         const queuedVideo = state.prompts.findLast((prompt) => prompt.client_id === 'mullet-portrait-video');
-        const videoBytes = queuedVideo?.prompt?.['6']?.inputs?.length === 124 ? mp4FiveBytes : mp4Bytes;
+        const videoBytes = state.mode === 'audio-output'
+          ? audioMp4Bytes
+          : queuedVideo?.prompt?.['6']?.inputs?.length === 124 ? mp4FiveBytes : mp4Bytes;
         response.writeHead(200, {
           'content-type': 'video/mp4',
           'content-length': String(videoBytes.byteLength)
@@ -323,7 +326,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
   appServer = createServer(handlerModule.handler);
   const appBaseUrl = await listen(appServer);
   const routeUrl = `${appBaseUrl}/mullet/api/portrait/video`;
-  const imageBytes = png(768, 1152);
+  const imageBytes = png(768, 768);
   const imageSha256 = sha256(imageBytes);
   const request = motionRequest(imageSha256);
   const post = (body) => fetch(routeUrl, {
@@ -344,7 +347,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(capabilities.endFrameTemplate.id, 'mage-flow-edit-turbo-4step-v1');
     assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
     assert.deepEqual(capabilities.aspectRatios, [
-      { aspectRatio: '2:3', width: 768, height: 1152 }
+      { aspectRatio: '1:1', width: 768, height: 768 }
     ]);
     assert.deepEqual(capabilities.durations, [3, 5]);
     const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
@@ -358,7 +361,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     );
   });
 
-  await context.test('POST uploads exact portrait bytes and proxies the fixed H.264/AAC MP4 with provenance headers', async () => {
+  await context.test('POST uploads exact portrait bytes and proxies the fixed H.264 video-only MP4 with provenance headers', async () => {
     fake.reset();
     const response = await post(formFor(request, imageBytes));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
@@ -369,11 +372,12 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-mullet-prompt-id'), videoPromptId);
     assert.equal(response.headers.get('x-mullet-width'), '768');
-    assert.equal(response.headers.get('x-mullet-height'), '1152');
+    assert.equal(response.headers.get('x-mullet-height'), '768');
     assert.equal(response.headers.get('x-mullet-frames'), '73');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
     assert.equal(response.headers.get('x-mullet-duration-seconds'), '3');
     assert.equal(response.headers.get('x-mullet-encoded-duration-seconds'), String(73 / 24));
+    assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
     assert.equal(response.headers.get('x-mullet-model-template'), 'minimax-h3-fl2va-portrait-v1');
     assert.equal(response.headers.get('x-mullet-video-mode'), 'i2v');
     assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
@@ -394,11 +398,14 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(queued.client_id, 'mullet-portrait-video');
     assert.equal(queued.prompt['5'].inputs.image, `mullet/motion-inputs/${upload.name}`);
     assert.equal(queued.prompt['6'].inputs.width, 768);
-    assert.equal(queued.prompt['6'].inputs.height, 1152);
+    assert.equal(queued.prompt['6'].inputs.height, 768);
     assert.equal(queued.prompt['6'].inputs.length, 73);
     assert.equal(queued.prompt['10'].inputs.noise_seed, seed);
     assert.equal(queued.prompt['15'].inputs.codec, 'auto');
     assert.equal(queued.prompt['14'].inputs.fps, 24);
+    assert.equal(Object.hasOwn(queued.prompt, '4'), false);
+    assert.equal(Object.hasOwn(queued.prompt, '13'), false);
+    assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'audio'), false);
   });
 
   await context.test('POST queues identical first/last-frame loop mode and returns its provenance', async () => {
@@ -442,15 +449,15 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.headers.get('x-mullet-end-frame-model-template'), 'mage-flow-edit-turbo-4step-v1');
     assert.equal(response.headers.get('x-mullet-end-frame-prompt-id'), endFramePromptId);
     assert.equal(response.headers.get('x-mullet-end-frame-width'), '768');
-    assert.equal(response.headers.get('x-mullet-end-frame-height'), '1152');
-    assert.equal(response.headers.get('x-mullet-end-frame-sha256'), sha256(png(768, 1152, 1)));
+    assert.equal(response.headers.get('x-mullet-end-frame-height'), '768');
+    assert.equal(response.headers.get('x-mullet-end-frame-sha256'), sha256(png(768, 768, 1)));
     const videoSeed = Number(response.headers.get('x-mullet-seed'));
     const endFrameSeed = Number(response.headers.get('x-mullet-end-frame-seed'));
     assert.equal(endFrameSeed, videoSeed === Number.MAX_SAFE_INTEGER ? 0 : videoSeed + 1);
 
     assert.equal(fake.state.uploads.length, 2);
     assert.deepEqual(fake.state.uploads[0].bytes, imageBytes);
-    assert.deepEqual(fake.state.uploads[1].bytes, png(768, 1152, 1));
+    assert.deepEqual(fake.state.uploads[1].bytes, png(768, 768, 1));
     assert.equal(fake.state.prompts.length, 2);
     const endFramePrompt = fake.state.prompts[0];
     const videoPrompt = fake.state.prompts[1];
@@ -459,7 +466,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(endFramePrompt.prompt['4'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[0].name}`);
     assert.equal(endFramePrompt.prompt['5'].class_type, 'TextEncodeMageFlowEdit');
     assert.equal(endFramePrompt.prompt['5'].inputs.width, 768);
-    assert.equal(endFramePrompt.prompt['5'].inputs.height, 1152);
+    assert.equal(endFramePrompt.prompt['5'].inputs.height, 768);
     assert.equal(endFramePrompt.prompt['6'].inputs.seed, endFrameSeed);
     assert.deepEqual(endFramePrompt.prompt['8'].inputs.images, ['7', 0]);
     assert.equal(videoPrompt.client_id, 'mullet-portrait-video');
@@ -476,7 +483,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(fake.state.calls.length, 0);
 
     fake.reset();
-    const wrongDimensions = png(768, 1088);
+    const wrongDimensions = png(768, 704);
     assert.equal((await post(formFor(motionRequest(sha256(wrongDimensions)), wrongDimensions))).status, 400);
     assert.equal(fake.state.calls.length, 0);
 
@@ -504,6 +511,12 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
     assert.equal(cancellations.length, 1);
     assert.equal(fake.state.calls.some(({ path }) => path === '/interrupt'), false);
+  });
+
+  await context.test('audio-bearing Comfy output maps to 502', async () => {
+    fake.reset('audio-output');
+    const response = await post(formFor(request, imageBytes));
+    assert.equal(response.status, 502, await response.text());
   });
 
   await context.test('declared oversized MP4 maps to 413 without allocating its body', async () => {

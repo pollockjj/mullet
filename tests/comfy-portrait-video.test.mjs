@@ -33,17 +33,17 @@ const portrait = {
   promptId: '11111111-1111-4111-8111-111111111111',
   seed: 41,
   width: 768,
-  height: 1152,
+  height: 768,
   generatedAt: 17
 };
 
 const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const imageSha256 = await sha256Hex(imageBytes);
 const requests = {
-  i2v: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_I2V),
-  loop: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF),
-  loopFive: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5),
-  generated: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF)
+  i2v: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_I2V),
+  loop: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF),
+  loopFive: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5),
+  generated: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF)
 };
 const input = {
   name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
@@ -59,11 +59,11 @@ const endInput = {
 };
 const mp4 = buildH264AacMp4Fixture({
   width: 768,
-  height: 1152,
+  height: 768,
   frames: 73,
-  audioTimingEntries: [{ count: 95, delta: 1_024 }]
+  includeAudio: false
 });
-const mp4Five = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 124 });
+const mp4Five = buildH264AacMp4Fixture({ width: 768, height: 768, frames: 124, includeAudio: false });
 
 function standardInfo(node, inputName, options, metadata = {}) {
   return { [node]: { input: { required: { [inputName]: [options, metadata] } } } };
@@ -83,7 +83,7 @@ function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, leng
     clip_name: [[files.clip, endFiles.clip]],
     type: [['minimax', 'mage']]
   } } } };
-  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, files.audioVae, endFiles.vae]);
+  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, endFiles.vae]);
   if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [files.turboLora]);
   if (node === 'KSampler') return { [node]: { input: { required: {
     sampler_name: [['euler']],
@@ -116,7 +116,7 @@ test('requires the exact installed H3 FL2VA stack and native first/last-frame in
     return Response.json(capabilityResponse(node));
   };
   const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://comfy');
-  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v4');
+  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v5');
   assert.equal(capabilities.template.id, 'minimax-h3-fl2va-portrait-v1');
   assert.equal(capabilities.endFrameTemplate?.id, 'mage-flow-edit-turbo-4step-v1');
   assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
@@ -165,9 +165,9 @@ test('accepts only a PNG with the exact source IHDR dimensions', () => {
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
   view.setUint32(16, 768, false);
-  view.setUint32(20, 1152, false);
-  assert.doesNotThrow(() => validatePortraitVideoPng(png, 768, 1152));
-  assert.throws(() => validatePortraitVideoPng(png, 864, 1152), /dimensions do not match/);
+  view.setUint32(20, 768, false);
+  assert.doesNotThrow(() => validatePortraitVideoPng(png, 768, 768));
+  assert.throws(() => validatePortraitVideoPng(png, 864, 768), /dimensions do not match/);
 });
 
 async function runMode(selectedRequest, filename, selectedEndInput, outputBytes = mp4) {
@@ -189,17 +189,29 @@ async function runMode(selectedRequest, filename, selectedEndInput, outputBytes 
   return { result, observed, queued: JSON.parse(observed[0].init.body) };
 }
 
-test('queues and validates MiniMax H3 I2V as H.264/AAC MP4', async () => {
+test('queues and validates MiniMax H3 I2V as H.264 video-only MP4', async () => {
   const { result, observed, queued } = await runMode(requests.i2v, 'portrait-motion_00001_.mp4');
   assert.equal(queued.client_id, 'mullet-portrait-video');
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.equal(Object.hasOwn(queued.prompt['6'].inputs, 'last_frame'), false);
   assert.equal(queued.prompt['6'].inputs.length, 73);
+  assert.equal(Object.hasOwn(queued.prompt, '4'), false);
+  assert.equal(Object.hasOwn(queued.prompt, '13'), false);
+  assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'audio'), false);
   assert.equal(queued.prompt['15'].class_type, 'SaveVideo');
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion_00001_.mp4&subfolder=mullet&type=output');
   assert.equal(result.contentType, 'video/mp4');
   assert.equal(result.durationSeconds, 73 / 24);
+  assert.equal(result.audioTracks, 0);
   assert.deepEqual(result.bytes, mp4);
+});
+
+test('rejects every audio-bearing portrait MP4', async () => {
+  const audioMp4 = buildH264AacMp4Fixture({ width: 768, height: 768, frames: 73 });
+  await assert.rejects(
+    runMode(requests.i2v, 'portrait-motion_00002_.mp4', undefined, audioMp4),
+    /must not contain an audio track/
+  );
 });
 
 test('queues the natural loop with the identical first and last H3 frame', async () => {
@@ -238,7 +250,7 @@ test('queues and validates the exact Mage-Flow portrait end-frame PNG', async ()
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
   view.setUint32(16, 768, false);
-  view.setUint32(20, 1152, false);
+  view.setUint32(20, 768, false);
   const fetcher = async (url, init) => {
     const value = String(url);
     observed.push({ url: value, init });
