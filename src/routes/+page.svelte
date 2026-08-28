@@ -3150,7 +3150,7 @@
 </script>
 
 <svelte:head>
-  <title>MULLET · Local scenario workbench</title>
+  <title>MULLET · {conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Personal Assistant' : 'Local scenario workbench'}</title>
 </svelte:head>
 
 <div class="shell">
@@ -3169,9 +3169,11 @@
   </header>
 
   <main>
-    <aside>
-      <div class:active={activeCard || generatedPortraitUrl} class:generated={expressionsEnabled && generatedPortraitUrl} class="portrait">
-        {#if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
+    <aside class:assistant-mode={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}>
+      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || generatedPortraitUrl} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl} class="portrait">
+        {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+          <span class="initial">A</span>
+        {:else if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
           <video src={generatedPortraitVideoUrl} autoplay muted loop playsinline aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}></video>
           <span class="portrait-status">{portraitVideoBusy ? 'Animating…' : generatedPortrait?.source.expression}</span>
         {:else if expressionsEnabled && generatedPortraitUrl}
@@ -3185,7 +3187,14 @@
           <span>Import a SillyTavern<br />JSON or PNG card</span>
         {/if}
       </div>
-      {#if activeCard}
+      {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+        <div class="scenario">
+          <span class="eyebrow">Active mode</span>
+          <strong>Personal Assistant</strong>
+          <p>A neutral local Gemma channel for planning, drafting, organizing, and analysis. Character cards, fiction lore, expressions, portraits, and scene generators are isolated from this conversation.</p>
+          <div class="card-facts"><span>Local model</span><span>No external tools</span></div>
+        </div>
+      {:else if activeCard}
         <div class="scenario">
           <span class="eyebrow">{isScenarioCard(activeCard) ? 'Active scenario' : `Active character · V${activeCard.version}`}</span>
           <strong>{activeCard.data.name}</strong>
@@ -3202,6 +3211,21 @@
           <p>The clean model channel is active. Load a V1, V2, or V3 character card to condition it.</p>
         </div>
       {/if}
+      <section class="mode-picker" aria-label="Conversation mode">
+        <span class="eyebrow">Workspace mode</span>
+        <div>
+          <button
+            class:active={conversationMode === CONVERSATION_MODE_FICTION}
+            on:click={() => void startFictionWorkspace()}
+            disabled={streaming || conversationMode === CONVERSATION_MODE_FICTION}
+          >Fiction</button>
+          <button
+            class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+            on:click={() => void startPersonalAssistant()}
+            disabled={streaming || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+          >Assistant</button>
+        </div>
+      </section>
       <input
         class="file-input"
         bind:this={cardInput}
@@ -3677,7 +3701,9 @@
           disabled={streaming}
         ></textarea>
       </label>
-      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || messages.length === 0}>Clear conversation</button>
+      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || messages.length === 0}>
+        {conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Reset assistant chat' : 'Clear conversation'}
+      </button>
     </aside>
 
     <section class="chat" aria-label="Conversation">
@@ -3685,8 +3711,8 @@
         {#if messages.length === 0}
           <div class="empty">
             <span class="eyebrow">Real local model · clean channel</span>
-            <h2>Start the story.</h2>
-            <p>Talk directly to the local model, or import a SillyTavern-compatible character card from the left.</p>
+            <h2>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'What are we working on?' : 'Start the story.'}</h2>
+            <p>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Plan, organize, draft, or analyze with a neutral local assistant. This first slice does not claim external tools or actions.' : 'Talk directly to the local model, or import a SillyTavern-compatible character card from the left.'}</p>
             <div class="starters">
               {#each starters as starter}
                 <button on:click={() => chooseStarter(starter)}>{starter}</button>
@@ -3696,9 +3722,9 @@
         {:else}
           {#each messages as message, messageIndex}
             <article class:assistant={message.role === 'assistant'}>
-              <span class="speaker">{message.role === 'user' ? 'You' : activeCard?.data.name ?? data.model}</span>
+              <span class="speaker">{message.role === 'user' ? 'You' : conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Assistant' : activeCard?.data.name ?? data.model}</span>
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
-              {#if inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
+              {#if conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
                 <figure
                   class:stale={inlineSceneApplies && (!inlineSceneCurrent || (inlineSceneMotionEnabled && Boolean(generatedInlineSceneVideo) && !inlineSceneVideoCurrent))}
                   class="scene-card"
@@ -3741,7 +3767,7 @@
           <textarea
             bind:value={draft}
             on:keydown={composerKeydown}
-            placeholder="Write the next turn…"
+            placeholder={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Ask, plan, or assign something…' : 'Write the next turn…'}
             rows="2"
             disabled={streaming}
             aria-label="Message"
@@ -3752,7 +3778,7 @@
             <button
               class="send"
               on:click={send}
-              disabled={!draft.trim() || !lorePersistenceReady || !livingHistoryReadyForChat(livingHistoryEnabled, livingHistoryPersistenceReady)}
+              disabled={!draft.trim() || !lorePersistenceReady || !livingHistoryReadyForChat(conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled, livingHistoryPersistenceReady)}
             >Send</button>
           {/if}
         </div>
@@ -3797,6 +3823,13 @@
   .dot.live { background: #e7aa61; animation: pulse 1s infinite alternate; }
   main { min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
   aside { min-height: 0; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid #302c28; background: rgba(15,14,13,.55); }
+  aside.assistant-mode > .card-actions,
+  aside.assistant-mode > .scenario-picker,
+  aside.assistant-mode > .expression-panel,
+  aside.assistant-mode > .portrait-panel,
+  aside.assistant-mode > .lore-panel,
+  aside.assistant-mode > .persona-field { display: none; }
+  aside.assistant-mode .portrait { aspect-ratio: 3 / 1; min-height: 96px; }
   .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
   .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
@@ -3824,6 +3857,11 @@
   .scenario-picker button { padding: 8px; border: 1px solid #875f39; border-radius: 8px; color: #e8c28e; background: #2a2118; font-size: 10px; font-weight: 700; cursor: pointer; }
   .scenario-picker button:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }
   .scenario-picker button:disabled { opacity: .4; cursor: default; }
+  .mode-picker { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid #34302b; border-bottom: 1px solid #34302b; }
+  .mode-picker > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .mode-picker button { padding: 8px; border: 1px solid #494139; border-radius: 8px; color: #a79e94; background: #191613; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .mode-picker button.active { border-color: #6d966f; color: #d9efdc; background: #1a261c; }
+  .mode-picker button:disabled { cursor: default; opacity: 1; }
   .expression-panel { display: grid; gap: 9px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
   .expression-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .expression-heading > div { min-width: 0; display: grid; gap: 4px; }
