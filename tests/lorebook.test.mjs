@@ -163,17 +163,17 @@ test('implements all four SillyTavern selective-key logic modes', async () => {
   assert.deepEqual(complete.activated.map((entry) => entry.name), ['AND_ANY', 'AND_ALL']);
 });
 
-test('supports slash regex, canonical regex, invalid regex, and card macros', async () => {
+test('treats only slash-notation keys as regex even when Character Book use_regex is true', async () => {
   const book = nativeBook([
     nativeEntry({ uid: 0, comment: 'Slash', key: ['/liber[a-z]+/i'] }),
-    nativeEntry({ uid: 1, comment: 'Canonical regex', key: ['danger\\d+'], use_regex: true }),
-    nativeEntry({ uid: 2, comment: 'Invalid regex', key: ['['], use_regex: true }),
+    nativeEntry({ uid: 1, comment: 'Literal dot', key: ['.'], use_regex: true }),
+    nativeEntry({ uid: 2, comment: 'Literal C++', key: ['C++'], use_regex: true }),
     nativeEntry({ uid: 3, comment: 'Macro', key: ['{{char}}'], content: '{{char}} knows {{user}}.' }),
     nativeEntry({ uid: 4, comment: 'Escaped slash', key: ['/a\\/b/i'] }),
     nativeEntry({ uid: 5, comment: 'All flags', key: ['/.*alpha/gimsuy'] }),
     nativeEntry({ uid: 6, comment: 'Invalid slash is plaintext', key: ['/[/'] })
   ]);
-  const result = await scanLorebooks([book], history('Avon found Liberator, danger7, a/b, alpha, and /[/'), {}, {
+  const result = await scanLorebooks([book], history('Avon found Liberator, C++, a/b, alpha, and /[/'), {}, {
     assistantName: 'Avon',
     userName: 'John',
     regexTest: directRegexTest
@@ -181,7 +181,7 @@ test('supports slash regex, canonical regex, invalid regex, and card macros', as
 
   assert.deepEqual(result.activated.map((entry) => entry.name), [
     'Slash',
-    'Canonical regex',
+    'Literal C++',
     'Macro',
     'Escaped slash',
     'All flags',
@@ -326,7 +326,15 @@ test('groups same-depth same-role entries and wraps author-note lore around the 
   ]);
   const result = await scanLorebooks([book], [], { recursive: false });
   assert.deepEqual(result.depth, [{ depth: 2, role: 0, content: 'LOW\nHIGH' }]);
-  const injected = injectLoreContext([{ role: 'user', content: 'HISTORY' }], result, { prompt: 'NOTE', depth: 1, role: 2 });
+  const offCadence = injectLoreContext([{ role: 'user', content: 'HISTORY' }], result, {
+    enabled: true, interval: 2, prompt: 'NOTE', depth: 1, role: 2
+  });
+  assert.doesNotMatch(offCadence.map((message) => message.content).join('\n'), /TOP|NOTE|BOTTOM/);
+  const injected = injectLoreContext([
+    { role: 'user', content: 'HISTORY ONE' },
+    { role: 'assistant', content: 'REPLY' },
+    { role: 'user', content: 'HISTORY TWO' }
+  ], result, { enabled: true, interval: 2, prompt: 'NOTE', depth: 1, role: 2 });
   assert.deepEqual(injected.find((message) => message.role === 'assistant'), { role: 'assistant', content: 'TOP\nNOTE\nBOTTOM' });
 });
 
@@ -368,6 +376,12 @@ test('scans persona, character depth prompt, and explicit scan injections only w
     scanInjections: ['A quiet signal is active.']
   });
   assert.deepEqual(result.activated.map((entry) => entry.name), ['Persona', 'Depth prompt', 'Injection']);
+  const depthZero = await scanLorebooks([book], [], { scanDepth: 0, recursive: false }, {
+    personaDescription: 'A pilot newly aboard the ship.',
+    characterDepthPrompt: 'Show private doubt.',
+    scanInjections: ['A quiet signal is active.']
+  });
+  assert.deepEqual(depthZero.activated, []);
 });
 
 test('applies inclusive and exclusive character-name and tag filters', async () => {
@@ -379,21 +393,28 @@ test('applies inclusive and exclusive character-name and tag filters', async () 
     }
   });
   const book = nativeBook([
-    nativeEntry({ uid: 0, comment: 'Name include', constant: true, characterFilter: { names: ['Blake'], tags: [], isExclude: false } }),
-    nativeEntry({ uid: 1, comment: 'Tag include', constant: true, characterFilter: { names: [], tags: ['Liberator crew'], isExclude: false } }),
+    nativeEntry({ uid: 0, comment: 'Name include', constant: true, characterFilter: { names: ['Blake.png'], tags: [], isExclude: false } }),
+    nativeEntry({ uid: 1, comment: 'Tag include', constant: true, characterFilter: { names: [], tags: ['crew-tag-id'], isExclude: false } }),
     nativeEntry({ uid: 2, comment: 'Name exclude', constant: true, characterFilter: { names: ['Blake'], tags: [], isExclude: true } }),
-    nativeEntry({ uid: 3, comment: 'Other include', constant: true, characterFilter: { names: ['Servalan'], tags: [], isExclude: false } })
+    nativeEntry({ uid: 3, comment: 'Other include', constant: true, characterFilter: { names: ['Servalan.png'], tags: [], isExclude: false } }),
+    nativeEntry({ uid: 4, comment: 'Both dimensions required', constant: true, characterFilter: { names: ['Blake.png'], tags: ['federation-tag-id'], isExclude: false } }),
+    nativeEntry({ uid: 5, comment: 'Either exclusion rejects', constant: true, characterFilter: { names: ['Servalan.png'], tags: ['crew-tag-id'], isExclude: true } })
   ]);
-  const result = await scanLorebooks([book], [], { recursive: false }, { card });
+  const result = await scanLorebooks([book], [], { recursive: false }, {
+    card,
+    characterFilterNames: ['Blake.png'],
+    characterTags: ['crew-tag-id']
+  });
   assert.deepEqual(result.activated.map((entry) => entry.name), ['Name include', 'Tag include']);
 });
 
 test('minimum activations expands only the global scan depth and excludes recursion text during expansion', async () => {
   const book = nativeBook([
     nativeEntry({ uid: 0, comment: 'Recent', key: ['recent'], content: 'recursion-only-key' }),
-    nativeEntry({ uid: 1, comment: 'Older', key: ['older'], content: 'OLDER' }),
+    nativeEntry({ uid: 1, comment: 'Older', key: ['older'], content: 'OLDER', excludeRecursion: true }),
     nativeEntry({ uid: 2, comment: 'Must not use recursion', key: ['recursion-only-key'], content: 'BAD' }),
-    nativeEntry({ uid: 3, comment: 'Fixed depth', key: ['older'], scanDepth: 1, content: 'FIXED' })
+    nativeEntry({ uid: 3, comment: 'Fixed depth', key: ['older'], scanDepth: 1, content: 'FIXED' }),
+    nativeEntry({ uid: 4, comment: 'Delayed is recursion-only', key: ['older'], delayUntilRecursion: 1, content: 'DELAYED' })
   ]);
   const result = await scanLorebooks([book], history('older', 'middle', 'recent'), {
     scanDepth: 1,
@@ -402,6 +423,15 @@ test('minimum activations expands only the global scan depth and excludes recurs
     recursive: false
   });
   assert.deepEqual(result.activated.map((entry) => entry.name), ['Recent', 'Older']);
+});
+
+test('advances open delayed-recursion levels even when global recursive scanning is disabled', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Level one', key: ['seed'], delayUntilRecursion: 1, content: 'ONE' }),
+    nativeEntry({ uid: 1, comment: 'Level two', key: ['seed'], delayUntilRecursion: 2, content: 'TWO' })
+  ]);
+  const result = await scanLorebooks([book], history('seed'), { recursive: false });
+  assert.deepEqual(result.activated.map((entry) => entry.name), ['Level one', 'Level two']);
 });
 
 test('imports NovelAI naidata from a PNG lorebook', () => {

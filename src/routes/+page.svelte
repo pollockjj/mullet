@@ -36,6 +36,7 @@
   let noticeMessage = '';
   let tokenLimit = data.defaultMaxTokens;
   let activeCard: ImportedCharacterCard | null = null;
+  let cardSourceIdentifier = '';
   let portraitDataUrl = '';
   let embeddedLorebook: ImportedLorebook | null = null;
   let importedLorebooks: ImportedLorebook[] = [];
@@ -56,6 +57,7 @@
   const messagesStorageKey = 'mullet.checkpoint-one.messages';
   const cardStorageKey = 'mullet.active-character-card';
   const portraitStorageKey = 'mullet.active-character-portrait';
+  const cardSourceIdentifierStorageKey = 'mullet.active-character-source';
   const lorebookStorageKey = 'mullet.active-lorebook';
   const loreEnabledStorageKey = 'mullet.lorebook-enabled';
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
@@ -88,12 +90,14 @@
     if (savedCard) {
       try {
         activeCard = normalizeCharacterCard(JSON.parse(savedCard));
+        cardSourceIdentifier = localStorage.getItem(cardSourceIdentifierStorageKey) ?? '';
         portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
         if (messages.length === 0) messages = freshConversation();
       } catch {
         localStorage.removeItem(cardStorageKey);
         localStorage.removeItem(portraitStorageKey);
+        localStorage.removeItem(cardSourceIdentifierStorageKey);
       }
     }
 
@@ -186,6 +190,8 @@
     localStorage.setItem(cardStorageKey, JSON.stringify(activeCard.raw));
     if (portraitDataUrl) localStorage.setItem(portraitStorageKey, portraitDataUrl);
     else localStorage.removeItem(portraitStorageKey);
+    if (cardSourceIdentifier) localStorage.setItem(cardSourceIdentifierStorageKey, cardSourceIdentifier);
+    else localStorage.removeItem(cardSourceIdentifierStorageKey);
   }
 
   async function scrollToLatest() {
@@ -244,6 +250,7 @@
       const seedGreeting = messages.length === 0 || replaceOpeningGreeting;
 
       activeCard = imported;
+      cardSourceIdentifier = file.name;
       portraitDataUrl = nextPortrait;
       embeddedLorebook = embeddedLoreFromCard(imported);
       lastLoreActivations = null;
@@ -266,12 +273,14 @@
     if (streaming) return;
     const removedName = activeCard?.data.name;
     activeCard = null;
+    cardSourceIdentifier = '';
     portraitDataUrl = '';
     embeddedLorebook = null;
     lastLoreActivations = null;
     lastLoreBudget = 0;
     localStorage.removeItem(cardStorageKey);
     localStorage.removeItem(portraitStorageKey);
+    localStorage.removeItem(cardSourceIdentifierStorageKey);
     noticeMessage = removedName ? `${removedName} removed; conversation retained.` : '';
   }
 
@@ -366,6 +375,7 @@
 
   function persistTokenLimit() {
     if (browser) localStorage.setItem('mullet.response-token-limit', String(tokenLimit));
+    lastLoreBudget = 0;
   }
 
   function stop() {
@@ -393,6 +403,8 @@
         characterCard: activeCard?.raw ?? null,
         userName: 'You',
         personaDescription,
+        characterFilterNames: cardSourceIdentifier ? [cardSourceIdentifier] : [],
+        characterTagIds: [],
         loreEnabled,
         lorebooks: loreEnabled
           ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
@@ -612,7 +624,7 @@
           </div>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={persistLoreSettings} disabled={streaming} /> Recursive scanning</label>
           <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={persistLoreSettings} disabled={streaming} /> Whole-word matching</label>
-          <small>{lastLoreBudget || Math.round(loreSettings.budgetPercent * loreSettings.maxContextTokens / 100)}-token budget · server tokenizer</small>
+          <small>{lastLoreBudget || Math.round(loreSettings.budgetPercent * Math.max(1, loreSettings.maxContextTokens - tokenLimit) / 100)}-token budget · server tokenizer</small>
         </details>
       </section>
       <label class="persona-field">

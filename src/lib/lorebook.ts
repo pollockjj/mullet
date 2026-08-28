@@ -106,12 +106,16 @@ export type LoreDepthInjection = {
 };
 
 export type AuthorNoteSettings = {
+  enabled: boolean;
+  interval: number;
   prompt: string;
   depth: number;
   role: 0 | 1 | 2;
 };
 
 export const DEFAULT_AUTHOR_NOTE_SETTINGS: AuthorNoteSettings = Object.freeze({
+  enabled: true,
+  interval: 1,
   prompt: '',
   depth: 4,
   role: 0
@@ -631,6 +635,7 @@ function scanText(
   options: ScanOptions
 ): string {
   const depth = Math.max(0, Math.min(1000, Math.trunc(entry.scanDepth ?? settings.scanDepth + scanDepthSkew)));
+  if (depth === 0) return '';
   const buffer = historyNewestFirst.slice(0, depth);
   const card = options.card;
   if (entry.matchPersonaDescription) buffer.push(options.personaDescription ?? '');
@@ -785,7 +790,7 @@ export async function scanLorebooks(
       scanDepthSkew += 1;
       nextScanState = 'min_activations';
     }
-    if (!nextScanState && settings.recursive && !budgetOverflowed && recursionDelayLevels.length > 0) {
+    if (!nextScanState && !budgetOverflowed && recursionDelayLevels.length > 0) {
       currentRecursionDelayLevel = recursionDelayLevels.shift() ?? currentRecursionDelayLevel;
       nextScanState = 'recursion';
     }
@@ -860,11 +865,19 @@ export function injectLoreContext(
   result: LoreScanResult,
   authorNoteSettings: AuthorNoteSettings = DEFAULT_AUTHOR_NOTE_SETTINGS
 ): ChatMessage[] {
-  const authorNote = [
-    ...result.authorNoteBefore,
-    authorNoteSettings.prompt,
-    ...result.authorNoteAfter
-  ].filter(Boolean).join('\n');
+  const interval = Number.isInteger(authorNoteSettings.interval) ? authorNoteSettings.interval : 1;
+  const userMessageCount = history.filter((message) => message.role === 'user').length;
+  const authorNoteFires = authorNoteSettings.enabled !== false
+    && interval > 0
+    && userMessageCount > 0
+    && (interval === 1 || userMessageCount % interval === 0);
+  const authorNote = authorNoteFires
+    ? [
+      ...result.authorNoteBefore,
+      authorNoteSettings.prompt,
+      ...result.authorNoteAfter
+    ].filter(Boolean).join('\n')
+    : '';
   const depth = authorNote
     ? [...result.depth, { depth: authorNoteSettings.depth, role: authorNoteSettings.role, content: authorNote }]
     : result.depth;

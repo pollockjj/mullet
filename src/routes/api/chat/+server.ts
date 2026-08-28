@@ -56,6 +56,14 @@ function validateMessages(value: unknown): ChatMessage[] {
   });
 }
 
+function validateStringArray(value: unknown, name: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 100 || !value.every((item) => typeof item === 'string' && item.length <= 500)) {
+    throw error(400, `${name} must be an array of at most 100 strings, each at most 500 characters`);
+  }
+  return value;
+}
+
 export const POST: RequestHandler = async ({ request, fetch }) => {
   const body = await request.json().catch(() => {
     throw error(400, 'request body must be JSON');
@@ -72,6 +80,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (typeof personaDescription !== 'string' || personaDescription.length > 100_000) {
     throw error(400, 'personaDescription must be a string of at most 100000 characters');
   }
+  const characterFilterNames = validateStringArray(body?.characterFilterNames, 'characterFilterNames');
+  const characterTagIds = validateStringArray(body?.characterTagIds, 'characterTagIds');
   let tokenLimit: number;
   try {
     tokenLimit = resolveTokenLimit(body?.maxTokens, runtime.maxTokens, runtime.defaultMaxTokens);
@@ -128,6 +138,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
             assistantName: runtime.modelId,
             personaDescription,
             characterDepthPrompt: characterCard ? characterDepthPrompt(characterCard, userName.trim())?.content ?? '' : '',
+            characterFilterNames,
+            characterTags: characterTagIds,
             tokenCount: (content) => countModelTokens(fetch, runtime.modelBaseUrl, content, request.signal),
             regexTest: (source, flags, haystack) => regexSandbox.test(source, flags, haystack),
             generationTrigger: 'normal'
