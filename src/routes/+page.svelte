@@ -28,6 +28,19 @@
   import { extractPngCharacterCard, MAX_CHARACTER_CARD_PNG_BYTES } from '$lib/png-character-card';
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
+  import {
+    buildExpressionSidecarRequest,
+    emptySidecarState,
+    expressionResultMatchesRequest,
+    isSidecarConversationId,
+    normalizeExpressionSidecarResult,
+    normalizeSidecarState,
+    withExpressionSidecarResult,
+    type ExpressionSidecarRequest,
+    type ExpressionSidecarResult,
+    type SidecarState
+  } from '$lib/sidecar';
+  import { loadStoredSidecarState, saveStoredSidecarState } from '$lib/sidecar-storage';
   import { serializeChatRequest } from '$lib/chat-request-size';
   import {
     isScenarioCard,
@@ -68,6 +81,17 @@
   let selectedScenarioId = '';
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let scenarioLoading = false;
+  let conversationId = '';
+  let expressionsEnabled = false;
+  let sidecarState: SidecarState | null = null;
+  let expressionSnapshot: ExpressionSidecarRequest | null = null;
+  let expressionResult: ExpressionSidecarResult | null = null;
+  let expressionCurrent = false;
+  let sidecarPersistenceReady = false;
+  let sidecarPersistenceAvailable = true;
+  let sidecarBusy = false;
+  let sidecarError = '';
+  let sidecarController: AbortController | null = null;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
@@ -82,10 +106,15 @@
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
   const personaDescriptionStorageKey = 'mullet.persona-description';
   const loreTimedStateStorageKey = 'mullet.lore-timed-state';
+  const conversationIdStorageKey = 'mullet.conversation-id';
+  const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: activeLorebooks = combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard));
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
+  $: expressionSnapshot = currentExpressionSnapshot();
+  $: expressionResult = sidecarState?.channels.expression ?? null;
+  $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -145,8 +174,107 @@
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
+    const savedConversationId = localStorage.getItem(conversationIdStorageKey);
+    conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
+    localStorage.setItem(conversationIdStorageKey, conversationId);
+    sidecarState = emptySidecarState(conversationId);
+    expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
+    void restoreSidecarState();
     void loadScenarioCatalog();
   });
+
+  function currentExpressionSnapshot(): ExpressionSidecarRequest | null {
+    if (!conversationId) return null;
+    try {
+      return buildExpressionSidecarRequest(conversationId, messages);
+    } catch {
+      return null;
+    }
+  }
+
+  function disableSidecarPersistence(cause: unknown) {
+    sidecarPersistenceAvailable = false;
+    expressionsEnabled = false;
+    if (browser) localStorage.setItem(expressionsEnabledStorageKey, 'false');
+    sidecarError = cause instanceof Error ? cause.message : 'Expression sidecar persistence failed.';
+  }
+
+  async function restoreSidecarState() {
+    try {
+      const stored = await loadStoredSidecarState();
+      if (stored) {
+        const normalized = normalizeSidecarState(stored);
+        if (normalized.conversationId === conversationId) sidecarState = normalized;
+        else await saveStoredSidecarState(emptySidecarState(conversationId));
+      } else {
+        await saveStoredSidecarState(emptySidecarState(conversationId));
+      }
+    } catch (cause) {
+      disableSidecarPersistence(cause);
+    } finally {
+      sidecarPersistenceReady = true;
+    }
+  }
+
+  async function resetSidecarForConversation() {
+    sidecarController?.abort();
+    conversationId = crypto.randomUUID();
+    localStorage.setItem(conversationIdStorageKey, conversationId);
+    sidecarState = emptySidecarState(conversationId);
+    sidecarError = '';
+    if (!sidecarPersistenceAvailable) return;
+    try {
+      await saveStoredSidecarState(sidecarState);
+    } catch (cause) {
+      disableSidecarPersistence(cause);
+    }
+  }
+
+  function persistExpressionsEnabled() {
+    if (!sidecarPersistenceReady || !sidecarPersistenceAvailable) expressionsEnabled = false;
+    localStorage.setItem(expressionsEnabledStorageKey, String(expressionsEnabled));
+    sidecarError = '';
+    if (expressionsEnabled && expressionSnapshot) void determineExpression();
+  }
+
+  async function determineExpression() {
+    const snapshot = currentExpressionSnapshot();
+    if (!snapshot || streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !sidecarState) return;
+    sidecarBusy = true;
+    sidecarError = '';
+    sidecarController = new AbortController();
+    try {
+      const response = await fetch(`${base}/api/sidecar`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(snapshot),
+        signal: sidecarController.signal
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = payload && typeof payload.message === 'string' ? payload.message : `Expression sidecar failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      const result = normalizeExpressionSidecarResult(payload);
+      if (!expressionResultMatchesRequest(result, snapshot)) throw new Error('Expression sidecar returned a mismatched source snapshot.');
+      if (result.source.conversationId !== conversationId) return;
+      const nextState = withExpressionSidecarResult(sidecarState, result);
+      try {
+        await saveStoredSidecarState(nextState);
+      } catch (cause) {
+        disableSidecarPersistence(cause);
+        return;
+      }
+      sidecarState = nextState;
+    } catch (cause) {
+      if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+        sidecarError = cause instanceof Error ? cause.message : 'Expression sidecar failed.';
+      }
+    } finally {
+      sidecarBusy = false;
+      sidecarController = null;
+    }
+  }
 
   async function loadScenarioCatalog() {
     try {
@@ -170,7 +298,7 @@
   }
 
   async function startSelectedScenario() {
-    if (!selectedScenario || streaming || scenarioLoading) return;
+    if (!selectedScenario || streaming || sidecarBusy || scenarioLoading) return;
     errorMessage = '';
     noticeMessage = '';
     scenarioLoading = true;
@@ -202,6 +330,7 @@
       persistCard();
       persistLoreEnabled();
       messages = freshConversation();
+      await resetSidecarForConversation();
       persist();
       noticeMessage = `${selectedScenario.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
       await scrollToLatest();
@@ -296,8 +425,8 @@
     draft = text;
   }
 
-  function clearConversation() {
-    if (streaming) return;
+  async function clearConversation() {
+    if (streaming || sidecarBusy) return;
     messages = freshConversation();
     errorMessage = '';
     noticeMessage = '';
@@ -305,6 +434,7 @@
     lastLoreBudget = 0;
     loreTimedState = emptyLoreTimedState();
     localStorage.removeItem(loreTimedStateStorageKey);
+    await resetSidecarForConversation();
     persist();
   }
 
@@ -353,6 +483,7 @@
       persistCard();
       if (seedGreeting) {
         messages = freshConversation();
+        await resetSidecarForConversation();
         persist();
       }
       noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
@@ -487,7 +618,7 @@
 
   async function send() {
     const content = draft.trim();
-    if (!content || streaming || !lorePersistenceReady) return;
+    if (!content || streaming || sidecarBusy || !lorePersistenceReady) return;
 
     errorMessage = '';
     noticeMessage = '';
@@ -497,6 +628,7 @@
     messages = [...messages, { role: 'user', content }, { role: 'assistant', content: '' }];
     streaming = true;
     controller = new AbortController();
+    let completedResponse = false;
     await scrollToLatest();
 
     try {
@@ -571,6 +703,7 @@
       }
 
       persist();
+      completedResponse = true;
       if (hitTokenLimit) noticeMessage = `Stopped at the ${tokenLimit}-token response limit.`;
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
@@ -584,6 +717,7 @@
       streaming = false;
       controller = null;
       await scrollToLatest();
+      if (completedResponse && expressionsEnabled) void determineExpression();
     }
   }
 
@@ -609,7 +743,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming} class="dot"></span>
+      <span class:live={streaming || sidecarBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
@@ -648,32 +782,61 @@
         type="file"
         accept=".json,.png,application/json,image/png"
         on:change={importCharacterCard}
-        disabled={streaming}
+        disabled={streaming || sidecarBusy}
         aria-label="Choose a character card"
       />
       <div class="card-actions">
-        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming}>
+        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming || sidecarBusy}>
           {activeCard ? 'Replace card' : 'Import card'}
         </button>
         {#if activeCard}
-          <button class="card-button" on:click={removeCharacterCard} disabled={streaming}>Remove</button>
+          <button class="card-button" on:click={removeCharacterCard} disabled={streaming || sidecarBusy}>Remove</button>
         {/if}
       </div>
       <section class="scenario-picker" aria-label="Bundled scenarios">
         <span class="eyebrow">Bundled scenarios</span>
         {#if scenarioCatalog}
-          <select bind:value={selectedScenarioId} disabled={streaming || scenarioLoading} aria-label="Select bundled scenario">
+          <select bind:value={selectedScenarioId} disabled={streaming || sidecarBusy || scenarioLoading} aria-label="Select bundled scenario">
             {#each scenarioCatalog.scenarios as scenario}
               <option value={scenario.id}>{scenario.title}</option>
             {/each}
           </select>
           {#if selectedScenario}<small>{selectedScenario.summary}</small>{/if}
-          <button on:click={() => void startSelectedScenario()} disabled={streaming || scenarioLoading || !selectedScenario}>
+          <button on:click={() => void startSelectedScenario()} disabled={streaming || sidecarBusy || scenarioLoading || !selectedScenario}>
             {scenarioLoading ? 'Loading…' : 'Start scenario'}
           </button>
         {:else}
           <small>Loading bundled scenarios…</small>
         {/if}
+      </section>
+      <section class="expression-panel" aria-label="Expression sidecar">
+        <div class="expression-heading">
+          <div>
+            <span class="eyebrow">Expression sidecar</span>
+            <strong>{expressionResult?.output.expression ?? 'No expression yet'}</strong>
+          </div>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              bind:checked={expressionsEnabled}
+              on:change={persistExpressionsEnabled}
+              disabled={streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable}
+            />
+            <span>{expressionsEnabled ? 'On' : 'Off'}</span>
+          </label>
+        </div>
+        {#if expressionResult}
+          <small class:stale={!expressionCurrent}>{expressionCurrent ? 'Current response' : 'Stale · run again'} · {expressionResult.model}</small>
+        {:else}
+          <small>Classifies the latest assistant response on an isolated model branch.</small>
+        {/if}
+        {#if sidecarError}<div class="sidecar-error" role="alert">{sidecarError}</div>{/if}
+        <button
+          on:click={() => void determineExpression()}
+          disabled={streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !expressionSnapshot}
+        >
+          {sidecarBusy ? 'Determining…' : 'Determine expression'}
+        </button>
       </section>
       <section class="lore-panel" aria-label="Active lorebooks">
         <div class="lore-heading">
@@ -776,7 +939,7 @@
           disabled={streaming}
         ></textarea>
       </label>
-      <button class="clear" on:click={clearConversation} disabled={streaming || messages.length === 0}>Clear conversation</button>
+      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || sidecarBusy || messages.length === 0}>Clear conversation</button>
     </aside>
 
     <section class="chat" aria-label="Conversation">
@@ -811,13 +974,13 @@
             on:keydown={composerKeydown}
             placeholder="Write the next turn…"
             rows="2"
-            disabled={streaming}
+            disabled={streaming || sidecarBusy}
             aria-label="Message"
           ></textarea>
           {#if streaming}
             <button class="stop" on:click={stop}>Stop</button>
           {:else}
-            <button class="send" on:click={send} disabled={!draft.trim() || !lorePersistenceReady}>Send</button>
+            <button class="send" on:click={send} disabled={!draft.trim() || !lorePersistenceReady || sidecarBusy}>Send</button>
           {/if}
         </div>
         <div class="composer-meta">
@@ -884,6 +1047,16 @@
   .scenario-picker button { padding: 8px; border: 1px solid #875f39; border-radius: 8px; color: #e8c28e; background: #2a2118; font-size: 10px; font-weight: 700; cursor: pointer; }
   .scenario-picker button:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }
   .scenario-picker button:disabled { opacity: .4; cursor: default; }
+  .expression-panel { display: grid; gap: 9px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
+  .expression-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .expression-heading > div { min-width: 0; display: grid; gap: 4px; }
+  .expression-heading strong { overflow: hidden; color: #d7d0c7; font-size: 12px; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
+  .expression-panel > small { color: #758c78; font-size: 9px; line-height: 1.4; }
+  .expression-panel > small.stale { color: #9b8066; }
+  .expression-panel > button { padding: 8px; border: 1px solid #49614d; border-radius: 8px; color: #b6d3ba; background: #19221b; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .expression-panel > button:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
+  .expression-panel > button:disabled { opacity: .4; cursor: default; }
+  .sidecar-error { padding: 7px 8px; border: 1px solid #6e3c34; border-radius: 7px; color: #e6b9ae; background: #2c1b18; font-size: 9px; line-height: 1.4; }
   .lore-panel { display: grid; gap: 10px; padding-top: 17px; border-top: 1px solid #34302b; }
   .persona-field { display: grid; gap: 7px; }
   .persona-field textarea { width: 100%; resize: vertical; min-height: 64px; padding: 9px 10px; border: 1px solid #413a33; border-radius: 9px; color: #ded6cc; background: #171513; font-size: 11px; line-height: 1.45; }
