@@ -5,13 +5,14 @@ import {
   type ExpressionSidecarResult
 } from './sidecar.ts';
 
-export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v2' as const;
+export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v3' as const;
+export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v3' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
 export const PORTRAIT_REFERENCE_TEMPLATE_ID = 'mage-flow-edit-turbo-reference-v1' as const;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
-  { id: '2:3', width: 2, height: 3, label: '2:3 fixed portrait' }
+  { id: '1:1', width: 1, height: 1, label: '1:1 fixed expression' }
 ] as const);
 
 export const PORTRAIT_MEGAPIXELS = Object.freeze([0.5, 0.75, 0.9, 1, 1.5, 2] as const);
@@ -108,7 +109,7 @@ export type PortraitRequest = {
 };
 
 export type PortraitCapabilities = {
-  spec: 'mullet_portrait_capabilities_v2';
+  spec: typeof PORTRAIT_CAPABILITIES_SPEC;
   template: typeof Z_IMAGE_TURBO_TEMPLATE;
   referenceTemplate: typeof MAGE_FLOW_EDIT_REFERENCE_TEMPLATE | null;
   aspectRatios: typeof PORTRAIT_ASPECT_RATIOS;
@@ -423,7 +424,7 @@ export function buildMageFlowReferencePortraitWorkflow(request: PortraitRequest,
 }
 
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {
-  if (!isRecord(value) || value.spec !== 'mullet_portrait_capabilities_v2') throw new Error('invalid portrait capabilities');
+  if (!isRecord(value) || value.spec !== PORTRAIT_CAPABILITIES_SPEC) throw new Error('invalid portrait capabilities');
   if (!isRecord(value.template) || value.template.id !== PORTRAIT_TEMPLATE_ID) throw new Error('invalid portrait template');
   if (value.referenceTemplate !== null
     && (!isRecord(value.referenceTemplate) || value.referenceTemplate.id !== PORTRAIT_REFERENCE_TEMPLATE_ID)) {
@@ -433,7 +434,7 @@ export function normalizePortraitCapabilities(value: unknown): PortraitCapabilit
     throw new Error('invalid portrait LoRA inventory');
   }
   return {
-    spec: 'mullet_portrait_capabilities_v2',
+    spec: PORTRAIT_CAPABILITIES_SPEC,
     template: Z_IMAGE_TURBO_TEMPLATE,
     referenceTemplate: value.referenceTemplate === null ? null : MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,

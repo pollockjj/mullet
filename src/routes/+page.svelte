@@ -286,8 +286,8 @@
   let portraitSetting = '';
   let portraitAttire = '';
   let portraitLora = '';
-  const portraitAspectRatio: PortraitAspectRatio = '2:3';
-  let portraitMegapixels: PortraitMegapixels = 0.9;
+  const portraitAspectRatio: PortraitAspectRatio = '1:1';
+  let portraitMegapixels: PortraitMegapixels = 0.5;
   let portraitRequest: PortraitRequest | null = null;
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
@@ -295,7 +295,7 @@
   let portraitMotionEnabled = false;
   let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
   let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
-  let portraitVideoTiming = portraitVideoDimensions('2:3', PORTRAIT_VIDEO_DURATION_SECONDS);
+  let portraitVideoTiming = portraitVideoDimensions('1:1', PORTRAIT_VIDEO_DURATION_SECONDS);
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
@@ -436,7 +436,7 @@
   const portraitSettingStorageKey = 'mullet.portrait-setting';
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
-  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
+  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v2';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
   const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v4';
@@ -505,9 +505,6 @@
     portraitMegapixels
   );
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
-  $: portraitDisplayAspectRatio = expressionsEnabled && generatedPortraitUrl && generatedPortrait
-    ? '2 / 3'
-    : '3 / 4';
   $: portraitVideoRequest = currentPortraitVideoRequest(
     generatedPortrait,
     portraitCurrent,
@@ -3831,7 +3828,7 @@
 
   <main>
     <aside class:assistant-mode={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}>
-      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || generatedPortraitUrl} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl} class="portrait" style:--portrait-aspect-ratio={portraitDisplayAspectRatio}>
+      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || generatedPortraitUrl} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl} class="portrait">
         {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
           <span class="initial">A</span>
         {:else if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
@@ -4581,10 +4578,10 @@
   aside.assistant-mode > .lore-panel,
   aside.assistant-mode > .persona-field { display: none; }
   aside.assistant-mode .portrait { aspect-ratio: 3 / 1; min-height: 96px; }
-  .portrait { aspect-ratio: var(--portrait-aspect-ratio, 3 / 4); flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
+  .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
   .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
-  .portrait.generated { border-color: #49614d; }
+  .portrait.generated { aspect-ratio: 1 / 1; border-color: #49614d; }
   .portrait img, .portrait video { width: 100%; height: 100%; object-fit: cover; }
   .portrait-status { position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border: 1px solid rgba(126,184,141,.65); border-radius: 999px; color: #d9efdd; background: rgba(17,29,20,.82); font: 700 9px/1 ui-monospace, monospace; text-transform: capitalize; backdrop-filter: blur(8px); }
   .portrait-status.stale { border-color: rgba(181,135,84,.65); color: #efd0a8; background: rgba(43,31,20,.82); }

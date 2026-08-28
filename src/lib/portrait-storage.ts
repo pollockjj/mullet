@@ -8,7 +8,7 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v1' as const;
+export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v2' as const;
 
 export type StoredPortrait = {
   spec: typeof STORED_PORTRAIT_SPEC;
@@ -64,10 +64,10 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
   const width = safeInteger(value.width, 'stored portrait width', 16, 8192);
   const height = safeInteger(value.height, 'stored portrait height', 16, 8192);
   const supportedDimensions = PORTRAIT_MEGAPIXELS.some((megapixels) => {
-    const dimensions = portraitDimensions('2:3', megapixels);
+    const dimensions = portraitDimensions('1:1', megapixels);
     return dimensions.width === width && dimensions.height === height;
   });
-  if (!supportedDimensions) throw new Error('stored portrait dimensions are not a supported 2:3 expression size');
+  if (!supportedDimensions) throw new Error('stored portrait dimensions are not a supported 1:1 expression size');
   return {
     spec: STORED_PORTRAIT_SPEC,
     conversationId: value.conversationId,
@@ -104,7 +104,10 @@ export async function loadStoredPortrait(): Promise<unknown | null> {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(ACTIVE_PORTRAIT_KEY);
-      request.onsuccess = () => resolve(request.result ?? null);
+      request.onsuccess = () => {
+        const value = request.result ?? null;
+        resolve(isRecord(value) && value.spec === 'mullet_stored_portrait_v1' ? null : value);
+      };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait read aborted'));
     });

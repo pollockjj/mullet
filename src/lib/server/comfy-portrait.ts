@@ -2,6 +2,7 @@ import {
   PORTRAIT_ASPECT_RATIOS,
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_CAPABILITIES_SPEC,
   MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
   buildMageFlowReferencePortraitWorkflow,
@@ -82,7 +83,7 @@ export async function loadPortraitCapabilities(
     && vaes.includes(MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.vae)
     && referenceNodeInfo.every((info, index) => nodeAvailable(info, referenceNodes[index]));
   return {
-    spec: 'mullet_portrait_capabilities_v2',
+    spec: PORTRAIT_CAPABILITIES_SPEC,
     template: Z_IMAGE_TURBO_TEMPLATE,
     referenceTemplate: referenceReady ? MAGE_FLOW_EDIT_REFERENCE_TEMPLATE : null,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,

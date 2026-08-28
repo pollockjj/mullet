@@ -6,8 +6,8 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v4' as const;
-export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v4' as const;
+export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v5' as const;
+export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v5' as const;
 export const PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
 export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'mage-flow-edit-turbo-4step-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
@@ -30,7 +30,7 @@ export type PortraitVideoModeDefinition = (typeof PORTRAIT_VIDEO_MODES)[number];
 export type PortraitVideoDurationSeconds = (typeof PORTRAIT_VIDEO_DURATIONS)[number];
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '2:3', width: 768, height: 1152 }
+  { aspectRatio: '1:1', width: 768, height: 768 }
 ] as const);
 
 export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({

@@ -12,8 +12,8 @@ import {
   type PortraitVideoRequest
 } from './portrait-video.ts';
 
-export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v4' as const;
-export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v4' as const;
+export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v5' as const;
+export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v5' as const;
 
 export type PortraitVideoEndFrameProvenance = {
   modelTemplate: typeof PORTRAIT_END_FRAME_TEMPLATE_ID;
@@ -202,9 +202,11 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
     value.spec === 'mullet_stored_portrait_video_v1'
     || value.spec === 'mullet_stored_portrait_video_v2'
     || value.spec === 'mullet_stored_portrait_video_v3'
+    || value.spec === 'mullet_stored_portrait_video_v4'
     || value.spec === 'mullet_stored_portrait_video_envelope_v1'
     || value.spec === 'mullet_stored_portrait_video_envelope_v2'
     || value.spec === 'mullet_stored_portrait_video_envelope_v3'
+    || value.spec === 'mullet_stored_portrait_video_envelope_v4'
   )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('video' in value)) {
