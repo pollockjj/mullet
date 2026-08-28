@@ -1,5 +1,6 @@
 import {
   buildAssistantMemoryRequestFromTurn,
+  normalizeAssistantMemoryResult,
   type AssistantMemoryRequest,
   type AssistantMemoryResult
 } from './assistant-memory.ts';
@@ -7,6 +8,7 @@ import {
   normalizeStoredAssistantMemoryPendingTurn,
   type StoredAssistantMemoryPendingTurn
 } from './assistant-memory-storage.ts';
+import { livingHistorySourcesMatch } from './living-history.ts';
 import {
   CONVERSATION_MODE_PERSONAL_ASSISTANT,
   type ConversationMode
@@ -38,6 +40,32 @@ export function assistantMemoryRequestKey(
 ): string {
   if (!request || !pending) return '';
   return `${pending.turnKey}:${request.parentFingerprint}`;
+}
+
+export function assistantMemoryPendingAlreadyCommitted(
+  pending: StoredAssistantMemoryPendingTurn | null,
+  result: AssistantMemoryResult | null
+): boolean {
+  if (!pending || !result) return false;
+  try {
+    const normalizedPending = normalizeStoredAssistantMemoryPendingTurn(pending);
+    const normalizedResult = normalizeAssistantMemoryResult(result);
+    return normalizedPending.memoryId === normalizedResult.memoryId
+      && livingHistorySourcesMatch(normalizedPending.source, normalizedResult.source);
+  } catch {
+    return false;
+  }
+}
+
+export function assistantMemoryInjectionStatusText(
+  messageCount: number,
+  active: boolean | null
+): string {
+  if (active === true) return 'Active stored memory was injected into the last completed chat.';
+  if (active === false) return 'No active stored memory was injected into the last completed chat.';
+  return messageCount === 0
+    ? 'No completed assistant chat yet.'
+    : 'No memory-injection receipt is available for this restored transcript.';
 }
 
 export function assistantMemoryReadyForSend(

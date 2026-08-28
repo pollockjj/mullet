@@ -206,6 +206,8 @@
     type AssistantMemoryResult
   } from '$lib/assistant-memory';
   import {
+    assistantMemoryInjectionStatusText,
+    assistantMemoryPendingAlreadyCommitted,
     assistantMemoryReadyForSend,
     assistantMemoryRequestKey,
     currentAssistantMemoryRequest,
@@ -246,8 +248,11 @@
     WORKSPACE_MAX_MESSAGES,
     createStoredWorkspace,
     loadStoredWorkspace,
+    rollbackFailedWorkspaceTurn,
     saveStoredWorkspace,
+    workspaceCompletedTurnCapacityError,
     workspaceReadyForCompletedTurn
+    , type WorkspaceAssistantMemoryReceipt
   } from '$lib/workspace-state';
   import type { PageData } from './$types';
 
@@ -399,6 +404,7 @@
   let assistantTurnBusy = false;
   let assistantMemoryError = '';
   let lastAssistantMemoryActive: boolean | null = null;
+  let lastAssistantMemorySource: LivingHistorySource | null = null;
   let assistantMemoryGeneration = 0;
   let assistantMemoryController: AbortController | null = null;
   let workspaceBusy = false;
@@ -623,6 +629,12 @@
     : fictionStarters;
 
   onMount(() => {
+    const savedAssistantMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
+    assistantMemoryId = isSidecarConversationId(savedAssistantMemoryId) ? savedAssistantMemoryId : crypto.randomUUID();
+    localStorage.setItem(assistantMemoryIdStorageKey, assistantMemoryId);
+    const savedAssistantMemoryEpoch = localStorage.getItem(assistantMemoryEpochStorageKey);
+    assistantMemoryEpoch = isSidecarConversationId(savedAssistantMemoryEpoch) ? savedAssistantMemoryEpoch : crypto.randomUUID();
+    localStorage.setItem(assistantMemoryEpochStorageKey, assistantMemoryEpoch);
     restoreWorkspaceState();
 
     const savedCard = localStorage.getItem(cardStorageKey);
@@ -669,12 +681,6 @@
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
-    const savedAssistantMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
-    assistantMemoryId = isSidecarConversationId(savedAssistantMemoryId) ? savedAssistantMemoryId : crypto.randomUUID();
-    localStorage.setItem(assistantMemoryIdStorageKey, assistantMemoryId);
-    const savedAssistantMemoryEpoch = localStorage.getItem(assistantMemoryEpochStorageKey);
-    assistantMemoryEpoch = isSidecarConversationId(savedAssistantMemoryEpoch) ? savedAssistantMemoryEpoch : crypto.randomUUID();
-    localStorage.setItem(assistantMemoryEpochStorageKey, assistantMemoryEpoch);
     window.addEventListener('storage', handleAssistantMemoryGenerationChange);
     void restoreAssistantMemory(true);
     const savedLivingHistoryEpoch = localStorage.getItem(livingHistoryEpochStorageKey);
@@ -706,10 +712,31 @@
   });
 
   function restoreWorkspaceState() {
-    const loaded = loadStoredWorkspace(localStorage, crypto.randomUUID());
+    const loaded = loadStoredWorkspace(
+      localStorage,
+      crypto.randomUUID(),
+      assistantMemoryId,
+      assistantMemoryEpoch
+    );
     conversationMode = loaded.workspace.mode;
     conversationId = loaded.workspace.conversationId;
     messages = loaded.workspace.messages;
+    const storedMemory = loaded.workspace.assistantMemory;
+    if (
+      conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+      && storedMemory
+      && storedMemory.memoryId === assistantMemoryId
+      && storedMemory.epoch === assistantMemoryEpoch
+    ) {
+      assistantMemoryPending = storedMemory.pending;
+      lastAssistantMemorySource = storedMemory.lastCompletedChat?.source ?? null;
+      lastAssistantMemoryActive = storedMemory.lastCompletedChat?.active ?? null;
+    } else {
+      assistantMemoryPending = null;
+      lastAssistantMemorySource = storedMemory?.lastCompletedChat?.source ?? null;
+      lastAssistantMemoryActive = storedMemory?.lastCompletedChat?.active ?? null;
+      if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) persist();
+    }
     if (loaded.disposition === 'reset') errorMessage = 'Stored workspace was invalid and was reset.';
   }
 
@@ -2671,13 +2698,24 @@
     try {
       await runStoredAssistantMemoryExclusive(async () => {
         if (!assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) return;
+        const journalPending = assistantMemoryPending;
         const [storedResult, storedPending] = await Promise.all([
           loadStoredAssistantMemory(restoreEpoch, restoreMemoryId),
           loadStoredAssistantMemoryPendingTurn(restoreEpoch, restoreMemoryId)
         ]);
         if (!assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) return;
+        if (journalPending && storedPending && journalPending.turnKey !== storedPending.turnKey) {
+          throw new AssistantMemoryConflictError('The durable workspace and assistant-memory outboxes disagree.');
+        }
+        const recoveredPending = journalPending ?? storedPending;
+        if (
+          recoveredPending
+          && !storedPending
+          && !assistantMemoryPendingAlreadyCommitted(recoveredPending, storedResult)
+        ) await saveStoredAssistantMemoryPendingTurn(recoveredPending);
         assistantMemoryResult = storedResult;
-        assistantMemoryPending = storedPending;
+        assistantMemoryPending = recoveredPending;
+        if (!journalPending && recoveredPending && conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) persist();
       });
     } catch (cause) {
       disableAssistantMemoryPersistence(cause);
@@ -2709,6 +2747,8 @@
     assistantMemoryId = storedMemoryId;
     assistantMemoryResult = null;
     assistantMemoryPending = null;
+    lastAssistantMemorySource = null;
+    lastAssistantMemoryActive = null;
     assistantMemoryError = '';
     assistantMemoryPersistenceAvailable = true;
     void restoreAssistantMemory(true);
@@ -2768,11 +2808,17 @@
         discard: rollbackStoredAssistantMemoryWrite,
         install: (current) => {
           assistantMemoryResult = current;
-          assistantMemoryPending = null;
         },
         exclusive: runStoredAssistantMemoryExclusive
       });
       if (!committed) throw new Error('Assistant memory changed before this turn could commit.');
+      assistantMemoryPending = null;
+      try {
+        persist();
+      } catch (cause) {
+        assistantMemoryPending = selectedPending;
+        throw cause;
+      }
     } catch (cause) {
       if (cause instanceof AssistantMemoryConflictError) {
         assistantMemoryError = cause.message;
@@ -2794,6 +2840,11 @@
   }
 
   async function reconcileAssistantMemoryPending() {
+    if (assistantMemoryPendingAlreadyCommitted(assistantMemoryPending, assistantMemoryResult)) {
+      assistantMemoryPending = null;
+      persist();
+      return;
+    }
     const selectedRequest = currentAssistantMemoryRequest(assistantMemoryId, assistantMemoryPending, assistantMemoryResult);
     const selectedPending = assistantMemoryPending;
     if (!selectedRequest || !selectedPending) return;
@@ -2801,11 +2852,13 @@
   }
 
   async function retryAssistantMemory() {
-    if (assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable) return;
+    if (assistantTurnBusy || streaming || assistantMemoryBusy) return;
     const retryError = assistantMemoryError;
     assistantTurnBusy = true;
     try {
       await runPersonalAssistantTurnExclusive(async () => {
+        restoreWorkspaceState();
+        assistantMemoryPersistenceAvailable = true;
         await restoreAssistantMemory(false);
         if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
           throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
@@ -2825,16 +2878,9 @@
   }
 
   async function persistCompletedAssistantMemoryTurn() {
-    let pending: StoredAssistantMemoryPendingTurn;
+    const pending = assistantMemoryPending;
+    if (!pending) throw new Error('The completed assistant turn lacks its durable workspace outbox.');
     try {
-      const request = buildAssistantMemoryRequest(assistantMemoryId, conversationId, messages, assistantMemoryResult);
-      pending = createStoredAssistantMemoryPendingTurn(
-        assistantMemoryId,
-        assistantMemoryEpoch,
-        request.source,
-        request.turns
-      );
-      assistantMemoryPending = pending;
       await runStoredAssistantMemoryExclusive(async () => {
         await saveStoredAssistantMemoryPendingTurn(pending);
       });
@@ -2851,6 +2897,7 @@
     if (assistantTurnBusy || streaming || assistantMemoryBusy) return;
     if ((assistantMemoryResult || assistantMemoryPending) && !window.confirm('Clear all persistent assistant memory and any pending update?')) return;
     assistantTurnBusy = true;
+    const clearedError = assistantMemoryError;
     try {
       await runPersonalAssistantTurnExclusive(async () => {
         assistantMemoryGeneration += 1;
@@ -2869,6 +2916,9 @@
         assistantMemoryError = '';
         assistantMemoryPersistenceAvailable = true;
         lastAssistantMemoryActive = null;
+        lastAssistantMemorySource = null;
+        persist();
+        if (errorMessage === clearedError) errorMessage = '';
         assistantMemoryPersistenceReady = true;
       });
     } catch (cause) {
@@ -3059,7 +3109,22 @@
 
   function persist() {
     if (!browser) return;
-    const workspace = createStoredWorkspace(conversationMode, conversationId, messages);
+    const lastCompletedChat: WorkspaceAssistantMemoryReceipt | null = (
+      lastAssistantMemorySource && lastAssistantMemoryActive !== null
+    ) ? { source: lastAssistantMemorySource, active: lastAssistantMemoryActive } : null;
+    const workspace = createStoredWorkspace(
+      conversationMode,
+      conversationId,
+      messages,
+      conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+        ? {
+            memoryId: assistantMemoryId,
+            epoch: assistantMemoryEpoch,
+            pending: assistantMemoryPending,
+            lastCompletedChat
+          }
+        : null
+    );
     saveStoredWorkspace(localStorage, workspace);
   }
 
@@ -3157,6 +3222,9 @@
     try {
       conversationMode = nextMode;
       messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+      assistantMemoryPending = null;
+      lastAssistantMemorySource = null;
+      lastAssistantMemoryActive = null;
       errorMessage = '';
       noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
         ? 'Personal Assistant started on an isolated neutral model channel.'
@@ -3194,6 +3262,8 @@
     workspaceBusy = true;
     try {
       messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+      lastAssistantMemorySource = null;
+      lastAssistantMemoryActive = null;
       errorMessage = '';
       noticeMessage = '';
       lastLoreActivations = null;
@@ -3402,8 +3472,9 @@
     const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
     if (browser && fictionMode) reconcileLivingHistoryEpochFromStorage();
     const content = draft.trim();
-    if (content && !workspaceReadyForCompletedTurn(messages.length)) {
-      errorMessage = `This conversation has reached ${WORKSPACE_MAX_MESSAGES} messages. Reset the chat before sending another turn.`;
+    const capacityError = content ? workspaceCompletedTurnCapacityError(messages.length) : null;
+    if (capacityError) {
+      errorMessage = capacityError;
       return;
     }
     if (
@@ -3427,6 +3498,13 @@
       assistantTurnBusy = true;
       try {
         await runPersonalAssistantTurnExclusive(async () => {
+          const selectedConversationId = conversationId;
+          restoreWorkspaceState();
+          if (conversationMode !== selectedConversationMode || conversationId !== selectedConversationId) {
+            throw new Error('The assistant workspace changed in another tab. Review the restored conversation and send again.');
+          }
+          const liveCapacityError = workspaceCompletedTurnCapacityError(messages.length);
+          if (liveCapacityError) throw new Error(liveCapacityError);
           await restoreAssistantMemory(false);
           if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
             throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
@@ -3457,6 +3535,11 @@
 
   async function sendChatTurn(selectedConversationMode: ConversationMode, content: string): Promise<boolean> {
     const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
+    const previousMessages = messages.map((message) => ({ ...message }));
+    const previousDraft = draft;
+    const previousPending = assistantMemoryPending;
+    const previousMemorySource = lastAssistantMemorySource;
+    const previousMemoryActive = lastAssistantMemoryActive;
 
     const outboundMessages = [...messages, { role: 'user' as const, content }];
     const selectedAssistantMemoryBook = fictionMode ? null : assistantMemoryBook;
@@ -3524,6 +3607,7 @@
     streaming = true;
     controller = new AbortController();
     let completedResponse = false;
+    let completedAssistantMemoryActive: boolean | null = null;
     await scrollToLatest();
 
     try {
@@ -3546,9 +3630,9 @@
         if (memoryActive === null || memoryActive !== Boolean(selectedAssistantMemoryBook)) {
           throw new Error('Server response did not confirm the selected assistant-memory projection.');
         }
-        lastAssistantMemoryActive = memoryActive;
+        completedAssistantMemoryActive = memoryActive;
       } else {
-        lastAssistantMemoryActive = null;
+        completedAssistantMemoryActive = null;
       }
 
       lastLoreActivations = readLoreActivations(response.headers.get('x-mullet-lore-entries'));
@@ -3600,6 +3684,22 @@
       }
 
       assertFinalizedChatStream(terminalEventSeen, messages.at(-1)?.content ?? '');
+      if (!fictionMode) {
+        const memoryRequest = buildAssistantMemoryRequest(
+          assistantMemoryId,
+          conversationId,
+          messages,
+          assistantMemoryResult
+        );
+        assistantMemoryPending = createStoredAssistantMemoryPendingTurn(
+          assistantMemoryId,
+          assistantMemoryEpoch,
+          memoryRequest.source,
+          memoryRequest.turns
+        );
+        lastAssistantMemorySource = memoryRequest.source;
+        lastAssistantMemoryActive = completedAssistantMemoryActive;
+      }
       persist();
       completedResponse = true;
       if (hitTokenLimit) noticeMessage = `Stopped at the ${tokenLimit}-token response limit.`;
@@ -3609,8 +3709,17 @@
       } else {
         errorMessage = cause instanceof Error ? cause.message : 'Generation failed.';
       }
-      if (messages.at(-1)?.content === '') messages = messages.slice(0, -1);
-      persist();
+      if (fictionMode) {
+        if (messages.at(-1)?.content === '') messages = messages.slice(0, -1);
+        persist();
+      } else {
+        const rolledBack = rollbackFailedWorkspaceTurn(previousMessages, previousDraft);
+        messages = rolledBack.messages;
+        draft = rolledBack.draft;
+        assistantMemoryPending = previousPending;
+        lastAssistantMemorySource = previousMemorySource;
+        lastAssistantMemoryActive = previousMemoryActive;
+      }
     } finally {
       streaming = false;
       controller = null;
@@ -3741,12 +3850,12 @@
           {#if assistantMemoryError}<div class="sidecar-error" role="alert">{assistantMemoryError}</div>{/if}
           <div class="assistant-memory-actions">
             {#if assistantMemoryPending && !assistantMemoryBusy}
-              <button class="retry" on:click={() => void retryAssistantMemory()} disabled={assistantTurnBusy}>Retry update</button>
+              <button class="retry" on:click={() => void retryAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy}>Retry update</button>
             {/if}
             <button on:click={() => void clearAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy}>Clear memory</button>
           </div>
           <small class:active={lastAssistantMemoryActive === true} class="assistant-memory-fired">
-            {lastAssistantMemoryActive === null ? 'No assistant chat sent yet.' : lastAssistantMemoryActive ? 'Stored memory was injected into the last chat.' : 'The last chat preceded the first stored record.'}
+            {assistantMemoryInjectionStatusText(messages.length, lastAssistantMemoryActive)}
           </small>
         </section>
       {/if}
