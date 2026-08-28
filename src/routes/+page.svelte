@@ -603,7 +603,8 @@
     generation: number,
     portrait: StoredPortrait,
     request: PortraitVideoRequest,
-    key: string
+    key: string,
+    signal?: AbortSignal
   ): boolean {
     const liveRequest = currentPortraitVideoRequest(
       generatedPortrait,
@@ -611,7 +612,8 @@
       portraitImageDigestPromptId,
       portraitImageSha256
     );
-    return generation === portraitVideoGeneration
+    return !signal?.aborted
+      && generation === portraitVideoGeneration
       && portrait.conversationId === conversationId
       && generatedPortrait?.promptId === portrait.promptId
       && generatedPortrait.requestKey === portrait.requestKey
@@ -621,26 +623,34 @@
 
   async function restoreGeneratedPortraitVideo() {
     const generation = portraitVideoGeneration;
+    const restoredRequest = currentPortraitVideoRequest(
+      generatedPortrait,
+      portraitCurrent,
+      portraitImageDigestPromptId,
+      portraitImageSha256
+    );
+    const restoredKey = restoredRequest ? portraitVideoRequestKey(restoredRequest) : '';
     try {
       await restoreStoredPortraitVideo({
         exclusive: runStoredPortraitVideoExclusive,
         load: loadStoredPortraitVideo,
-        isCurrent: () => generation === portraitVideoGeneration && Boolean(generatedPortrait && portraitImageSha256),
-        accepts: (video) => {
+        isCurrent: () => {
           const request = currentPortraitVideoRequest(
             generatedPortrait,
             portraitCurrent,
             portraitImageDigestPromptId,
             portraitImageSha256
           );
-          return Boolean(request && video.requestKey === portraitVideoRequestKey(request));
+          return generation === portraitVideoGeneration
+            && Boolean(restoredRequest && request && portraitVideoRequestKey(request) === restoredKey);
         },
+        accepts: (video) => video.requestKey === restoredKey,
         install: installGeneratedPortraitVideo
       });
     } catch (cause) {
       disablePortraitVideoPersistence(cause);
     } finally {
-      portraitVideoPersistenceReady = true;
+      if (generation === portraitVideoGeneration) portraitVideoPersistenceReady = true;
     }
   }
 
@@ -742,11 +752,20 @@
       }
       const video = await response.blob();
       if (video.type !== 'video/webm' || video.size < 4) throw new Error('Portrait-motion generator returned an invalid video.');
+      const videoBytes = new Uint8Array(await video.arrayBuffer());
+      if (
+        videoBytes[0] !== 0x1a
+        || videoBytes[1] !== 0x45
+        || videoBytes[2] !== 0xdf
+        || videoBytes[3] !== 0xa3
+      ) throw new Error('Portrait-motion generator returned an invalid WebM signature.');
       const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
       const inputImageSha256 = responseHeaderSha256(response, 'x-mullet-input-sha256');
       if (modelTemplate !== selectedRequest.modelTemplate || inputImageSha256 !== selectedRequest.source.portraitImageSha256) {
         throw new Error('Portrait-motion response provenance does not match its request.');
       }
+      const videoSha256 = responseHeaderSha256(response, 'x-mullet-video-sha256');
+      if (await blobSha256(video) !== videoSha256) throw new Error('Portrait-motion response hash does not match its video.');
       const stored = normalizeStoredPortraitVideo({
         spec: STORED_PORTRAIT_VIDEO_SPEC,
         conversationId: selectedRequest.source.conversationId,
@@ -762,14 +781,14 @@
         durationSeconds: responseHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
         generatedAt: Date.now(),
         inputImageSha256,
-        videoSha256: responseHeaderSha256(response, 'x-mullet-video-sha256'),
+        videoSha256,
         video
       });
       await commitStoredPortraitVideo(stored, {
         exclusive: runStoredPortraitVideoExclusive,
         save: saveStoredPortraitVideo,
         rollback: rollbackStoredPortraitVideoWrite,
-        isCurrent: () => portraitVideoSourceIsCurrent(generation, selectedPortrait, selectedRequest, key),
+        isCurrent: () => portraitVideoSourceIsCurrent(generation, selectedPortrait, selectedRequest, key, activeController.signal),
         install: installGeneratedPortraitVideo
       });
     } catch (cause) {
@@ -1833,7 +1852,7 @@
   <main>
     <aside>
       <div class:active={activeCard || generatedPortraitUrl} class:generated={expressionsEnabled && generatedPortraitUrl} class="portrait">
-        {#if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent}
+        {#if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitVideoBusy && !portraitVideoError}
           <video src={generatedPortraitVideoUrl} autoplay muted loop playsinline aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}></video>
           <span class="portrait-status">{portraitVideoBusy ? 'Animating…' : generatedPortrait?.source.expression}</span>
         {:else if expressionsEnabled && generatedPortraitUrl}
@@ -2012,7 +2031,7 @@
               <option value={portraitVideoCapabilities.template.id}>{portraitVideoCapabilities.template.label}</option>
             </select>
           </label>
-          <small>2-second motion span · 49 frames at 24 FPS · looping VP9 WebM</small>
+          <small>49 frames @ 24 FPS · 2-second motion span · looping VP9 WebM</small>
           {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button
