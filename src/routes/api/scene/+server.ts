@@ -45,8 +45,13 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(INLINE_SCENE_IMAGE_TIMEOUT_MS)]);
   try {
     const capabilities = await loadInlineSceneCapabilities(fetch, baseUrl, signal);
-    if (sceneRequest.lora && !capabilities.loras.some((lora) => lora.path === sceneRequest.lora)) {
-      throw error(400, 'The selected inline-scene LoRA is unavailable for this model.');
+    if (sceneRequest.lora) {
+      const currentLora = capabilities.loras.find((lora) => lora.path === sceneRequest.lora?.path);
+      if (
+        !currentLora
+        || currentLora.trigger !== sceneRequest.lora.trigger
+        || currentLora.modelHash !== sceneRequest.lora.modelHash
+      ) throw error(400, 'The selected inline-scene LoRA provenance no longer matches this model.');
     }
     const result = await runComfyInlineScene(fetch, baseUrl, sceneRequest, capabilities, seed, signal);
     const dimensions = inlineSceneDimensions(sceneRequest.aspectRatio, sceneRequest.megapixels);

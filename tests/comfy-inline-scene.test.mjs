@@ -56,10 +56,35 @@ test('loads only metadata-verified Z-Image LoRAs with trigger words', async () =
       return Response.json(info(name));
     }
     assert.equal(parsed.pathname, '/view_metadata/loras');
-    return Response.json({ ss_base_model_version: 'zimage', ss_tag_frequency: '{"subject":{"kristibentler":7}}' });
+    return Response.json({
+      ss_base_model_version: 'zimage',
+      ss_tag_frequency: '{"subject":{"kristibentler":7}}',
+      sshs_model_hash: 'a'.repeat(64)
+    });
   };
   const capabilities = await loadInlineSceneCapabilities(fetcher, 'http://comfy');
-  assert.deepEqual(capabilities.loras, [{ path: 'zimage/kristi6.safetensors', trigger: 'kristibentler' }]);
+  assert.deepEqual(capabilities.loras, [{ path: 'zimage/kristi6.safetensors', trigger: 'kristibentler', modelHash: 'a'.repeat(64) }]);
+});
+
+test('filters one unavailable optional LoRA without disabling base generation', async () => {
+  const fetcher = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname.startsWith('/object_info/')) {
+      const name = decodeURIComponent(parsed.pathname.slice('/object_info/'.length));
+      if (name === 'LoraLoader') return Response.json(node(name, {
+        lora_name: [['zimage/kristi6.safetensors', 'zimage/broken.safetensors']]
+      }));
+      return Response.json(info(name));
+    }
+    if (parsed.searchParams.get('filename') === 'zimage/broken.safetensors') return Response.json({}, { status: 404 });
+    return Response.json({
+      ss_base_model_version: 'zimage',
+      ss_tag_frequency: '{"subject":{"kristibentler":7}}',
+      sshs_model_hash: 'a'.repeat(64)
+    });
+  };
+  const capabilities = await loadInlineSceneCapabilities(fetcher, 'http://comfy');
+  assert.deepEqual(capabilities.loras.map((lora) => lora.path), ['zimage/kristi6.safetensors']);
 });
 
 test('queues the scene namespace and verifies exact output PNG dimensions and hash', async () => {

@@ -78,6 +78,7 @@ function requireOption(options: readonly string[], expected: string, label: stri
 
 function loraTrigger(metadata: unknown, path: string): InlineSceneLora | null {
   if (!isRecord(metadata) || metadata.ss_base_model_version !== 'zimage') return null;
+  if (typeof metadata.sshs_model_hash !== 'string' || !/^[0-9a-f]{64}$/.test(metadata.sshs_model_hash)) return null;
   const raw = metadata.ss_tag_frequency;
   let frequency: unknown = raw;
   if (typeof raw === 'string') {
@@ -97,7 +98,7 @@ function loraTrigger(metadata: unknown, path: string): InlineSceneLora | null {
     }
   }
   const trigger = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? '';
-  return trigger ? { path, trigger } : null;
+  return trigger ? { path, trigger, modelHash: metadata.sshs_model_hash } : null;
 }
 
 export async function loadInlineSceneCapabilities(
@@ -125,9 +126,14 @@ export async function loadInlineSceneCapabilities(
     .filter((path) => path.startsWith(Z_IMAGE_TURBO_SCENE_TEMPLATE.loraPrefix))
     .sort();
   const loras = (await Promise.all(loraPaths.map(async (path) => {
-    const response = await fetcher(endpoint(baseUrl, `/view_metadata/loras?filename=${encodeURIComponent(path)}`), { signal });
-    const metadata = await responseJson(response, 'inline-scene LoRA metadata query');
-    return loraTrigger(metadata, path);
+    try {
+      const response = await fetcher(endpoint(baseUrl, `/view_metadata/loras?filename=${encodeURIComponent(path)}`), { signal });
+      const metadata = await responseJson(response, 'inline-scene LoRA metadata query');
+      return loraTrigger(metadata, path);
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return null;
+    }
   }))).filter((lora): lora is InlineSceneLora => Boolean(lora));
   return {
     spec: 'mullet_inline_scene_capabilities_v1',
