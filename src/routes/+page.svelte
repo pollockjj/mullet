@@ -401,8 +401,7 @@
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
     restorePortraitSettings();
-    void restoreSidecarState();
-    void restoreGeneratedMedia();
+    void restoreExpressionAndGeneratedMedia();
     void loadPortraitGenerator();
     void loadPortraitVideoGenerator();
     void loadScenarioCatalog();
@@ -507,8 +506,8 @@
     }
   }
 
-  async function restoreGeneratedMedia() {
-    await restoreGeneratedPortrait();
+  async function restoreExpressionAndGeneratedMedia() {
+    await Promise.all([restoreSidecarState(), restoreGeneratedPortrait()]);
     await restoreGeneratedPortraitVideo();
   }
 
@@ -532,14 +531,21 @@
   function disablePortraitVideoPersistence(cause: unknown) {
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
+    removeInstalledPortraitVideo();
     portraitVideoPersistenceAvailable = false;
+    portraitVideoPersistenceReady = true;
     portraitMotionEnabled = false;
     if (browser) localStorage.setItem(portraitMotionEnabledStorageKey, 'false');
     portraitVideoError = cause instanceof Error ? cause.message : 'Portrait-motion persistence failed.';
   }
 
-  function clearStoredPortraitVideoLocked() {
-    void runStoredPortraitVideoExclusive(clearStoredPortraitVideo).catch(disablePortraitVideoPersistence);
+  function clearStoredPortraitVideoLocked(generation: number) {
+    portraitVideoPersistenceReady = false;
+    void runStoredPortraitVideoExclusive(clearStoredPortraitVideo)
+      .then(() => {
+        if (generation === portraitVideoGeneration) portraitVideoPersistenceReady = true;
+      })
+      .catch(disablePortraitVideoPersistence);
   }
 
   function beginPortraitVideoSourceChange(preserveStoredMotion: boolean): number {
@@ -552,7 +558,7 @@
     portraitImageDigestPromptId = '';
     portraitImageSha256 = '';
     removeInstalledPortraitVideo();
-    if (!preserveStoredMotion && portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked();
+    if (!preserveStoredMotion && portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
     return portraitVideoGeneration;
   }
 
@@ -565,6 +571,7 @@
       const digest = await blobSha256(portrait.image);
       if (
         generation === portraitVideoGeneration
+        && portrait.conversationId === conversationId
         && generatedPortrait?.promptId === portrait.promptId
         && generatedPortrait.requestKey === portrait.requestKey
       ) {
