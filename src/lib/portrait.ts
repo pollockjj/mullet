@@ -272,7 +272,7 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
     : integer(value.seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
   return {
     spec: PORTRAIT_REQUEST_SPEC,
-    modelTemplate: PORTRAIT_TEMPLATE_ID,
+    modelTemplate: value.modelTemplate,
     source: {
       conversationId: value.source.conversationId,
       messageCount,
