@@ -27,14 +27,14 @@ function stored(overrides = {}) {
         expression: 'grief'
       }
     },
-    modelTemplate: 'wan2.1-i2v-480p-v1',
+    modelTemplate: 'ltx-2.5-i2v-distilled-v1',
     aspectRatio: '2:3',
     promptId: '22222222-2222-4222-8222-222222222222',
     seed: 42,
-    width: 480,
-    height: 720,
-    frames: 33,
-    fps: 16,
+    width: 448,
+    height: 672,
+    frames: 49,
+    fps: 24,
     durationSeconds: 2,
     generatedAt: 18,
     video: new Blob([Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' }),
@@ -45,8 +45,8 @@ function stored(overrides = {}) {
 test('normalizes a provenance-bound WebM without canonical transcript text', () => {
   const result = normalizeStoredPortraitVideo(stored());
   assert.equal(result.video.type, 'video/webm');
-  assert.equal(result.frames, 33);
-  assert.equal(result.fps, 16);
+  assert.equal(result.frames, 49);
+  assert.equal(result.fps, 24);
   assert.equal(JSON.stringify(result).includes('assistant'), false);
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });

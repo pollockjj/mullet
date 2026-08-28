@@ -7,50 +7,58 @@ import {
 } from './portrait.ts';
 
 export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v1' as const;
-export const PORTRAIT_VIDEO_TEMPLATE_ID = 'wan2.1-i2v-480p-v1' as const;
+export const PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-i2v-distilled-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;
-export const PORTRAIT_VIDEO_FPS = 16 as const;
-export const PORTRAIT_VIDEO_FRAMES = 33 as const;
+export const PORTRAIT_VIDEO_FPS = 24 as const;
+export const PORTRAIT_VIDEO_FRAMES = 49 as const;
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '2:3', width: 480, height: 720 },
+  { aspectRatio: '2:3', width: 448, height: 672 },
   { aspectRatio: '3:4', width: 480, height: 640 },
   { aspectRatio: '4:5', width: 512, height: 640 },
-  { aspectRatio: '9:16', width: 432, height: 768 }
+  { aspectRatio: '9:16', width: 288, height: 512 }
 ] as const);
 
-export const WAN_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
+export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   id: PORTRAIT_VIDEO_TEMPLATE_ID,
-  label: 'Wan 2.1 I2V 480p',
-  modelFamily: 'wan2.1-i2v',
+  label: 'LTX 2.5 Distilled I2V',
+  modelFamily: 'ltx-2.5-i2v',
   modelFiles: {
-    unet: 'wan2.1_i2v_480p_14B_fp16.safetensors',
-    clip: 'umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-    clipVision: 'clip_vision_h.safetensors',
-    vae: 'wan_2.1_vae.safetensors'
+    unet: 'ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors',
+    clip: 'gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors',
+    videoVae: 'ltx-2.5-video-vae-bf16.safetensors',
+    audioVae: 'ltx-2.5-audio-vae-bf16.safetensors',
+    latentUpscaler: 'ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors'
   },
   requiredNodes: [
     'UNETLoader',
     'CLIPLoader',
-    'CLIPVisionLoader',
     'VAELoader',
     'LoadImageOutput',
-    'CLIPVisionEncode',
     'CLIPTextEncode',
-    'WanImageToVideo',
-    'ModelSamplingSD3',
-    'KSampler',
-    'VAEDecode',
+    'LTXVPreprocess',
+    'LTXVConditioning',
+    'EmptyLTXVLatentVideo',
+    'LTXVImgToVideoInplace',
+    'LTXVEmptyLatentAudio',
+    'LTXVConcatAVLatent',
+    'LTXVSeparateAVLatent',
+    'LTXVDualCFGGuider',
+    'LTXVLatentUpsampler',
+    'LatentUpscaleModelLoader',
+    'RandomNoise',
+    'KSamplerSelect',
+    'ManualSigmas',
+    'SamplerCustomAdvanced',
+    'VAEDecodeTiled',
     'SaveWEBM'
   ],
-  outputNode: '13',
-  multiple: 16,
-  steps: 20,
-  cfg: 6,
-  sampler: 'uni_pc',
-  scheduler: 'simple',
-  shift: 8,
+  outputNode: '31',
+  multiple: 32,
+  sampler: 'euler_ancestral',
+  firstPassSigmas: '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
+  secondPassSigmas: '0.85, 0.7250, 0.4219, 0.0',
   codec: 'vp9',
   crf: 32,
   promptGuide: 'locked head-and-chest portrait camera, restrained natural motion, seamless end pose, no cuts'
@@ -76,7 +84,7 @@ export type PortraitVideoRequest = {
 
 export type PortraitVideoCapabilities = {
   spec: 'mullet_portrait_video_capabilities_v1';
-  template: typeof WAN_PORTRAIT_VIDEO_TEMPLATE;
+  template: typeof LTX25_PORTRAIT_VIDEO_TEMPLATE;
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
   durations: readonly [typeof PORTRAIT_VIDEO_DURATION_SECONDS];
 };
@@ -91,8 +99,15 @@ export type PortraitVideoInputPortrait = {
   generatedAt: number;
 };
 
+export type PortraitOutputReference = {
+  promptId: string;
+  filename: string;
+  subfolder: 'mullet';
+  type: 'output';
+};
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const OUTPUT_IMAGE_PATTERN = /^mullet\/portrait_\d+_\.png$/;
+const OUTPUT_IMAGE_PATTERN = /^portrait_\d+_\.png$/;
 const dimensionMap = new Map(PORTRAIT_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
 
 const NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, cluttered background, camera cuts, camera shake, black frames';
@@ -204,6 +219,12 @@ export function portraitVideoRequestKey(request: PortraitVideoRequest): string {
     normalized.source.portraitRequestKey,
     normalized.source.portraitPromptId,
     normalized.source.portraitGeneratedAt,
+    normalized.source.portraitWidth,
+    normalized.source.portraitHeight,
+    normalized.source.portraitSource.messageCount,
+    normalized.source.portraitSource.messageIndex,
+    normalized.source.portraitSource.fingerprint,
+    normalized.source.portraitSource.expression,
     normalized.modelTemplate,
     normalized.aspectRatio,
     normalized.durationSeconds
@@ -221,63 +242,59 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
   ].join(' ');
 }
 
-export function buildWanPortraitVideoWorkflow(
+export function buildLtx25PortraitVideoWorkflow(
   request: PortraitVideoRequest,
-  portraitOutputPath: string,
+  portraitOutput: PortraitOutputReference,
   seed: number
 ): Record<string, unknown> {
   const normalized = normalizePortraitVideoRequest(request);
-  if (!OUTPUT_IMAGE_PATTERN.test(portraitOutputPath)) throw new Error('portrait-video input path is invalid');
+  if (
+    portraitOutput.promptId !== normalized.source.portraitPromptId
+    || portraitOutput.subfolder !== 'mullet'
+    || portraitOutput.type !== 'output'
+    || !OUTPUT_IMAGE_PATTERN.test(portraitOutput.filename)
+  ) throw new Error('portrait-video input reference is invalid');
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio);
   return {
-    '1': { class_type: 'LoadImageOutput', inputs: { image: portraitOutputPath } },
-    '2': { class_type: 'UNETLoader', inputs: { unet_name: WAN_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
-    '3': { class_type: 'CLIPLoader', inputs: { clip_name: WAN_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip, type: 'wan', device: 'default' } },
-    '4': { class_type: 'VAELoader', inputs: { vae_name: WAN_PORTRAIT_VIDEO_TEMPLATE.modelFiles.vae } },
-    '5': { class_type: 'CLIPVisionLoader', inputs: { clip_name: WAN_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clipVision } },
-    '6': { class_type: 'CLIPVisionEncode', inputs: { clip_vision: ['5', 0], image: ['1', 0], crop: 'none' } },
-    '7': { class_type: 'CLIPTextEncode', inputs: { text: buildPortraitVideoPrompt(normalized), clip: ['3', 0] } },
-    '8': { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE_PROMPT, clip: ['3', 0] } },
-    '9': { class_type: 'ModelSamplingSD3', inputs: { model: ['2', 0], shift: WAN_PORTRAIT_VIDEO_TEMPLATE.shift } },
-    '10': {
-      class_type: 'WanImageToVideo',
-      inputs: {
-        positive: ['7', 0],
-        negative: ['8', 0],
-        vae: ['4', 0],
-        width,
-        height,
-        length: frames,
-        batch_size: 1,
-        clip_vision_output: ['6', 0],
-        start_image: ['1', 0]
-      }
-    },
-    '11': {
-      class_type: 'KSampler',
-      inputs: {
-        model: ['9', 0],
-        seed: validatedSeed,
-        steps: WAN_PORTRAIT_VIDEO_TEMPLATE.steps,
-        cfg: WAN_PORTRAIT_VIDEO_TEMPLATE.cfg,
-        sampler_name: WAN_PORTRAIT_VIDEO_TEMPLATE.sampler,
-        scheduler: WAN_PORTRAIT_VIDEO_TEMPLATE.scheduler,
-        positive: ['10', 0],
-        negative: ['10', 1],
-        latent_image: ['10', 2],
-        denoise: 1
-      }
-    },
-    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['4', 0] } },
-    '13': {
+    '1': { class_type: 'LoadImageOutput', inputs: { image: `mullet/${portraitOutput.filename} [output]` } },
+    '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
+    '3': { class_type: 'UNETLoader', inputs: { unet_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
+    '4': { class_type: 'CLIPLoader', inputs: { clip_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip, type: 'ltxv', device: 'default' } },
+    '5': { class_type: 'VAELoader', inputs: { vae_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.videoVae } },
+    '6': { class_type: 'VAELoader', inputs: { vae_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.audioVae } },
+    '7': { class_type: 'LatentUpscaleModelLoader', inputs: { model_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.latentUpscaler } },
+    '8': { class_type: 'CLIPTextEncode', inputs: { text: buildPortraitVideoPrompt(normalized), clip: ['4', 0] } },
+    '9': { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE_PROMPT, clip: ['4', 0] } },
+    '10': { class_type: 'LTXVConditioning', inputs: { positive: ['8', 0], negative: ['9', 0], frame_rate: fps } },
+    '11': { class_type: 'EmptyLTXVLatentVideo', inputs: { width: width / 2, height: height / 2, length: frames, batch_size: 1 } },
+    '12': { class_type: 'LTXVImgToVideoInplace', inputs: { vae: ['5', 0], image: ['2', 0], latent: ['11', 0], strength: 0.7, bypass: false } },
+    '13': { class_type: 'LTXVEmptyLatentAudio', inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ['6', 0] } },
+    '14': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['12', 0], audio_latent: ['13', 0] } },
+    '15': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['10', 0], negative: ['10', 1], video_cfg: 1, audio_cfg: 1 } },
+    '16': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
+    '17': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler } },
+    '18': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.firstPassSigmas } },
+    '19': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['16', 0], guider: ['15', 0], sampler: ['17', 0], sigmas: ['18', 0], latent_image: ['14', 0] } },
+    '20': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['19', 0] } },
+    '21': { class_type: 'LTXVLatentUpsampler', inputs: { samples: ['20', 0], upscale_model: ['7', 0], vae: ['5', 0] } },
+    '22': { class_type: 'LTXVImgToVideoInplace', inputs: { vae: ['5', 0], image: ['2', 0], latent: ['21', 0], strength: 1, bypass: false } },
+    '23': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['22', 0], audio_latent: ['20', 1] } },
+    '24': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['10', 0], negative: ['10', 1], video_cfg: 1, audio_cfg: 1 } },
+    '25': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed + 42 <= Number.MAX_SAFE_INTEGER ? validatedSeed + 42 : validatedSeed - 42 } },
+    '26': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler } },
+    '27': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.secondPassSigmas } },
+    '28': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['25', 0], guider: ['24', 0], sampler: ['26', 0], sigmas: ['27', 0], latent_image: ['23', 0] } },
+    '29': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['28', 0] } },
+    '30': { class_type: 'VAEDecodeTiled', inputs: { samples: ['29', 0], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
+    '31': {
       class_type: 'SaveWEBM',
       inputs: {
-        images: ['12', 0],
+        images: ['30', 0],
         filename_prefix: 'mullet/portrait-motion',
-        codec: WAN_PORTRAIT_VIDEO_TEMPLATE.codec,
+        codec: LTX25_PORTRAIT_VIDEO_TEMPLATE.codec,
         fps,
-        crf: WAN_PORTRAIT_VIDEO_TEMPLATE.crf
+        crf: LTX25_PORTRAIT_VIDEO_TEMPLATE.crf
       }
     }
   };
@@ -292,7 +309,7 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   }
   return {
     spec: 'mullet_portrait_video_capabilities_v1',
-    template: WAN_PORTRAIT_VIDEO_TEMPLATE,
+    template: LTX25_PORTRAIT_VIDEO_TEMPLATE,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
     durations: [PORTRAIT_VIDEO_DURATION_SECONDS]
   };
