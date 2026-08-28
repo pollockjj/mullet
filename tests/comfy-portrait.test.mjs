@@ -36,17 +36,18 @@ function nodePresent(node) {
 
 test('exposes only the compatible model assets and zimage LoRAs', async () => {
   const replies = [
-    nodeInfo('UNETLoader', 'unet_name', ['z_image_turbo_int8_convrot.safetensors', 'qwen_image_edit_2511_int8_convrot.safetensors']),
-    nodeInfo('CLIPLoader', 'clip_name', ['qwen_3_4b.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors']),
-    nodeInfo('VAELoader', 'vae_name', ['ae.safetensors', 'qwen_image_vae.safetensors']),
-    nodeInfo('LoraLoader', 'lora_name', ['flux/other.safetensors', 'zimage/kristi6.safetensors', 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors']),
+    nodeInfo('UNETLoader', 'unet_name', ['z_image_turbo_int8_convrot.safetensors', 'mage_flow_edit_turbo_int8_convrot.safetensors']),
+    { CLIPLoader: { input: { required: {
+      clip_name: [['qwen_3_4b.safetensors', 'qwen3vl_4b_bf16.safetensors']],
+      type: [['lumina2', 'mage']]
+    } } } },
+    nodeInfo('VAELoader', 'vae_name', ['ae.safetensors', 'mage_flow_vae_bf16.safetensors']),
+    nodeInfo('LoraLoader', 'lora_name', ['flux/other.safetensors', 'zimage/kristi6.safetensors']),
     nodePresent('LoadImage'),
-    nodePresent('FluxKontextImageScale'),
-    nodePresent('CFGNorm'),
-    nodePresent('LoraLoaderModelOnly'),
-    nodePresent('TextEncodeQwenImageEditPlus'),
-    nodePresent('VAEEncode'),
-    nodePresent('ImageScale')
+    nodePresent('TextEncodeMageFlowEdit'),
+    nodePresent('KSampler'),
+    nodePresent('VAEDecode'),
+    nodePresent('SaveImage')
   ];
   let index = 0;
   const capabilities = await loadPortraitCapabilities(async () => Response.json(replies[index++]), 'http://comfy');
@@ -54,7 +55,7 @@ test('exposes only the compatible model assets and zimage LoRAs', async () => {
   assert.equal(capabilities.referenceTemplate.id, PORTRAIT_REFERENCE_TEMPLATE_ID);
 });
 
-test('verifies the Jenna reference bytes before queuing the Qwen identity graph', async () => {
+test('verifies the Jenna reference bytes before queuing the Mage-Flow identity graph', async () => {
   const referenceBytes = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
   const referenceSha256 = createHash('sha256').update(referenceBytes).digest('hex');
   const referenceRequest = buildPortraitRequest({
@@ -98,7 +99,7 @@ test('verifies the Jenna reference bytes before queuing the Qwen identity graph'
     if (url.includes('/history/')) return Response.json({
       '22222222-2222-4222-8222-222222222222': {
         status: { completed: true, status_str: 'success' },
-        outputs: { '14': { images: [{ filename: 'portrait-reference_00001_.png', subfolder: 'mullet', type: 'output' }] } }
+        outputs: { '8': { images: [{ filename: 'portrait-reference_00001_.png', subfolder: 'mullet', type: 'output' }] } }
       }
     });
     if (url.includes('/view?')) return new Response(png, { headers: { 'content-type': 'image/png' } });
@@ -107,7 +108,10 @@ test('verifies the Jenna reference bytes before queuing the Qwen identity graph'
   const result = await runComfyPortrait(fetcher, 'http://comfy', referenceRequest, 19790213);
   const queued = JSON.parse(observed[1].init.body);
   assert.equal(queued.prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(queued.prompt['12'].inputs.seed, 19790213);
+  assert.equal(queued.prompt['5'].class_type, 'TextEncodeMageFlowEdit');
+  assert.equal(queued.prompt['5'].inputs.width, 768);
+  assert.equal(queued.prompt['5'].inputs.height, 1152);
+  assert.equal(queued.prompt['6'].inputs.seed, 19790213);
   assert.equal(result.filename, 'portrait-reference_00001_.png');
 
   const forged = { ...referenceRequest, referenceImage: { ...referenceRequest.referenceImage, sha256: '0'.repeat(64) } };

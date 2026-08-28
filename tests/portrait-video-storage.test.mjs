@@ -142,14 +142,14 @@ test('discards obsolete v1/v2/v3 direct values and envelopes for automatic regen
 test('requires exact generated end-frame provenance only for generated FLF mode', () => {
   const generatedRequest = request({
     mode: 'flf2v_generated',
-    endFrameModelTemplate: 'qwen-image-edit-2511-lightning-4step-v1'
+    endFrameModelTemplate: 'mage-flow-edit-turbo-4step-v1'
   });
   const generated = stored({
     request: generatedRequest,
     requestKey: portraitVideoRequestKey(generatedRequest),
     mode: generatedRequest.mode,
     endFrame: {
-      modelTemplate: 'qwen-image-edit-2511-lightning-4step-v1',
+      modelTemplate: 'mage-flow-edit-turbo-4step-v1',
       promptId: '33333333-3333-4333-8333-333333333333',
       seed: 43,
       width: 768,

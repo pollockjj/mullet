@@ -13,12 +13,12 @@ import {
   PORTRAIT_VIDEO_MODES,
   PORTRAIT_VIDEO_REQUEST_SPEC,
   PORTRAIT_VIDEO_TEMPLATE_ID,
-  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
+  MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
+  buildMageFlowPortraitEndFrameWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
   buildPortraitEndFramePrompt,
   buildPortraitVideoPrompt,
   buildPortraitVideoRequest,
-  buildQwenPortraitEndFrameWorkflow,
   normalizePortraitVideoRequest,
   portraitVideoDimensions,
   portraitVideoEndFrameSeed,
@@ -60,19 +60,18 @@ const endInput = {
   imageSha256: 'b'.repeat(64)
 };
 
-test('maps every portrait ratio and duration to the bounded MiniMax frame grid', () => {
+test('maps the fixed 2:3 expression ratio and every duration to the bounded MiniMax frame grid', () => {
   assert.deepEqual(PORTRAIT_VIDEO_DURATIONS, [3, 5]);
   assert.deepEqual(portraitVideoDimensions('2:3'), { width: 768, height: 1152, frames: 73, fps: 24 });
   assert.deepEqual(portraitVideoDimensions('2:3', 5), { width: 768, height: 1152, frames: 124, fps: 24 });
-  for (const aspectRatio of ['2:3', '3:4', '4:5', '9:16']) {
-    for (const duration of PORTRAIT_VIDEO_DURATIONS) {
-      const dimensions = portraitVideoDimensions(aspectRatio, duration);
-      assert.equal(dimensions.width % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
-      assert.equal(dimensions.height % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
-      assert.equal(Math.min(dimensions.width, dimensions.height), 768);
-      assert.equal((dimensions.frames - 5) % 17, 0);
-    }
+  for (const duration of PORTRAIT_VIDEO_DURATIONS) {
+    const dimensions = portraitVideoDimensions('2:3', duration);
+    assert.equal(dimensions.width % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
+    assert.equal(dimensions.height % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
+    assert.equal(Math.min(dimensions.width, dimensions.height), 768);
+    assert.equal((dimensions.frames - 5) % 17, 0);
   }
+  assert.throws(() => portraitVideoDimensions('3:4'), /unsupported portrait-video aspect ratio/);
   assert.equal((portraitVideoDimensions('2:3', 3).frames - 1) / PORTRAIT_VIDEO_FPS, PORTRAIT_VIDEO_DURATION_SECONDS);
   assert.equal((portraitVideoDimensions('2:3', 5).frames - 1) / PORTRAIT_VIDEO_FPS, 5.125);
   assert.equal(PORTRAIT_VIDEO_FRAMES, 73);
@@ -139,24 +138,27 @@ test('compiles the selected five-second loop as 124 identical-frame-conditioned 
   assert.deepEqual(graph['6'].inputs.last_frame, ['5', 0]);
 });
 
-test('compiles Qwen end-frame generation followed by distinct H3 first/last conditioning', () => {
+test('compiles Mage-Flow end-frame generation followed by distinct H3 first/last conditioning', () => {
   const request = buildPortraitVideoRequest(
     portrait(),
     '2:3',
     'a'.repeat(64),
     PORTRAIT_VIDEO_MODE_GENERATED_FLF
   );
-  assert.equal(request.endFrameModelTemplate, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.id);
+  assert.equal(request.endFrameModelTemplate, MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.id);
   assert.equal(portraitVideoEndFrameSeed(42), 43);
   assert.equal(portraitVideoEndFrameSeed(Number.MAX_SAFE_INTEGER), 0);
   assert.match(buildPortraitEndFramePrompt(request), /exact same subject/);
   assert.match(buildPortraitVideoPrompt(request), /distinct final pose/);
 
-  const endGraph = buildQwenPortraitEndFrameWorkflow(request, firstInput, 43);
-  assert.equal(endGraph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-  assert.equal(endGraph['12'].inputs.seed, 43);
-  assert.equal(endGraph['15'].inputs.width, 768);
-  assert.equal(endGraph['15'].inputs.height, 1152);
+  const endGraph = buildMageFlowPortraitEndFrameWorkflow(request, firstInput, 43);
+  assert.equal(endGraph['1'].inputs.unet_name, MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+  assert.equal(endGraph['2'].inputs.type, 'mage');
+  assert.equal(endGraph['5'].class_type, 'TextEncodeMageFlowEdit');
+  assert.equal(endGraph['5'].inputs.width, 768);
+  assert.equal(endGraph['5'].inputs.height, 1152);
+  assert.equal(endGraph['6'].inputs.seed, 43);
+  assert.deepEqual(endGraph['8'].inputs.images, ['7', 0]);
 
   const graph = buildMiniMaxH3PortraitVideoWorkflow(request, firstInput, 42, endInput);
   assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);
@@ -168,6 +170,7 @@ test('compiles Qwen end-frame generation followed by distinct H3 first/last cond
 test('rejects arbitrary templates, durations, paths, and invalid end-frame usage', () => {
   const built = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64));
   assert.throws(() => normalizePortraitVideoRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait-video model/);
+  assert.throws(() => normalizePortraitVideoRequest({ ...built, aspectRatio: '3:4' }), /unsupported portrait-video aspect ratio/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, durationSeconds: 4 }), /unsupported portrait-video duration/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, mode: 'anything' }), /unsupported portrait-video mode/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, source: { ...built.source, portraitWidth: 832 } }), /dimensions do not match/);

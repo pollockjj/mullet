@@ -4,10 +4,10 @@ import test from 'node:test';
 
 const pageSource = readFileSync(new URL('../src/routes/+page.svelte', import.meta.url), 'utf8');
 
-test('generated portrait stage uses the displayed media dimensions', () => {
+test('generated expression stage is fixed 2:3 with no portrait aspect selector', () => {
   assert.match(
     pageSource,
-    /portraitDisplayAspectRatio = expressionsEnabled && generatedPortraitUrl && generatedPortrait\s+\? `\$\{generatedPortrait\.width\} \/ \$\{generatedPortrait\.height\}`\s+: '3 \/ 4'/
+    /portraitDisplayAspectRatio = expressionsEnabled && generatedPortraitUrl && generatedPortrait\s+\? '2 \/ 3'\s+: '3 \/ 4'/
   );
   assert.match(
     pageSource,
@@ -18,4 +18,7 @@ test('generated portrait stage uses the displayed media dimensions', () => {
     /\.portrait \{ aspect-ratio: var\(--portrait-aspect-ratio, 3 \/ 4\);/
   );
   assert.doesNotMatch(pageSource, /\.portrait \{ aspect-ratio: 3 \/ 4;/);
+  assert.doesNotMatch(pageSource, /aria-label="Portrait aspect ratio"/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-aspect/);
+  assert.match(pageSource, /aria-label="Inline scene aspect ratio"/);
 });

@@ -5,11 +5,11 @@ import {
   PORTRAIT_REQUEST_SPEC,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
-  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
+  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
+  buildMageFlowReferencePortraitWorkflow,
   buildPortraitPrompt,
   buildPortraitRequest,
-  buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   normalizePortraitRequest,
   portraitDimensions,
@@ -63,14 +63,12 @@ function referenceRequest(overrides = {}) {
   });
 }
 
-test('calculates exact portrait ratios at the model multiple', () => {
+test('fixes every expression portrait to 2:3 at the model multiple', () => {
   assert.deepEqual(portraitDimensions('2:3', 0.9), { width: 768, height: 1152, pixels: 884736 });
-  assert.deepEqual(portraitDimensions('3:4', 1), { width: 864, height: 1152, pixels: 995328 });
-  for (const ratio of ['2:3', '3:4', '4:5', '9:16']) {
-    const dimensions = portraitDimensions(ratio, 1);
-    assert.equal(dimensions.width % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
-    assert.equal(dimensions.height % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
-  }
+  const dimensions = portraitDimensions('2:3', 1);
+  assert.equal(dimensions.width % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
+  assert.equal(dimensions.height % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
+  assert.throws(() => portraitDimensions('3:4', 1), /unsupported portrait aspect ratio/);
 });
 
 test('binds a portrait request only to an expression result fingerprint', () => {
@@ -110,29 +108,32 @@ test('compiles the proven Z-Image graph and inserts only compatible LoRAs', () =
   assert.deepEqual(withLora['6'].inputs.model, ['11', 0]);
 });
 
-test('binds Jenna identity provenance and compiles the proven Qwen reference graph', () => {
+test('binds Jenna identity provenance and compiles the proven Mage-Flow reference graph', () => {
   const built = referenceRequest();
   assert.equal(built.modelTemplate, PORTRAIT_REFERENCE_TEMPLATE_ID);
   assert.equal(built.source.characterId, 'jenna-stannis');
   assert.equal(built.source.profileFingerprint, '1234abcd');
   assert.equal(built.referenceImage.name, 'jenna-stannis-v1.jpg');
   const prompt = buildPortraitPrompt(built);
-  assert.match(prompt, /supplied canonical reference as the identity source/);
+  assert.match(prompt, /supplied canonical reference/);
   assert.match(prompt, /Preserve identity; do not substitute another person/);
 
-  const graph = buildQwenReferencePortraitWorkflow(built, 19790213);
-  assert.equal(graph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
+  const graph = buildMageFlowReferencePortraitWorkflow(built, 19790213);
+  assert.equal(graph['1'].inputs.unet_name, MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.type, 'mage');
   assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(graph['9'].class_type, 'TextEncodeQwenImageEditPlus');
-  assert.equal(graph['12'].inputs.seed, 19790213);
-  assert.deepEqual(graph['15'].inputs.width, 768);
-  assert.deepEqual(graph['15'].inputs.height, 1152);
+  assert.equal(graph['5'].class_type, 'TextEncodeMageFlowEdit');
+  assert.equal(graph['5'].inputs.width, 768);
+  assert.equal(graph['5'].inputs.height, 1152);
+  assert.equal(graph['6'].inputs.seed, 19790213);
+  assert.deepEqual(graph['8'].inputs.images, ['7', 0]);
   assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
 });
 
 test('rejects arbitrary templates, dimensions, LoRA paths, and stale sources', () => {
   const built = request();
   assert.throws(() => normalizePortraitRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait model/);
+  assert.throws(() => normalizePortraitRequest({ ...built, aspectRatio: '3:4' }), /unsupported portrait aspect ratio/);
   assert.throws(() => normalizePortraitRequest({ ...built, megapixels: 9 }), /unsupported portrait megapixel/);
   assert.throws(() => normalizePortraitRequest({ ...built, lora: '../escape.safetensors' }), /LoRA is invalid/);
   assert.throws(() => normalizePortraitRequest({ ...built, source: { ...built.source, messageIndex: 0 } }), /latest response/);
