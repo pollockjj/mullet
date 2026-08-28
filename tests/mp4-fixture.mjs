@@ -51,18 +51,38 @@ function sampleDescription(codec) {
   return box('stsd', concat([new Uint8Array(4), uint32(1), entry]));
 }
 
-function timeToSample(frames, delta) {
-  return box('stts', concat([new Uint8Array(4), uint32(1), uint32(frames), uint32(delta)]));
+function timeToSample(entries) {
+  return box('stts', concat([
+    new Uint8Array(4),
+    uint32(entries.length),
+    ...entries.flatMap(({ count, delta }) => [uint32(count), uint32(delta)])
+  ]));
 }
 
-function sampleSizes(frames) {
-  return box('stsz', concat([new Uint8Array(4), uint32(1), uint32(frames)]));
+function sampleSizes(frames, uniformSize) {
+  return box('stsz', concat([
+    new Uint8Array(4),
+    uint32(uniformSize),
+    uint32(frames),
+    ...(uniformSize === 0 ? Array.from({ length: frames }, () => uint32(0)) : [])
+  ]));
 }
 
-function track({ handlerType, codec, width, height, timescale, duration, frames, sampleDelta, includeSamples = true }) {
+function track({
+  handlerType,
+  codec,
+  width,
+  height,
+  timescale,
+  duration,
+  frames,
+  timingEntries,
+  sampleSize = 1,
+  includeSamples = true
+}) {
   const sampleTableParts = [sampleDescription(codec)];
   if (includeSamples) {
-    sampleTableParts.push(timeToSample(frames, sampleDelta), sampleSizes(frames));
+    sampleTableParts.push(timeToSample(timingEntries), sampleSizes(frames, sampleSize));
   }
   const stbl = box('stbl', concat(sampleTableParts));
   const minf = box('minf', stbl);
@@ -78,7 +98,8 @@ export function buildH264AacMp4Fixture({
   videoCodec = 'avc1',
   includeAudio = true,
   includeAudioSamples = true,
-  audioFrames = 161,
+  audioTimingEntries = [{ count: 162, delta: 1_024 }, { count: 1, delta: 470 }],
+  audioSampleSize = 1,
   audioHeaderDuration
 } = {}) {
   const timescale = 12_288;
@@ -93,11 +114,12 @@ export function buildH264AacMp4Fixture({
     timescale,
     duration,
     frames,
-    sampleDelta: delta
+    timingEntries: [{ count: frames, delta }]
   });
   const audioTimescale = 32_000;
-  const audioDelta = 1_024;
-  const audioDuration = audioHeaderDuration ?? audioFrames * audioDelta;
+  const audioFrames = audioTimingEntries.reduce((total, entry) => total + entry.count, 0);
+  const audioSampleDuration = audioTimingEntries.reduce((total, entry) => total + entry.count * entry.delta, 0);
+  const audioDuration = audioHeaderDuration ?? audioSampleDuration;
   const audio = track({
     handlerType: 'soun',
     codec: 'mp4a',
@@ -106,7 +128,8 @@ export function buildH264AacMp4Fixture({
     timescale: audioTimescale,
     duration: audioDuration,
     frames: audioFrames,
-    sampleDelta: audioDelta,
+    timingEntries: audioTimingEntries,
+    sampleSize: audioSampleSize,
     includeSamples: includeAudioSamples
   });
   const moov = box('moov', includeAudio ? concat([video, audio]) : video);

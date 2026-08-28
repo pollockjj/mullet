@@ -40,6 +40,7 @@ type Track = {
 
 const MINIMUM_BOX_BUDGET = 4_096;
 const MAXIMUM_BOX_BUDGET = 200_000;
+const MAXIMUM_SAMPLE_COUNT = 1_000_000;
 
 function safeInteger(value: number, name: string, minimum: number, maximum: number): number {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new Error(name + ' is invalid');
@@ -171,8 +172,16 @@ function sampleSizeCount(bytes: Uint8Array, stsz: Box): number {
   if (stsz.dataEnd - stsz.dataStart < 12) throw new Error('MP4 sample-size table is truncated');
   const uniformSize = uint32(bytes, stsz.dataStart + 4, 'uniform sample size');
   const count = uint32(bytes, stsz.dataStart + 8, 'sample-size count');
+  if (count < 1 || count > MAXIMUM_SAMPLE_COUNT) throw new Error('MP4 sample-size count is invalid');
   const expectedLength = uniformSize === 0 ? 12 + count * 4 : 12;
   if (stsz.dataEnd - stsz.dataStart !== expectedLength) throw new Error('MP4 sample-size table is invalid');
+  if (uniformSize === 0) {
+    for (let index = 0; index < count; index += 1) {
+      if (uint32(bytes, stsz.dataStart + 12 + index * 4, 'sample size') < 1) {
+        throw new Error('MP4 sample-size table contains an empty sample');
+      }
+    }
+  }
   return count;
 }
 
