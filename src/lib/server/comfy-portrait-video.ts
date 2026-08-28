@@ -3,6 +3,7 @@ import {
   PORTRAIT_VIDEO_CAPABILITIES_SPEC,
   PORTRAIT_VIDEO_DIMENSIONS,
   PORTRAIT_VIDEO_DURATION_SECONDS,
+  PORTRAIT_VIDEO_FRAMES,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
@@ -99,6 +100,28 @@ function requireOption(options: readonly string[], expected: string, label: stri
   if (!options.includes(expected)) throw new Error(`ComfyUI is missing ${label}`);
 }
 
+function requireIntegerInput(
+  info: Record<string, unknown>,
+  nodeName: string,
+  inputName: string,
+  requiredValue: number,
+  requiredStep: number
+): void {
+  const input = requiredInput(info, nodeName, inputName);
+  const metadata = input[1];
+  if (
+    input[0] !== 'INT'
+    || !isRecord(metadata)
+    || !Number.isSafeInteger(metadata.min)
+    || !Number.isSafeInteger(metadata.max)
+    || !Number.isSafeInteger(metadata.step)
+    || Number(metadata.step) !== requiredStep
+    || requiredValue < Number(metadata.min)
+    || requiredValue > Number(metadata.max)
+    || (requiredValue - Number(metadata.min)) % requiredStep !== 0
+  ) throw new Error(`ComfyUI ${nodeName}.${inputName} cannot represent ${requiredValue}`);
+}
+
 export async function loadPortraitVideoCapabilities(
   fetcher: Fetcher,
   baseUrl: string,
@@ -135,6 +158,11 @@ export async function loadPortraitVideoCapabilities(
   if (firstFrame[0] !== 'IMAGE' || lastFrame[0] !== 'IMAGE') {
     throw new Error('ComfyUI MiniMax H3 first/last-frame conditioning is unavailable');
   }
+  const maximumWidth = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ width }) => width));
+  const maximumHeight = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ height }) => height));
+  requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'width', maximumWidth, template.multiple);
+  requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, template.multiple);
+  requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'length', PORTRAIT_VIDEO_FRAMES, 17);
   const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
   if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
   let endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null = null;
