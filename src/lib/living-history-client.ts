@@ -66,6 +66,10 @@ export function livingHistoryAutomaticUpdateDue(pendingMessages: number): boolea
   return Number.isInteger(pendingMessages) && pendingMessages >= LIVING_HISTORY_INTERVAL_MESSAGES;
 }
 
+export function livingHistoryReadyForChat(enabled: boolean, persistenceReady: boolean): boolean {
+  return !enabled || persistenceReady;
+}
+
 export function currentLivingHistoryRequest(
   conversationId: string,
   messages: readonly TranscriptMessage[],

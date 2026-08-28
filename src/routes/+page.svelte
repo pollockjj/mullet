@@ -48,6 +48,7 @@
     assembleSupplementalLorebooks,
     currentLivingHistoryRequest,
     livingHistoryAutomaticUpdateDue,
+    livingHistoryReadyForChat,
     normalizeStoredLivingHistoryBoundaries,
     pendingLivingHistoryMessageCount
   } from '$lib/living-history-client';
@@ -377,7 +378,13 @@
     portraitError = '';
     try {
       const response = await fetch(`${base}/api/portrait`, { cache: 'no-store' });
-      const payload = await response.json().catch(() => null);
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
+        payload = null;
+      }
       if (!response.ok) {
         const detail = payload && typeof payload.message === 'string' ? payload.message : `Portrait generator failed (${response.status}).`;
         throw new Error(detail);
@@ -1226,7 +1233,12 @@
 
   async function send() {
     const content = draft.trim();
-    if (!content || streaming || !lorePersistenceReady) return;
+    if (
+      !content
+      || streaming
+      || !lorePersistenceReady
+      || !livingHistoryReadyForChat(livingHistoryEnabled, livingHistoryPersistenceReady)
+    ) return;
 
     const outboundMessages = [...messages, { role: 'user' as const, content }];
     let supplementalLorebooks: ImportedLorebook[];
@@ -1260,6 +1272,7 @@
 
     sidecarController?.abort();
     livingHistoryController?.abort();
+    lastLivingHistoryAttemptKey = '';
     portraitController?.abort();
     errorMessage = '';
     noticeMessage = '';
@@ -1716,7 +1729,11 @@
           {#if streaming}
             <button class="stop" on:click={stop}>Stop</button>
           {:else}
-            <button class="send" on:click={send} disabled={!draft.trim() || !lorePersistenceReady}>Send</button>
+            <button
+              class="send"
+              on:click={send}
+              disabled={!draft.trim() || !lorePersistenceReady || !livingHistoryReadyForChat(livingHistoryEnabled, livingHistoryPersistenceReady)}
+            >Send</button>
           {/if}
         </div>
         <div class="composer-meta">

@@ -7,6 +7,7 @@ import {
   assembleSupplementalLorebooks,
   currentLivingHistoryRequest,
   livingHistoryAutomaticUpdateDue,
+  livingHistoryReadyForChat,
   normalizeStoredLivingHistoryBoundaries,
   pendingLivingHistoryMessageCount
 } from '../src/lib/living-history-client.ts';
@@ -49,6 +50,12 @@ test('fires at five finalized pairs and sends all ten messages', () => {
   const request = currentLivingHistoryRequest(conversationId, fivePairs, null, fiveBoundaries);
   assert.equal(request?.turns.length, 10);
   assert.deepEqual(normalizeStoredLivingHistoryBoundaries(fiveBoundaries, conversationId, fivePairs), fiveBoundaries);
+});
+
+test('blocks the first chat until enabled history finishes restoring', () => {
+  assert.equal(livingHistoryReadyForChat(true, false), false);
+  assert.equal(livingHistoryReadyForChat(true, true), true);
+  assert.equal(livingHistoryReadyForChat(false, false), true);
 });
 
 test('appends one finalized boundary idempotently and preserves later pending work', () => {
