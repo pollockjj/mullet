@@ -265,9 +265,10 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
   await context.test('GET returns exact LTX 2.5 capabilities through the compiled route', async () => {
     fake.reset();
     const response = await fetch(routeUrl);
-    assert.equal(response.status, 200, await response.text());
+    const responseText = await response.text();
+    assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
-    const capabilities = await response.json();
+    const capabilities = JSON.parse(responseText);
     assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v1');
     assert.equal(capabilities.template.id, 'ltx-2.5-i2v-distilled-v1');
     assert.deepEqual(capabilities.aspectRatios, [
