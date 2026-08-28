@@ -15,6 +15,7 @@ import {
   type ConversationMode
 } from './personal-assistant.ts';
 import { isSidecarConversationId } from './sidecar.ts';
+import { sha256Hex } from './sha256.ts';
 
 export const STORED_WORKSPACE_SPEC = 'mullet_workspace_v2' as const;
 export const LEGACY_STORED_WORKSPACE_SPEC = 'mullet_workspace_v1' as const;
@@ -201,6 +202,17 @@ export function workspaceCompletedTurnCapacityError(messageCount: number): strin
     return 'The stored conversation message count is invalid. Reset the chat before sending another turn.';
   }
   return `This conversation has ${messageCount} of ${WORKSPACE_MAX_MESSAGES} messages; a completed turn requires two free message slots. Reset the chat before sending another turn.`;
+}
+
+export function workspaceMutationFingerprint(
+  mode: ConversationMode,
+  conversationId: string,
+  messages: readonly WorkspaceMessage[]
+): string {
+  const normalizedMode = normalizeConversationMode(mode);
+  if (!isSidecarConversationId(conversationId)) throw new Error('workspace conversationId must be a UUID');
+  const normalizedMessages = normalizeMessages(messages);
+  return `sha256:${sha256Hex(JSON.stringify([normalizedMode, conversationId, normalizedMessages]))}`;
 }
 
 export function rollbackFailedWorkspaceTurn(

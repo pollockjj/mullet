@@ -251,6 +251,7 @@
     rollbackFailedWorkspaceTurn,
     saveStoredWorkspace,
     workspaceCompletedTurnCapacityError,
+    workspaceMutationFingerprint,
     workspaceReadyForCompletedTurn
     , type WorkspaceAssistantMemoryReceipt
   } from '$lib/workspace-state';
@@ -2895,11 +2896,16 @@
 
   async function clearAssistantMemory() {
     if (assistantTurnBusy || streaming || assistantMemoryBusy) return;
-    if ((assistantMemoryResult || assistantMemoryPending) && !window.confirm('Clear all persistent assistant memory and any pending update?')) return;
     assistantTurnBusy = true;
     const clearedError = assistantMemoryError;
     try {
       await runPersonalAssistantTurnExclusive(async () => {
+        restoreWorkspaceState();
+        await restoreAssistantMemory(false);
+        if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
+          throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
+        }
+        if ((assistantMemoryResult || assistantMemoryPending) && !window.confirm('Clear all persistent assistant memory and any pending update?')) return;
         assistantMemoryGeneration += 1;
         assistantMemoryController?.abort();
         const nextEpoch = crypto.randomUUID();
@@ -3063,6 +3069,17 @@
     return messages.length > 0 && (!activeCard || !containsOnlyOpeningGreeting(activeCard));
   }
 
+  function currentWorkspaceMutationFingerprint(): string {
+    return workspaceMutationFingerprint(conversationMode, conversationId, messages);
+  }
+
+  function restoreUnchangedWorkspace(expectedFingerprint: string) {
+    restoreWorkspaceState();
+    if (currentWorkspaceMutationFingerprint() !== expectedFingerprint) {
+      throw new Error('The workspace changed in another tab. Review the restored conversation and try again.');
+    }
+  }
+
   async function startSelectedScenario() {
     if (
       !selectedScenario
@@ -3075,30 +3092,35 @@
     ) return;
     errorMessage = '';
     noticeMessage = '';
+    const expectedWorkspace = currentWorkspaceMutationFingerprint();
+    const scenario = selectedScenario;
     scenarioLoading = true;
     workspaceBusy = true;
     try {
-      const packaged = await loadScenarioPackage(selectedScenario);
-      if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
+      const packaged = await loadScenarioPackage(scenario);
+      await runPersonalAssistantTurnExclusive(async () => {
+        restoreUnchangedWorkspace(expectedWorkspace);
+        if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
 
-      conversationMode = CONVERSATION_MODE_FICTION;
-      activeCard = packaged.card;
-      cardSourceIdentifier = characterSourceIdentifier(selectedScenario.card);
-      portraitDataUrl = '';
-      embeddedLorebook = embeddedLoreFromCard(activeCard);
-      loreEnabled = true;
-      loreTimedState = emptyLoreTimedState();
-      lastLoreActivations = null;
-      lastLoreActivationCount = 0;
-      lastLoreBudget = 0;
-      localStorage.removeItem(loreTimedStateStorageKey);
-      persistCard();
-      persistLoreEnabled();
-      messages = freshConversation();
-      await resetSidecarForConversation();
-      persist();
-      noticeMessage = `${selectedScenario.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
-      await scrollToLatest();
+        conversationMode = CONVERSATION_MODE_FICTION;
+        activeCard = packaged.card;
+        cardSourceIdentifier = characterSourceIdentifier(scenario.card);
+        portraitDataUrl = '';
+        embeddedLorebook = embeddedLoreFromCard(activeCard);
+        loreEnabled = true;
+        loreTimedState = emptyLoreTimedState();
+        lastLoreActivations = null;
+        lastLoreActivationCount = 0;
+        lastLoreBudget = 0;
+        localStorage.removeItem(loreTimedStateStorageKey);
+        persistCard();
+        persistLoreEnabled();
+        messages = freshConversation();
+        await resetSidecarForConversation();
+        persist();
+        noticeMessage = `${scenario.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
+        await scrollToLatest();
+      });
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario failed to start.';
     } finally {
@@ -3217,27 +3239,33 @@
       || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
       || nextMode === conversationMode
     ) return;
-    if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
+    const expectedWorkspace = currentWorkspaceMutationFingerprint();
     workspaceBusy = true;
     try {
-      conversationMode = nextMode;
-      messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
-      assistantMemoryPending = null;
-      lastAssistantMemorySource = null;
-      lastAssistantMemoryActive = null;
-      errorMessage = '';
-      noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
-        ? 'Personal Assistant started on an isolated neutral model channel.'
-        : 'Fiction workspace started.';
-      lastLoreActivations = null;
-      lastLivingHistoryFired = null;
-      lastLoreActivationCount = 0;
-      lastLoreBudget = 0;
-      loreTimedState = emptyLoreTimedState();
-      localStorage.removeItem(loreTimedStateStorageKey);
-      await resetSidecarForConversation();
-      persist();
-      await scrollToLatest();
+      await runPersonalAssistantTurnExclusive(async () => {
+        restoreUnchangedWorkspace(expectedWorkspace);
+        if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
+        conversationMode = nextMode;
+        messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+        assistantMemoryPending = null;
+        lastAssistantMemorySource = null;
+        lastAssistantMemoryActive = null;
+        errorMessage = '';
+        noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+          ? 'Personal Assistant started on an isolated neutral model channel.'
+          : 'Fiction workspace started.';
+        lastLoreActivations = null;
+        lastLivingHistoryFired = null;
+        lastLoreActivationCount = 0;
+        lastLoreBudget = 0;
+        loreTimedState = emptyLoreTimedState();
+        localStorage.removeItem(loreTimedStateStorageKey);
+        await resetSidecarForConversation();
+        persist();
+        await scrollToLatest();
+      });
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Conversation mode could not be replaced.';
     } finally {
       workspaceBusy = false;
     }
@@ -3259,20 +3287,26 @@
       || assistantMemoryBusy
       || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
     ) return;
+    const expectedWorkspace = currentWorkspaceMutationFingerprint();
     workspaceBusy = true;
     try {
-      messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
-      lastAssistantMemorySource = null;
-      lastAssistantMemoryActive = null;
-      errorMessage = '';
-      noticeMessage = '';
-      lastLoreActivations = null;
-      lastLivingHistoryFired = null;
-      lastLoreBudget = 0;
-      loreTimedState = emptyLoreTimedState();
-      localStorage.removeItem(loreTimedStateStorageKey);
-      await resetSidecarForConversation();
-      persist();
+      await runPersonalAssistantTurnExclusive(async () => {
+        restoreUnchangedWorkspace(expectedWorkspace);
+        messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+        lastAssistantMemorySource = null;
+        lastAssistantMemoryActive = null;
+        errorMessage = '';
+        noticeMessage = '';
+        lastLoreActivations = null;
+        lastLivingHistoryFired = null;
+        lastLoreBudget = 0;
+        loreTimedState = emptyLoreTimedState();
+        localStorage.removeItem(loreTimedStateStorageKey);
+        await resetSidecarForConversation();
+        persist();
+      });
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Conversation could not be reset.';
     } finally {
       workspaceBusy = false;
     }
@@ -3304,6 +3338,7 @@
 
     errorMessage = '';
     noticeMessage = '';
+    const expectedWorkspace = currentWorkspaceMutationFingerprint();
     workspaceBusy = true;
     try {
       if (file.size > MAX_CHARACTER_CARD_PNG_BYTES) throw new Error('Character card exceeds 25 MB.');
@@ -3312,25 +3347,29 @@
         ? extractPngCharacterCard(await file.arrayBuffer())
         : parseCharacterCardJson(await file.text());
       const nextPortrait = isPng ? await portraitFromPng(file) : '';
-      const switchingFromAssistant = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT;
-      const replaceOpeningGreeting = activeCard ? containsOnlyOpeningGreeting(activeCard) : false;
-      const seedGreeting = switchingFromAssistant || messages.length === 0 || replaceOpeningGreeting;
+      await runPersonalAssistantTurnExclusive(async () => {
+        restoreUnchangedWorkspace(expectedWorkspace);
+        const switchingFromAssistant = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT;
+        if (switchingFromAssistant && hasRealTranscript() && !window.confirm('Replace the current assistant conversation with this character card?')) return;
+        const replaceOpeningGreeting = activeCard ? containsOnlyOpeningGreeting(activeCard) : false;
+        const seedGreeting = switchingFromAssistant || messages.length === 0 || replaceOpeningGreeting;
 
-      conversationMode = CONVERSATION_MODE_FICTION;
-      activeCard = imported;
-      cardSourceIdentifier = characterSourceIdentifier(file.name);
-      portraitDataUrl = nextPortrait;
-      embeddedLorebook = embeddedLoreFromCard(imported);
-      lastLoreActivations = null;
-      lastLoreBudget = 0;
-      persistCard();
-      if (seedGreeting) {
-        messages = freshConversation();
-        await resetSidecarForConversation();
-        persist();
-      }
-      noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
-      await scrollToLatest();
+        conversationMode = CONVERSATION_MODE_FICTION;
+        activeCard = imported;
+        cardSourceIdentifier = characterSourceIdentifier(file.name);
+        portraitDataUrl = nextPortrait;
+        embeddedLorebook = embeddedLoreFromCard(imported);
+        lastLoreActivations = null;
+        lastLoreBudget = 0;
+        persistCard();
+        if (seedGreeting) {
+          messages = freshConversation();
+          await resetSidecarForConversation();
+          persist();
+        }
+        noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
+        await scrollToLatest();
+      });
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Character card import failed.';
     } finally {

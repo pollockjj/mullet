@@ -14,6 +14,7 @@ import {
   normalizeStoredWorkspace,
   saveStoredWorkspace,
   workspaceCompletedTurnCapacityError,
+  workspaceMutationFingerprint,
   rollbackFailedWorkspaceTurn,
   workspaceReadyForCompletedTurn
 } from '../src/lib/workspace-state.ts';
@@ -99,6 +100,38 @@ test('reserves both transcript slots before a user-assistant turn starts', () =>
   assert.equal(
     workspaceCompletedTurnCapacityError(999),
     'This conversation has 999 of 1000 messages; a completed turn requires two free message slots. Reset the chat before sending another turn.'
+  );
+});
+
+test('fingerprints the exact mode, conversation, and transcript before a destructive workspace mutation', () => {
+  const messages = [
+    { role: 'user', content: 'Preserve this turn.' },
+    { role: 'assistant', content: 'Preserved.' }
+  ];
+  const fingerprint = workspaceMutationFingerprint(
+    CONVERSATION_MODE_PERSONAL_ASSISTANT,
+    conversationId,
+    messages
+  );
+  assert.match(fingerprint, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(
+    workspaceMutationFingerprint(CONVERSATION_MODE_PERSONAL_ASSISTANT, conversationId, messages),
+    fingerprint
+  );
+  assert.notEqual(
+    workspaceMutationFingerprint(CONVERSATION_MODE_FICTION, conversationId, messages),
+    fingerprint
+  );
+  assert.notEqual(
+    workspaceMutationFingerprint(CONVERSATION_MODE_PERSONAL_ASSISTANT, replacementConversationId, messages),
+    fingerprint
+  );
+  assert.notEqual(
+    workspaceMutationFingerprint(CONVERSATION_MODE_PERSONAL_ASSISTANT, conversationId, [
+      ...messages,
+      { role: 'user', content: 'A newer tab added this.' }
+    ]),
+    fingerprint
   );
 });
 
