@@ -1,17 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { portraitVideoRequestKey } from '../src/lib/portrait-video.ts';
 import {
+  STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC,
   STORED_PORTRAIT_VIDEO_SPEC,
   commitStoredPortraitVideo,
-  normalizeStoredPortraitVideo
+  normalizeStoredPortraitVideo,
+  restoreStoredPortraitVideo,
+  unwrapStoredPortraitVideo
 } from '../src/lib/portrait-video-storage.ts';
 
-function stored(overrides = {}) {
+function request(overrides = {}) {
   return {
-    spec: STORED_PORTRAIT_VIDEO_SPEC,
-    conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
-    requestKey: 'opaque-motion-request-key',
+    spec: 'mullet_portrait_video_request_v1',
+    modelTemplate: 'ltx-2.5-i2v-distilled-v1',
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       portraitRequestKey: 'opaque-portrait-request-key',
@@ -28,8 +31,20 @@ function stored(overrides = {}) {
         expression: 'grief'
       }
     },
-    modelTemplate: 'ltx-2.5-i2v-distilled-v1',
     aspectRatio: '2:3',
+    durationSeconds: 2,
+    ...overrides
+  };
+}
+
+function stored(overrides = {}) {
+  const motionRequest = request();
+  return {
+    spec: STORED_PORTRAIT_VIDEO_SPEC,
+    conversationId: motionRequest.source.conversationId,
+    requestKey: portraitVideoRequestKey(motionRequest),
+    request: motionRequest,
+    modelTemplate: motionRequest.modelTemplate,
     promptId: '22222222-2222-4222-8222-222222222222',
     seed: 42,
     width: 384,
@@ -38,6 +53,8 @@ function stored(overrides = {}) {
     fps: 24,
     durationSeconds: 2,
     generatedAt: 18,
+    inputImageSha256: 'a'.repeat(64),
+    videoSha256: 'b'.repeat(64),
     video: new Blob([Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' }),
     ...overrides
   };
@@ -48,32 +65,129 @@ test('normalizes a provenance-bound WebM without canonical transcript text', () 
   assert.equal(result.video.type, 'video/webm');
   assert.equal(result.frames, 49);
   assert.equal(result.fps, 24);
+  assert.equal(result.requestKey, portraitVideoRequestKey(result.request));
   assert.equal(JSON.stringify(result).includes('assistant'), false);
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('rejects another conversation, wrong timing, dimensions, and non-video blobs', () => {
+test('rejects unmatched request keys, conversations, hashes, timing, dimensions, and blobs', () => {
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ requestKey: 'wrong' })), /request key is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
-  assert.throws(() => normalizeStoredPortraitVideo(stored({ frames: 32 })), /timing is invalid/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ frames: 48 })), /timing is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ width: 512 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
 });
 
-test('discards a motion result when its portrait becomes stale during storage', async () => {
-  let resolveSave;
-  const saveBlocked = new Promise((resolve) => { resolveSave = resolve; });
+test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
+  const value = stored();
+  assert.deepEqual(unwrapStoredPortraitVideo(value), value);
+  assert.deepEqual(unwrapStoredPortraitVideo({
+    spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC,
+    writeId: 'writer-a',
+    video: value
+  }), value);
+  assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
+});
+
+test('rolls back a write that becomes stale before installation', async () => {
   let current = true;
   let installed = false;
-  let discardedPromptId = '';
-  const committing = commitStoredPortraitVideo(stored(), {
-    save: async () => saveBlocked,
+  let rolledBack = '';
+  const result = await commitStoredPortraitVideo(stored(), {
+    exclusive: async (operation) => operation(),
+    save: async () => {
+      current = false;
+      return { writeId: 'writer-a', previousRaw: null };
+    },
     isCurrent: () => current,
-    discard: async (video) => { discardedPromptId = video.promptId; },
+    rollback: async (receipt) => { rolledBack = receipt.writeId; },
     install: () => { installed = true; }
   });
-  current = false;
-  resolveSave();
-  assert.equal(await committing, false);
+  assert.equal(result, false);
   assert.equal(installed, false);
-  assert.equal(discardedPromptId, '22222222-2222-4222-8222-222222222222');
+  assert.equal(rolledBack, 'writer-a');
+});
+
+test('serializes writers so a later stale writer restores the valid prior envelope', async () => {
+  let persisted = null;
+  let currentA = true;
+  let installedB = false;
+  let tail = Promise.resolve();
+  const exclusive = async (operation) => {
+    const previous = tail;
+    let release;
+    tail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+  const save = async (video, writeId) => {
+    const previousRaw = persisted;
+    persisted = { spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId, video };
+    return { writeId, previousRaw };
+  };
+  const rollback = async (receipt) => {
+    if (persisted?.writeId === receipt.writeId) persisted = receipt.previousRaw;
+  };
+
+  await commitStoredPortraitVideo(stored(), {
+    exclusive,
+    save: (video) => save(video, 'writer-b'),
+    isCurrent: () => true,
+    rollback,
+    install: () => { installedB = true; }
+  });
+  const staleA = commitStoredPortraitVideo(stored(), {
+    exclusive,
+    save: async (video) => {
+      const receipt = await save(video, 'writer-a');
+      currentA = false;
+      return receipt;
+    },
+    isCurrent: () => currentA,
+    rollback,
+    install: () => assert.fail('stale writer installed')
+  });
+
+  assert.equal(await staleA, false);
+  assert.equal(installedB, true);
+  assert.equal(persisted?.writeId, 'writer-b');
+});
+
+test('checks currentness before loading and installs restores inside the lock', async () => {
+  let current = false;
+  let loaded = false;
+  const stale = await restoreStoredPortraitVideo({
+    exclusive: async (operation) => operation(),
+    load: async () => { loaded = true; return stored(); },
+    isCurrent: () => current,
+    accepts: () => true,
+    install: () => assert.fail('stale restore installed')
+  });
+  assert.equal(stale, null);
+  assert.equal(loaded, false);
+
+  let lockHeld = false;
+  let installedWhileLocked = false;
+  current = true;
+  const restored = await restoreStoredPortraitVideo({
+    exclusive: async (operation) => {
+      lockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        lockHeld = false;
+      }
+    },
+    load: async () => stored(),
+    isCurrent: () => current,
+    accepts: () => true,
+    install: () => { installedWhileLocked = lockHeld; }
+  });
+  assert.equal(restored?.request.source.portraitPromptId, '11111111-1111-4111-8111-111111111111');
+  assert.equal(installedWhileLocked, true);
 });
