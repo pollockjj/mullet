@@ -28,11 +28,11 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       model: runtime.modelId,
       systemPrompt: LIVING_HISTORY_SYSTEM_PROMPT,
       input: livingHistoryModelInput(historyRequest),
-      maxTokens: 1024,
+      maxTokens: 2048,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(LIVING_HISTORY_TIMEOUT_MS)])
     });
-    const summary = parseLivingHistoryResponse(completion);
-    return json(createLivingHistoryResult(historyRequest, runtime.modelId, summary), {
+    const update = parseLivingHistoryResponse(completion, historyRequest);
+    return json(createLivingHistoryResult(historyRequest, runtime.modelId, update), {
       headers: { 'cache-control': 'no-store' }
     });
   } catch (cause) {
