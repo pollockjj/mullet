@@ -1,4 +1,5 @@
 import {
+  CONVERSATION_MODE_FICTION,
   normalizeConversationMode,
   type ConversationMode
 } from './personal-assistant.ts';
@@ -6,6 +7,10 @@ import { isSidecarConversationId } from './sidecar.ts';
 
 export const STORED_WORKSPACE_SPEC = 'mullet_workspace_v1' as const;
 export const WORKSPACE_MAX_MESSAGES = 1000 as const;
+export const WORKSPACE_STORAGE_KEY = 'mullet.workspace.v1' as const;
+export const LEGACY_WORKSPACE_MODE_KEY = 'mullet.conversation-mode' as const;
+export const LEGACY_WORKSPACE_CONVERSATION_ID_KEY = 'mullet.conversation-id' as const;
+export const LEGACY_WORKSPACE_MESSAGES_KEY = 'mullet.checkpoint-one.messages' as const;
 
 export type WorkspaceMessage = {
   role: 'user' | 'assistant';
@@ -17,6 +22,13 @@ export type StoredWorkspace = {
   mode: ConversationMode;
   conversationId: string;
   messages: WorkspaceMessage[];
+};
+
+export type WorkspaceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+export type LoadedStoredWorkspace = {
+  workspace: StoredWorkspace;
+  disposition: 'current' | 'migrated' | 'reset';
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,4 +88,59 @@ export function createStoredWorkspace(
     conversationId,
     messages: messages.map((message) => ({ ...message }))
   });
+}
+
+function clearLegacyWorkspace(storage: WorkspaceStorage): void {
+  storage.removeItem(LEGACY_WORKSPACE_MODE_KEY);
+  storage.removeItem(LEGACY_WORKSPACE_CONVERSATION_ID_KEY);
+  storage.removeItem(LEGACY_WORKSPACE_MESSAGES_KEY);
+}
+
+export function saveStoredWorkspace(storage: WorkspaceStorage, workspace: StoredWorkspace): void {
+  const normalized = normalizeStoredWorkspace(workspace);
+  storage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(normalized));
+  clearLegacyWorkspace(storage);
+}
+
+export function loadStoredWorkspace(
+  storage: WorkspaceStorage,
+  newConversationId: string
+): LoadedStoredWorkspace {
+  if (!isSidecarConversationId(newConversationId)) throw new Error('new workspace conversationId must be a UUID');
+  const current = storage.getItem(WORKSPACE_STORAGE_KEY);
+  if (current !== null) {
+    try {
+      const workspace = normalizeStoredWorkspace(JSON.parse(current));
+      clearLegacyWorkspace(storage);
+      return { workspace, disposition: 'current' };
+    } catch {
+      const workspace = createStoredWorkspace(CONVERSATION_MODE_FICTION, newConversationId, []);
+      saveStoredWorkspace(storage, workspace);
+      return { workspace, disposition: 'reset' };
+    }
+  }
+
+  let mode: ConversationMode = CONVERSATION_MODE_FICTION;
+  try {
+    mode = normalizeConversationMode(storage.getItem(LEGACY_WORKSPACE_MODE_KEY));
+  } catch {
+    mode = CONVERSATION_MODE_FICTION;
+  }
+  const legacyConversationId = storage.getItem(LEGACY_WORKSPACE_CONVERSATION_ID_KEY);
+  const conversationId = isSidecarConversationId(legacyConversationId)
+    ? legacyConversationId
+    : newConversationId;
+  let messages: WorkspaceMessage[] = [];
+  const legacyMessages = storage.getItem(LEGACY_WORKSPACE_MESSAGES_KEY);
+  if (legacyMessages !== null) {
+    try {
+      const parsed = JSON.parse(legacyMessages);
+      messages = createStoredWorkspace(mode, conversationId, Array.isArray(parsed) ? parsed : []).messages;
+    } catch {
+      messages = [];
+    }
+  }
+  const workspace = createStoredWorkspace(mode, conversationId, messages);
+  saveStoredWorkspace(storage, workspace);
+  return { workspace, disposition: 'migrated' };
 }
