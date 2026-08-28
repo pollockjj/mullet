@@ -26,6 +26,12 @@ import {
 import { isScenarioCard } from '$lib/scenario';
 import { assertChatRequestTextSize } from '$lib/chat-request-size';
 import { LIVING_HISTORY_LOREBOOK_NAME } from '$lib/living-history';
+import {
+  CONVERSATION_MODE_FICTION,
+  CONVERSATION_MODE_PERSONAL_ASSISTANT,
+  compilePersonalAssistantMessages,
+  normalizeConversationMode
+} from '$lib/personal-assistant';
 
 type Role = 'system' | 'user' | 'assistant';
 
@@ -84,6 +90,12 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'request body must be JSON');
   }
+  let conversationMode;
+  try {
+    conversationMode = normalizeConversationMode(body.mode);
+  } catch (cause) {
+    throw error(400, cause instanceof Error ? cause.message : 'invalid conversation mode');
+  }
   const messages = validateMessages(body?.messages);
   let characterCard: ImportedCharacterCard | null = null;
   let upstreamMessages = messages;
@@ -106,6 +118,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   }
 
   if (body?.characterCard !== undefined && body.characterCard !== null) {
+    if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) {
+      throw error(400, 'personal-assistant mode does not accept a character card');
+    }
     try {
       characterCard = normalizeCharacterCard(body.characterCard);
     } catch (cause) {
@@ -116,7 +131,17 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
   const loreEnabled = body?.loreEnabled === undefined ? true : body.loreEnabled;
   if (typeof loreEnabled !== 'boolean') throw error(400, 'loreEnabled must be boolean');
-  if (loreEnabled) {
+  if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) {
+    const requestedLorebooks = body?.lorebooks ?? [];
+    if (!Array.isArray(requestedLorebooks) || requestedLorebooks.length !== 0) {
+      throw error(400, 'personal-assistant mode does not accept fiction lorebooks');
+    }
+    if (
+      personaDescription.trim()
+      || characterFilterNames.length
+      || characterTagIds.length
+    ) throw error(400, 'personal-assistant mode does not accept fiction persona or character filters');
+  } else if (loreEnabled) {
     const requestedLorebooks = body?.lorebooks ?? [];
     if (!Array.isArray(requestedLorebooks) || requestedLorebooks.length > 20) {
       throw error(400, 'lorebooks must be an array containing at most 20 books');
@@ -170,7 +195,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
   }
 
-  if (characterCard) {
+  if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) {
+    upstreamMessages = compilePersonalAssistantMessages(messages);
+  } else if (characterCard) {
     const history = loreResult ? injectLoreContext(messages, loreResult) : messages;
     upstreamMessages = compileCharacterMessages(characterCard, history, userName.trim(), loreResult ?? {});
   } else if (loreResult) {
@@ -207,10 +234,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     connection: 'keep-alive',
     'x-accel-buffering': 'no',
     'x-mullet-token-limit': String(tokenLimit),
+    'x-mullet-mode': conversationMode,
     'x-mullet-living-history-active': String(Number(Boolean(
       loreResult?.activated.some((entry) => entry.book === LIVING_HISTORY_LOREBOOK_NAME)
     )))
   };
+  if (conversationMode !== CONVERSATION_MODE_FICTION) {
+    headers['x-mullet-living-history-active'] = '0';
+  }
   if (characterCard) {
     headers['x-mullet-character'] = encodeURIComponent(characterCard.data.name);
     headers['x-mullet-card-spec'] = `${characterCard.spec}@${characterCard.specVersion}`;
