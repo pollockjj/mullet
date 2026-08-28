@@ -53,13 +53,14 @@ export async function loadPortraitCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<PortraitCapabilities> {
+  const referenceNodes = FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.requiredNodes;
   const paths = [
     '/object_info/UNETLoader',
     '/object_info/CLIPLoader',
     '/object_info/VAELoader',
     '/object_info/LoraLoader',
     '/object_info/LoadImage',
-    ...FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.requiredNodes.map((nodeName) => `/object_info/${nodeName}`)
+    ...referenceNodes.map((nodeName) => `/object_info/${nodeName}`)
   ];
   const [unetInfo, clipInfo, vaeInfo, loraInfo, ...referenceNodeInfo] = await Promise.all(paths.map(async (path) => {
     const response = await fetcher(endpoint(baseUrl, path), { signal });
