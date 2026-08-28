@@ -17,6 +17,7 @@ import {
   buildInlineSceneVideoRequest,
   buildMiniMaxH3InlineSceneVideoWorkflow,
   inlineSceneVideoDimensions,
+  inlineSceneVideoMasterToggleAction,
   inlineSceneVideoReconciliationAllowed,
   inlineSceneVideoRequestKey,
   normalizeInlineSceneVideoRequest,
@@ -129,6 +130,13 @@ test('blocks replacement generation until persisted motion restoration finishes'
   };
   assert.equal(inlineSceneVideoReconciliationAllowed(ready), true);
   assert.equal(inlineSceneVideoReconciliationAllowed({ ...ready, restorationPending: true }), false);
+});
+
+test('restores persisted motion when the master scene toggle is re-enabled', () => {
+  assert.equal(inlineSceneVideoMasterToggleAction(false, true, true), 'abort');
+  assert.equal(inlineSceneVideoMasterToggleAction(true, true, true), 'restore');
+  assert.equal(inlineSceneVideoMasterToggleAction(true, false, true), 'none');
+  assert.equal(inlineSceneVideoMasterToggleAction(true, true, false), 'none');
 });
 
 test('rejects missing, empty, and non-canonical integer provenance headers', () => {

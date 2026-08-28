@@ -109,6 +109,8 @@ export type InlineSceneVideoReconciliationConditions = {
   current: boolean;
 };
 
+export type InlineSceneVideoMasterToggleAction = 'abort' | 'restore' | 'none';
+
 export type InlineSceneVideoInputScene = {
   conversationId: string;
   epoch: string;
@@ -269,6 +271,16 @@ export function inlineSceneVideoReconciliationAllowed(
     && !conditions.videoError
     && conditions.requestReady
     && !conditions.current;
+}
+
+export function inlineSceneVideoMasterToggleAction(
+  scenesEnabled: boolean,
+  motionEnabled: boolean,
+  persistenceAvailable: boolean
+): InlineSceneVideoMasterToggleAction {
+  if (!scenesEnabled) return 'abort';
+  if (motionEnabled && persistenceAvailable) return 'restore';
+  return 'none';
 }
 
 export function parseInlineSceneVideoIntegerHeader(

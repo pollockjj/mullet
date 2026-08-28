@@ -68,6 +68,7 @@
     INLINE_SCENE_VIDEO_FRAMES,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     buildInlineSceneVideoRequest,
+    inlineSceneVideoMasterToggleAction,
     inlineSceneVideoReconciliationAllowed,
     inlineSceneVideoRequestKey,
     inlineSceneVideoSourceRequestSha256,
@@ -1448,7 +1449,14 @@
     localStorage.setItem(inlineScenesEnabledStorageKey, String(inlineScenesEnabled));
     inlineSceneError = '';
     lastInlineSceneAttemptKey = '';
-    if (!inlineScenesEnabled) {
+    inlineSceneVideoError = '';
+    lastInlineSceneVideoAttemptKey = '';
+    const videoAction = inlineSceneVideoMasterToggleAction(
+      inlineScenesEnabled,
+      inlineSceneMotionEnabled,
+      inlineSceneVideoPersistenceAvailable
+    );
+    if (videoAction === 'abort') {
       inlineSceneGeneration += 1;
       inlineSceneController?.abort();
       inlineSceneController = null;
@@ -1457,6 +1465,8 @@
       inlineSceneVideoController?.abort();
       inlineSceneVideoController = null;
       inlineSceneVideoBusy = false;
+    } else if (videoAction === 'restore') {
+      void runInlineSceneVideoRestoration(restoreGeneratedInlineSceneVideo);
     }
   }
 
