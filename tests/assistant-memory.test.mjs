@@ -5,6 +5,9 @@ import {
   ASSISTANT_MEMORY_FACT_LIMIT,
   ASSISTANT_MEMORY_LOREBOOK_NAME,
   ASSISTANT_MEMORY_MAX_TOKENS,
+  ASSISTANT_MEMORY_MAX_REQUEST_BYTES,
+  ASSISTANT_MEMORY_MAX_EVIDENCE_CHARS,
+  ASSISTANT_MEMORY_MAX_STATE_CHARS,
   ASSISTANT_MEMORY_PREFERENCE_LIMIT,
   ASSISTANT_MEMORY_REQUEST_SPEC,
   ASSISTANT_MEMORY_SYSTEM_PROMPT,
@@ -84,6 +87,7 @@ test('builds one isolated completed-turn request without mutating canonical chat
   assert.deepEqual(normalizeAssistantMemoryRequest(request), request);
   assert.equal(JSON.stringify(messages), canonical);
   assert.equal(ASSISTANT_MEMORY_MAX_TOKENS, 3_072);
+  assert.equal(ASSISTANT_MEMORY_MAX_REQUEST_BYTES, 256 * 1024);
   assert.equal(ASSISTANT_MEMORY_TIMEOUT_MS, 60_000);
   assert.equal(ASSISTANT_MEMORY_FACT_LIMIT, 16);
   assert.equal(ASSISTANT_MEMORY_PREFERENCE_LIMIT, 16);
@@ -364,4 +368,65 @@ test('prunes old closed tasks so completed work never exhausts future capacity',
   assert.equal(result.output.tasks.length, 16);
   assert.equal(result.output.tasks.some((task) => task.key === 'task-0'), false);
   assert.equal(result.output.tasks.some((task) => task.key === 'task-16'), true);
+});
+
+test('compacts the oldest active records instead of stranding a full ledger', () => {
+  let result = null;
+  const banks = [
+    ['facts', 10],
+    ['preferences', 10],
+    ['tasks', 10]
+  ];
+  let revision = 0;
+  for (const [bank, count] of banks) {
+    for (let index = 0; index < count; index += 1) {
+      const text = `${bank} durable value ${index}`;
+      const request = buildAssistantMemoryRequest(memoryId, crypto.randomUUID(), [
+        { role: 'user', content: text },
+        { role: 'assistant', content: 'I will retain that durable memory.' }
+      ], result);
+      const operation = bank === 'tasks'
+        ? { operation: 'create', key: `${bank}-${index}`, text, due_text: '', evidence: { message_index: 0, text } }
+        : { operation: 'create', key: `${bank}-${index}`, value: text, evidence: { message_index: 0, text } };
+      result = createAssistantMemoryResult(request, 'gemma-4-ortenzya', parseAssistantMemoryResponse(JSON.stringify({
+        facts: bank === 'facts' ? [operation] : [],
+        preferences: bank === 'preferences' ? [operation] : [],
+        tasks: bank === 'tasks' ? [operation] : []
+      }), request));
+      revision += 1;
+    }
+  }
+  assert.equal(result.output.revision, revision);
+  assert.equal(result.output.facts.length + result.output.preferences.length + result.output.tasks.length, 24);
+  assert.equal(result.output.facts.some((record) => record.key === 'facts-0'), false);
+  assert.equal(result.output.facts.some((record) => record.key === 'facts-6'), true);
+  assert.equal(result.output.tasks.some((record) => record.key === 'tasks-9'), true);
+});
+
+test('compacts oversized active evidence and state without rejecting the turn', () => {
+  let result = null;
+  for (let index = 0; index < 24; index += 1) {
+    const bank = index < 12 ? 'facts' : 'preferences';
+    const text = `${bank} ${index} ${'x'.repeat(240)}`.slice(0, 240);
+    const request = buildAssistantMemoryRequest(memoryId, crypto.randomUUID(), [
+      { role: 'user', content: text },
+      { role: 'assistant', content: 'I will retain only the bounded durable set.' }
+    ], result);
+    const operation = {
+      operation: 'create', key: `${bank}-${index}`, value: text,
+      evidence: { message_index: 0, text }
+    };
+    result = createAssistantMemoryResult(request, 'gemma-4-ortenzya', parseAssistantMemoryResponse(JSON.stringify({
+      facts: bank === 'facts' ? [operation] : [],
+      preferences: bank === 'preferences' ? [operation] : [],
+      tasks: []
+    }), request));
+  }
+  const records = [...result.output.facts, ...result.output.preferences, ...result.output.tasks];
+  const stateChars = records.reduce((sum, record) => sum + record.key.length + ('value' in record ? record.value.length : record.text.length + record.dueText.length), 0);
+  const evidenceChars = records.flatMap((record) => record.evidence).reduce((sum, evidence) => sum + evidence.text.length, 0);
+  assert.ok(records.length > 0 && records.length < 24);
+  assert.ok(stateChars <= ASSISTANT_MEMORY_MAX_STATE_CHARS);
+  assert.ok(evidenceChars <= ASSISTANT_MEMORY_MAX_EVIDENCE_CHARS);
+  assert.equal(result.output.preferences.some((record) => record.key === 'preferences-23'), true);
 });

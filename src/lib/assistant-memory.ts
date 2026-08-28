@@ -14,6 +14,7 @@ export const ASSISTANT_MEMORY_RESULT_SPEC = 'mullet_assistant_memory_result_v1' 
 export const ASSISTANT_MEMORY_LOREBOOK_NAME = 'MULLET · Assistant Memory' as const;
 export const ASSISTANT_MEMORY_TIMEOUT_MS = 60_000 as const;
 export const ASSISTANT_MEMORY_MAX_TOKENS = 3_072 as const;
+export const ASSISTANT_MEMORY_MAX_REQUEST_BYTES = 256 * 1024;
 export const ASSISTANT_MEMORY_FACT_LIMIT = 16 as const;
 export const ASSISTANT_MEMORY_PREFERENCE_LIMIT = 16 as const;
 export const ASSISTANT_MEMORY_TASK_LIMIT = 16 as const;
@@ -571,17 +572,24 @@ function applyTaskOperations(previous: AssistantMemoryTask[], operations: TaskOp
   return [...records.values()].sort((left, right) => left.key.localeCompare(right.key));
 }
 
-function retainNewestInactive<T extends { key: string; status: string; updatedRevision: number }>(
+function retainHighestPriority<T extends {
+  key: string;
+  status: string;
+  createdRevision: number;
+  updatedRevision: number;
+}>(
   records: T[],
   activeStatus: string,
   limit: number
 ): T[] {
-  const active = records.filter((record) => record.status === activeStatus);
-  if (active.length >= limit) return active.sort((left, right) => left.key.localeCompare(right.key));
-  const inactive = records
-    .filter((record) => record.status !== activeStatus)
-    .sort((left, right) => right.updatedRevision - left.updatedRevision || left.key.localeCompare(right.key));
-  return [...active, ...inactive.slice(0, limit - active.length)]
+  return [...records]
+    .sort((left, right) => (
+      Number(right.status === activeStatus) - Number(left.status === activeStatus)
+      || right.updatedRevision - left.updatedRevision
+      || right.createdRevision - left.createdRevision
+      || left.key.localeCompare(right.key)
+    ))
+    .slice(0, limit)
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
@@ -590,31 +598,55 @@ function pruneAssistantMemoryState(
   preferences: AssistantMemoryPreference[],
   tasks: AssistantMemoryTask[]
 ): Pick<AssistantMemoryState, 'facts' | 'preferences' | 'tasks'> {
-  let nextFacts = retainNewestInactive(facts, 'active', ASSISTANT_MEMORY_FACT_LIMIT);
-  let nextPreferences = retainNewestInactive(preferences, 'active', ASSISTANT_MEMORY_PREFERENCE_LIMIT);
-  let nextTasks = retainNewestInactive(tasks, 'open', ASSISTANT_MEMORY_TASK_LIMIT);
-  const activeCount = nextFacts.filter((record) => record.status === 'active').length
-    + nextPreferences.filter((record) => record.status === 'active').length
-    + nextTasks.filter((record) => record.status === 'open').length;
-  if (activeCount > ASSISTANT_MEMORY_TOTAL_RECORD_LIMIT) {
-    return { facts: nextFacts, preferences: nextPreferences, tasks: nextTasks };
-  }
-  const excess = nextFacts.length + nextPreferences.length + nextTasks.length - ASSISTANT_MEMORY_TOTAL_RECORD_LIMIT;
-  if (excess > 0) {
-    const inactive = [
-      ...nextFacts.filter((record) => record.status !== 'active').map((record) => ({ bank: 'facts', record })),
-      ...nextPreferences.filter((record) => record.status !== 'active').map((record) => ({ bank: 'preferences', record })),
-      ...nextTasks.filter((record) => record.status !== 'open').map((record) => ({ bank: 'tasks', record }))
-    ].sort((left, right) => (
-      left.record.updatedRevision - right.record.updatedRevision
-      || left.record.key.localeCompare(right.record.key)
-    ));
-    const removed = new Set(inactive.slice(0, excess).map((item) => `${item.bank}:${item.record.key}`));
-    nextFacts = nextFacts.filter((record) => !removed.has(`facts:${record.key}`));
-    nextPreferences = nextPreferences.filter((record) => !removed.has(`preferences:${record.key}`));
-    nextTasks = nextTasks.filter((record) => !removed.has(`tasks:${record.key}`));
-  }
-  return { facts: nextFacts, preferences: nextPreferences, tasks: nextTasks };
+  const nextFacts = retainHighestPriority(facts, 'active', ASSISTANT_MEMORY_FACT_LIMIT);
+  const nextPreferences = retainHighestPriority(preferences, 'active', ASSISTANT_MEMORY_PREFERENCE_LIMIT);
+  const nextTasks = retainHighestPriority(tasks, 'open', ASSISTANT_MEMORY_TASK_LIMIT);
+  const ranked = [
+    ...nextFacts.map((record) => ({ bank: 'facts' as const, active: record.status === 'active', record })),
+    ...nextPreferences.map((record) => ({ bank: 'preferences' as const, active: record.status === 'active', record })),
+    ...nextTasks.map((record) => ({ bank: 'tasks' as const, active: record.status === 'open', record }))
+  ].sort((left, right) => (
+    Number(right.active) - Number(left.active)
+    || right.record.updatedRevision - left.record.updatedRevision
+    || right.record.createdRevision - left.record.createdRevision
+    || left.bank.localeCompare(right.bank)
+    || left.record.key.localeCompare(right.record.key)
+  ));
+  const retained = ranked.slice(0, ASSISTANT_MEMORY_TOTAL_RECORD_LIMIT);
+  const stateChars = () => retained.reduce((sum, item) => sum
+    + item.record.key.length
+    + ('value' in item.record ? item.record.value.length : item.record.text.length + item.record.dueText.length), 0);
+  const evidenceChars = () => retained.reduce((sum, item) => sum
+    + item.record.evidence.reduce((evidenceSum, evidence) => evidenceSum + evidence.text.length, 0), 0);
+  while (
+    retained.length
+    && (stateChars() > ASSISTANT_MEMORY_MAX_STATE_CHARS || evidenceChars() > ASSISTANT_MEMORY_MAX_EVIDENCE_CHARS)
+  ) retained.pop();
+  const retainedKeys = new Set(retained.map((item) => `${item.bank}:${item.record.key}`));
+  return {
+    facts: nextFacts.filter((record) => retainedKeys.has(`facts:${record.key}`)),
+    preferences: nextPreferences.filter((record) => retainedKeys.has(`preferences:${record.key}`)),
+    tasks: nextTasks.filter((record) => retainedKeys.has(`tasks:${record.key}`))
+  };
+}
+
+function assistantMemoryCompactionMatches(
+  next: Pick<AssistantMemoryState, 'facts' | 'preferences' | 'tasks'>,
+  previous: AssistantMemoryState
+): boolean {
+  const merge = <T extends { key: string }>(current: T[], prior: T[]): T[] => {
+    const records = new Map(current.map((record) => [record.key, record]));
+    prior.forEach((record) => {
+      if (!records.has(record.key)) records.set(record.key, record);
+    });
+    return [...records.values()];
+  };
+  const compacted = pruneAssistantMemoryState(
+    merge(next.facts, previous.facts),
+    merge(next.preferences, previous.preferences),
+    merge(next.tasks, previous.tasks)
+  );
+  return JSON.stringify(compacted) === JSON.stringify(next);
 }
 
 export function createAssistantMemoryResult(
@@ -692,9 +724,7 @@ export function assistantMemoryResultMatchesRequest(
         && normalizedRequest.turns[0].content.includes(evidence.text);
     };
     const factBankMatches = (next: AssistantMemoryFact[], previous: AssistantMemoryFact[]) => {
-      const nextByKey = new Map(next.map((record) => [record.key, record]));
       const previousByKey = new Map(previous.map((record) => [record.key, record]));
-      if (previous.some((record) => record.status === 'active' && !nextByKey.has(record.key))) return false;
       return next.every((record) => {
         const prior = previousByKey.get(record.key);
         if (prior && JSON.stringify(record) === JSON.stringify(prior)) return true;
@@ -713,9 +743,7 @@ export function assistantMemoryResultMatchesRequest(
       });
     };
     const taskBankMatches = (next: AssistantMemoryTask[], previous: AssistantMemoryTask[]) => {
-      const nextByKey = new Map(next.map((record) => [record.key, record]));
       const previousByKey = new Map(previous.map((record) => [record.key, record]));
-      if (previous.some((record) => record.status === 'open' && !nextByKey.has(record.key))) return false;
       return next.every((record) => {
         const prior = previousByKey.get(record.key);
         if (prior && JSON.stringify(record) === JSON.stringify(prior)) return true;
@@ -740,7 +768,8 @@ export function assistantMemoryResultMatchesRequest(
     };
     return factBankMatches(normalizedResult.output.facts, normalizedRequest.previous.facts)
       && factBankMatches(normalizedResult.output.preferences, normalizedRequest.previous.preferences)
-      && taskBankMatches(normalizedResult.output.tasks, normalizedRequest.previous.tasks);
+      && taskBankMatches(normalizedResult.output.tasks, normalizedRequest.previous.tasks)
+      && assistantMemoryCompactionMatches(normalizedResult.output, normalizedRequest.previous);
   } catch {
     return false;
   }

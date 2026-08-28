@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   ASSISTANT_MEMORY_MAX_TOKENS,
+  ASSISTANT_MEMORY_MAX_REQUEST_BYTES,
   ASSISTANT_MEMORY_SYSTEM_PROMPT,
   ASSISTANT_MEMORY_TIMEOUT_MS,
   assistantMemoryModelInput,
@@ -12,10 +13,40 @@ import {
 import { runSidecarCompletion } from '$lib/server/sidecar-model';
 import { runtime } from '$lib/server/runtime';
 
-export const POST: RequestHandler = async ({ request, fetch }) => {
-  const body = await request.json().catch(() => {
-    throw error(400, 'request body must be JSON');
+async function readBoundedJson(request: Request): Promise<unknown> {
+  const declaredLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > ASSISTANT_MEMORY_MAX_REQUEST_BYTES) {
+    throw error(413, `assistant-memory request exceeds ${ASSISTANT_MEMORY_MAX_REQUEST_BYTES} bytes`);
+  }
+  if (!request.body) throw error(400, 'request body must be JSON');
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > ASSISTANT_MEMORY_MAX_REQUEST_BYTES) {
+      void reader.cancel();
+      throw error(413, `assistant-memory request exceeds ${ASSISTANT_MEMORY_MAX_REQUEST_BYTES} bytes`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
   });
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw error(400, 'request body must be JSON');
+  }
+}
+
+export const POST: RequestHandler = async ({ request, fetch }) => {
+  const body = await readBoundedJson(request);
   let memoryRequest;
   try {
     memoryRequest = normalizeAssistantMemoryRequest(body);
