@@ -5,6 +5,9 @@ import {
   PORTRAIT_VIDEO_DURATION_SECONDS,
   PORTRAIT_VIDEO_FPS,
   PORTRAIT_VIDEO_FRAMES,
+  PORTRAIT_VIDEO_MODE_I2V,
+  PORTRAIT_VIDEO_MODE_LOOP_FLF,
+  PORTRAIT_VIDEO_MODES,
   PORTRAIT_VIDEO_REQUEST_SPEC,
   PORTRAIT_VIDEO_TEMPLATE_ID,
   buildPortraitVideoPrompt,
@@ -12,6 +15,7 @@ import {
   buildLtx25PortraitVideoWorkflow,
   normalizePortraitVideoRequest,
   portraitVideoDimensions,
+  portraitVideoOutputNode,
   portraitVideoRequestKey
 } from '../src/lib/portrait-video.ts';
 
@@ -54,6 +58,7 @@ test('binds portrait motion to one generated portrait without transcript text', 
   const built = request();
   assert.equal(built.spec, PORTRAIT_VIDEO_REQUEST_SPEC);
   assert.equal(built.modelTemplate, PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(built.mode, PORTRAIT_VIDEO_MODE_I2V);
   assert.equal(built.source.portraitRequestKey, 'opaque-portrait-request-key');
   assert.equal(built.source.portraitPromptId, '11111111-1111-4111-8111-111111111111');
   assert.equal(built.source.portraitSource.expression, 'grief');
@@ -87,12 +92,44 @@ test('compiles the fixed LTX 2.5 distilled I2V workflow', () => {
   assert.equal(graph['16'].inputs.noise_seed, 42);
   assert.equal(graph['31'].inputs.codec, 'vp9');
   assert.equal(graph['31'].inputs.fps, 24);
+  assert.equal(portraitVideoOutputNode(request()), '31');
+});
+
+test('compiles a true identical first/last-frame looping workflow in both passes', () => {
+  const loopRequest = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_LOOP_FLF);
+  const graph = buildLtx25PortraitVideoWorkflow(loopRequest, {
+    name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: 'a'.repeat(64)
+  }, 42);
+  assert.deepEqual(PORTRAIT_VIDEO_MODES.map(({ id }) => id), ['i2v', 'flf2v_loop']);
+  assert.equal(graph['12'].class_type, 'LTXVAddGuide');
+  assert.equal(graph['12'].inputs.frame_idx, 0);
+  assert.equal(graph['12'].inputs.strength, 0.7);
+  assert.deepEqual(graph['12'].inputs.image, ['2', 0]);
+  assert.equal(graph['13'].class_type, 'LTXVAddGuide');
+  assert.equal(graph['13'].inputs.frame_idx, -1);
+  assert.deepEqual(graph['13'].inputs.image, ['2', 0]);
+  assert.deepEqual(graph['22'].inputs.latent, ['21', 0]);
+  assert.equal(graph['22'].class_type, 'LTXVCropGuides');
+  assert.equal(graph['24'].inputs.frame_idx, 0);
+  assert.equal(graph['25'].inputs.frame_idx, -1);
+  assert.deepEqual(graph['24'].inputs.image, ['2', 0]);
+  assert.deepEqual(graph['25'].inputs.image, ['2', 0]);
+  assert.equal(graph['33'].class_type, 'LTXVCropGuides');
+  assert.deepEqual(graph['34'].inputs.samples, ['33', 2]);
+  assert.equal(graph['35'].inputs.codec, 'vp9');
+  assert.equal(graph['35'].inputs.fps, 24);
+  assert.equal(portraitVideoOutputNode(loopRequest), '35');
+  assert.match(buildPortraitVideoPrompt(loopRequest), /identical supplied portrait is the first and final keyframe/);
 });
 
 test('rejects arbitrary templates, durations, paths, and mismatched portrait dimensions', () => {
   const built = request();
   assert.throws(() => normalizePortraitVideoRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait-video model/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, durationSeconds: 5 }), /unsupported portrait-video duration/);
+  assert.throws(() => normalizePortraitVideoRequest({ ...built, mode: 'anything' }), /unsupported portrait-video mode/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, source: { ...built.source, portraitWidth: 832 } }), /dimensions do not match/);
   assert.throws(() => buildLtx25PortraitVideoWorkflow(built, {
     name: '../escape.png',
@@ -108,6 +145,7 @@ test('rejects arbitrary templates, durations, paths, and mismatched portrait dim
   }, 1), /input reference is invalid/);
   assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(buildPortraitVideoRequest(portrait({ generatedAt: 18 }), '2:3', 'a'.repeat(64))));
   assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(buildPortraitVideoRequest(portrait(), '2:3', 'b'.repeat(64))));
+  assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_LOOP_FLF)));
   assert.notEqual(
     portraitVideoRequestKey(built),
     portraitVideoRequestKey({
