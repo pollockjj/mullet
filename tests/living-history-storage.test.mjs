@@ -5,7 +5,7 @@ import {
   buildLivingHistoryRequest,
   createLivingHistoryResult
 } from '../src/lib/living-history.ts';
-import { commitLivingHistoryResult } from '../src/lib/living-history-storage.ts';
+import { commitLivingHistoryResult, restoreLivingHistoryResult } from '../src/lib/living-history-storage.ts';
 
 function result() {
   const request = buildLivingHistoryRequest(
@@ -43,4 +43,21 @@ test('discards a history result when reset lands during its storage write', asyn
   assert.equal(await committing, false);
   assert.equal(installed, false);
   assert.equal(discardedRevision, 1);
+});
+
+test('does not resurrect history when clear lands during a delayed restore', async () => {
+  let resolveLoad;
+  const delayedLoad = new Promise((resolve) => { resolveLoad = resolve; });
+  let current = true;
+  let accepted = false;
+  const restoring = restoreLivingHistoryResult({
+    load: async () => delayedLoad,
+    isCurrent: () => current,
+    accepts: () => { accepted = true; return true; },
+    discard: async () => {}
+  });
+  current = false;
+  resolveLoad(result());
+  assert.equal(await restoring, null);
+  assert.equal(accepted, false);
 });

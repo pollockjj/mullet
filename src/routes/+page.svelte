@@ -56,6 +56,7 @@
     clearStoredLivingHistoryIfResult,
     commitLivingHistoryResult,
     loadStoredLivingHistory,
+    restoreLivingHistoryResult,
     saveStoredLivingHistory
   } from '$lib/living-history-storage';
   import {
@@ -161,6 +162,7 @@
   let livingHistoryError = '';
   let lastLivingHistoryAttemptKey = '';
   let livingHistoryController: AbortController | null = null;
+  let livingHistoryGeneration = 0;
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let selectedScenarioId = '';
@@ -566,6 +568,7 @@
   }
 
   function disableLivingHistoryPersistence(cause: unknown) {
+    livingHistoryGeneration += 1;
     livingHistoryController?.abort();
     livingHistoryPersistenceAvailable = false;
     livingHistoryEnabled = false;
@@ -574,22 +577,24 @@
   }
 
   async function restoreLivingHistory() {
+    const restoreGeneration = livingHistoryGeneration;
+    const restoreConversationId = conversationId;
     try {
-      const stored = await loadStoredLivingHistory();
-      if (stored) {
-        const normalized = normalizeLivingHistoryResult(stored);
-        if (livingHistoryResultAppliesToMessages(normalized, conversationId, messages)) {
-          livingHistoryResult = normalized;
-          livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > normalized.source.messageCount);
-          persistLivingHistoryBoundaries();
-        } else {
-          await clearStoredLivingHistory();
-        }
+      const restored = await restoreLivingHistoryResult({
+        load: loadStoredLivingHistory,
+        isCurrent: () => restoreGeneration === livingHistoryGeneration && restoreConversationId === conversationId,
+        accepts: (result) => livingHistoryResultAppliesToMessages(result, restoreConversationId, messages),
+        discard: clearStoredLivingHistory
+      });
+      if (restored) {
+        livingHistoryResult = restored;
+        livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > restored.source.messageCount);
+        persistLivingHistoryBoundaries();
       }
     } catch (cause) {
       disableLivingHistoryPersistence(cause);
     } finally {
-      livingHistoryPersistenceReady = true;
+      if (restoreGeneration === livingHistoryGeneration) livingHistoryPersistenceReady = true;
     }
   }
 
@@ -713,6 +718,7 @@
   }
 
   async function clearLivingHistory() {
+    livingHistoryGeneration += 1;
     livingHistoryController?.abort();
     livingHistoryResult = null;
     livingHistoryBoundaries = [];
@@ -723,6 +729,8 @@
       await clearStoredLivingHistory();
     } catch (cause) {
       disableLivingHistoryPersistence(cause);
+    } finally {
+      livingHistoryPersistenceReady = true;
     }
   }
 
@@ -1572,7 +1580,7 @@
             </button>
             <button
               on:click={() => void clearLivingHistory()}
-              disabled={streaming || livingHistoryBusy || (!livingHistoryResult && livingHistoryBoundaries.length === 0)}
+              disabled={streaming || livingHistoryBusy || !livingHistoryPersistenceReady || (!livingHistoryResult && livingHistoryBoundaries.length === 0)}
             >Clear</button>
           </div>
           <small>200-word target · every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>

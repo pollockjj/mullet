@@ -15,6 +15,13 @@ export type LivingHistoryCommitOperations = {
   install: (result: LivingHistoryResult) => void;
 };
 
+export type LivingHistoryRestoreOperations = {
+  load: () => Promise<unknown | null>;
+  isCurrent: () => boolean;
+  accepts: (result: LivingHistoryResult) => boolean;
+  discard: () => Promise<void>;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -117,4 +124,18 @@ export async function commitLivingHistoryResult(
   }
   operations.install(normalized);
   return true;
+}
+
+export async function restoreLivingHistoryResult(
+  operations: LivingHistoryRestoreOperations
+): Promise<LivingHistoryResult | null> {
+  const stored = await operations.load();
+  if (!operations.isCurrent() || stored === null) return null;
+  const normalized = normalizeLivingHistoryResult(stored);
+  if (!operations.accepts(normalized)) {
+    await operations.discard();
+    return null;
+  }
+  if (!operations.isCurrent()) return null;
+  return normalized;
 }
