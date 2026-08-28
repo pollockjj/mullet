@@ -14,18 +14,26 @@ type StoredLivingHistoryEnvelope = {
   result: LivingHistoryResult;
 };
 
+export type LivingHistoryWriteReceipt = {
+  writeId: string;
+  previousRaw: unknown | null;
+};
+
+export type LivingHistoryExclusiveRunner = <T>(operation: () => Promise<T>) => Promise<T>;
+
 export type LivingHistoryCommitOperations = {
-  save: (result: LivingHistoryResult) => Promise<string>;
+  save: (result: LivingHistoryResult) => Promise<LivingHistoryWriteReceipt>;
   isCurrent: () => boolean;
-  discard: (writeId: string) => Promise<void>;
+  discard: (receipt: LivingHistoryWriteReceipt) => Promise<void>;
   install: (result: LivingHistoryResult) => void;
+  exclusive?: LivingHistoryExclusiveRunner;
 };
 
 export type LivingHistoryRestoreOperations = {
   load: () => Promise<unknown | null>;
   isCurrent: () => boolean;
   accepts: (result: LivingHistoryResult) => boolean;
-  discard: () => Promise<void>;
+  exclusive?: LivingHistoryExclusiveRunner;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,6 +46,12 @@ export function unwrapStoredLivingHistory(value: unknown): unknown | null {
     throw new Error('stored living-history envelope is invalid');
   }
   return value.result;
+}
+
+export async function runStoredLivingHistoryExclusive<T>(operation: () => Promise<T>): Promise<T> {
+  const lockManager = globalThis.navigator?.locks;
+  if (!lockManager) throw new Error('browser Web Locks are required for living-history persistence');
+  return lockManager.request('mullet-living-history-state', { mode: 'exclusive' }, operation);
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -76,7 +90,7 @@ export async function loadStoredLivingHistory(): Promise<unknown | null> {
   }
 }
 
-export async function saveStoredLivingHistory(result: LivingHistoryResult): Promise<string> {
+export async function saveStoredLivingHistory(result: LivingHistoryResult): Promise<LivingHistoryWriteReceipt> {
   const normalized = normalizeLivingHistoryResult(result);
   const writeId = globalThis.crypto.randomUUID();
   const envelope: StoredLivingHistoryEnvelope = {
@@ -85,15 +99,22 @@ export async function saveStoredLivingHistory(result: LivingHistoryResult): Prom
     result: normalized
   };
   const database = await openDatabase();
+  let previousRaw: unknown | null = null;
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
-      transaction.objectStore(STORE_NAME).put(envelope, ACTIVE_HISTORY_KEY);
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(ACTIVE_HISTORY_KEY);
+      request.onsuccess = () => {
+        previousRaw = request.result ?? null;
+        store.put(envelope, ACTIVE_HISTORY_KEY);
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB living-history previous-state read failed'));
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB living-history write failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB living-history write aborted'));
     });
-    return writeId;
+    return { writeId, previousRaw };
   } finally {
     database.close();
   }
@@ -114,8 +135,8 @@ export async function clearStoredLivingHistory(): Promise<void> {
   }
 }
 
-export async function clearStoredLivingHistoryIfWriteId(writeId: string): Promise<void> {
-  if (!writeId || writeId.length > 200) throw new Error('living-history write ID is invalid');
+export async function rollbackStoredLivingHistoryWrite(receipt: LivingHistoryWriteReceipt): Promise<void> {
+  if (!receipt.writeId || receipt.writeId.length > 200) throw new Error('living-history write ID is invalid');
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -127,9 +148,10 @@ export async function clearStoredLivingHistoryIfWriteId(writeId: string): Promis
         if (
           isRecord(candidate)
           && candidate.spec === STORED_LIVING_HISTORY_SPEC
-          && candidate.writeId === writeId
+          && candidate.writeId === receipt.writeId
         ) {
-          store.delete(ACTIVE_HISTORY_KEY);
+          if (receipt.previousRaw === null) store.delete(ACTIVE_HISTORY_KEY);
+          else store.put(receipt.previousRaw, ACTIVE_HISTORY_KEY);
         }
       };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB living-history conditional read failed'));
@@ -146,27 +168,29 @@ export async function commitLivingHistoryResult(
   result: LivingHistoryResult,
   operations: LivingHistoryCommitOperations
 ): Promise<boolean> {
-  const normalized = normalizeLivingHistoryResult(result);
-  if (!operations.isCurrent()) return false;
-  const writeId = await operations.save(normalized);
-  if (!operations.isCurrent()) {
-    await operations.discard(writeId);
-    return false;
-  }
-  operations.install(normalized);
-  return true;
+  const execute = async () => {
+    const normalized = normalizeLivingHistoryResult(result);
+    if (!operations.isCurrent()) return false;
+    const receipt = await operations.save(normalized);
+    if (!operations.isCurrent()) {
+      await operations.discard(receipt);
+      return false;
+    }
+    operations.install(normalized);
+    return true;
+  };
+  return operations.exclusive ? operations.exclusive(execute) : execute();
 }
 
 export async function restoreLivingHistoryResult(
   operations: LivingHistoryRestoreOperations
 ): Promise<LivingHistoryResult | null> {
-  const stored = await operations.load();
-  if (!operations.isCurrent() || stored === null) return null;
-  const normalized = normalizeLivingHistoryResult(stored);
-  if (!operations.accepts(normalized)) {
-    await operations.discard();
-    return null;
-  }
-  if (!operations.isCurrent()) return null;
-  return normalized;
+  const execute = async () => {
+    const stored = await operations.load();
+    if (!operations.isCurrent() || stored === null) return null;
+    const normalized = normalizeLivingHistoryResult(stored);
+    if (!operations.accepts(normalized) || !operations.isCurrent()) return null;
+    return normalized;
+  };
+  return operations.exclusive ? operations.exclusive(execute) : execute();
 }

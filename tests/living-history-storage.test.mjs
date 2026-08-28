@@ -52,9 +52,9 @@ test('discards a history result when reset lands during its storage write', asyn
   let installed = false;
   let discardedWriteId = '';
   const committing = commitLivingHistoryResult(result(), {
-    save: async () => { await saveBlocked; return 'reset-writer'; },
+    save: async () => { await saveBlocked; return { writeId: 'reset-writer', previousRaw: null }; },
     isCurrent: () => current,
-    discard: async (writeId) => { discardedWriteId = writeId; },
+    discard: async (receipt) => { discardedWriteId = receipt.writeId; },
     install: () => { installed = true; }
   });
   current = false;
@@ -73,32 +73,79 @@ test('a stale tab cannot delete another tab’s identical committed result', asy
   let reportAWrite;
   const aWriteReturned = new Promise((resolve) => { releaseAWrite = resolve; });
   const aWritePersisted = new Promise((resolve) => { reportAWrite = resolve; });
-  const discardOwnedWrite = async (writeId) => {
-    if (persisted?.writeId === writeId) persisted = null;
+  const rollbackOwnedWrite = async (receipt) => {
+    if (persisted?.writeId === receipt.writeId) persisted = receipt.previousRaw;
   };
 
   const tabA = commitLivingHistoryResult(candidate, {
     save: async (stored) => {
+      const previousRaw = persisted;
       persisted = { writeId: 'tab-a', result: stored };
       reportAWrite();
       await aWriteReturned;
-      return 'tab-a';
+      return { writeId: 'tab-a', previousRaw };
     },
     isCurrent: () => currentA,
-    discard: discardOwnedWrite,
+    discard: rollbackOwnedWrite,
     install: () => assert.fail('stale tab A installed its result')
   });
   await aWritePersisted;
 
   const tabB = await commitLivingHistoryResult(candidate, {
     save: async (stored) => {
+      const previousRaw = persisted;
       persisted = { writeId: 'tab-b', result: stored };
-      return 'tab-b';
+      return { writeId: 'tab-b', previousRaw };
     },
     isCurrent: () => true,
-    discard: discardOwnedWrite,
+    discard: rollbackOwnedWrite,
     install: () => { installedB = true; }
   });
+  currentA = false;
+  releaseAWrite();
+
+  assert.equal(await tabA, false);
+  assert.equal(tabB, true);
+  assert.equal(installedB, true);
+  assert.equal(persisted?.writeId, 'tab-b');
+});
+
+test('a later stale tab restores the valid result it overwrote', async () => {
+  const candidate = result();
+  let persisted = null;
+  let installedB = false;
+  const rollbackOwnedWrite = async (receipt) => {
+    if (persisted?.writeId === receipt.writeId) persisted = receipt.previousRaw;
+  };
+  const tabB = await commitLivingHistoryResult(candidate, {
+    save: async (stored) => {
+      const previousRaw = persisted;
+      persisted = { writeId: 'tab-b', result: stored };
+      return { writeId: 'tab-b', previousRaw };
+    },
+    isCurrent: () => true,
+    discard: rollbackOwnedWrite,
+    install: () => { installedB = true; }
+  });
+
+  let currentA = true;
+  let releaseAWrite;
+  let reportAWrite;
+  const aWriteReturned = new Promise((resolve) => { releaseAWrite = resolve; });
+  const aWritePersisted = new Promise((resolve) => { reportAWrite = resolve; });
+  const tabA = commitLivingHistoryResult(candidate, {
+    save: async (stored) => {
+      const previousRaw = persisted;
+      persisted = { writeId: 'tab-a', result: stored };
+      reportAWrite();
+      await aWriteReturned;
+      return { writeId: 'tab-a', previousRaw };
+    },
+    isCurrent: () => currentA,
+    discard: rollbackOwnedWrite,
+    install: () => assert.fail('stale tab A installed its result')
+  });
+  await aWritePersisted;
   currentA = false;
   releaseAWrite();
 
@@ -116,8 +163,7 @@ test('does not resurrect history when clear lands during a delayed restore', asy
   const restoring = restoreLivingHistoryResult({
     load: async () => delayedLoad,
     isCurrent: () => current,
-    accepts: () => { accepted = true; return true; },
-    discard: async () => {}
+    accepts: () => { accepted = true; return true; }
   });
   current = false;
   resolveLoad(result());
