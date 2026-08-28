@@ -42,6 +42,7 @@ const imageSha256 = await sha256Hex(imageBytes);
 const requests = {
   i2v: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_I2V),
   loop: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF),
+  loopFive: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5),
   generated: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF)
 };
 const input = {
@@ -62,6 +63,7 @@ const mp4 = buildH264AacMp4Fixture({
   frames: 73,
   audioTimingEntries: [{ count: 95, delta: 1_024 }]
 });
+const mp4Five = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 124 });
 
 function standardInfo(node, inputName, options, metadata = {}) {
   return { [node]: { input: { required: { [inputName]: [options, metadata] } } } };
@@ -73,7 +75,7 @@ function dynamicInfo(node, section, inputName, options) {
   } } } };
 }
 
-function capabilityResponse(node, includeLastFrame = true, lengthStep = 17) {
+function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, lengthMaximum = 3600) {
   const files = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const endFiles = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
   if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [files.unet, endFiles.unet]);
@@ -97,7 +99,7 @@ function capabilityResponse(node, includeLastFrame = true, lengthStep = 17) {
     required: {
       width: ['INT', { min: 32, max: 16384, step: 32 }],
       height: ['INT', { min: 32, max: 16384, step: 32 }],
-      length: ['INT', { min: 5, max: 3600, step: lengthStep }]
+      length: ['INT', { min: 5, max: lengthMaximum, step: lengthStep }]
     },
     optional: {
       first_frame: ['IMAGE', {}],
@@ -118,7 +120,7 @@ test('requires the exact installed H3 FL2VA stack and native first/last-frame in
   assert.equal(capabilities.template.id, 'minimax-h3-fl2va-portrait-v1');
   assert.equal(capabilities.endFrameTemplate?.id, 'qwen-image-edit-2511-lightning-4step-v1');
   assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
-  assert.deepEqual(capabilities.durations, [3]);
+  assert.deepEqual(capabilities.durations, [3, 5]);
 
   await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
@@ -129,6 +131,11 @@ test('requires the exact installed H3 FL2VA stack and native first/last-frame in
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, true, 16));
   }, 'http://comfy'), /MiniMaxH3ImageToVideo\.length cannot represent 73/);
+
+  await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    return Response.json(capabilityResponse(node, true, 17, 100));
+  }, 'http://comfy'), /MiniMaxH3ImageToVideo\.length cannot represent 124/);
 
   const withoutEndFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
@@ -163,7 +170,7 @@ test('accepts only a PNG with the exact source IHDR dimensions', () => {
   assert.throws(() => validatePortraitVideoPng(png, 864, 1152), /dimensions do not match/);
 });
 
-async function runMode(selectedRequest, filename, selectedEndInput) {
+async function runMode(selectedRequest, filename, selectedEndInput, outputBytes = mp4) {
   const observed = [];
   const fetcher = async (url, init) => {
     const value = String(url);
@@ -175,7 +182,7 @@ async function runMode(selectedRequest, filename, selectedEndInput) {
         outputs: { '15': { images: [{ filename, subfolder: 'mullet', type: 'output' }], animated: [true] } }
       }
     });
-    if (value.includes('/view?')) return new Response(mp4, { headers: { 'content-type': 'video/mp4' } });
+    if (value.includes('/view?')) return new Response(outputBytes, { headers: { 'content-type': 'video/mp4' } });
     throw new Error(`unexpected URL ${value}`);
   };
   const result = await runComfyPortraitVideo(fetcher, 'http://comfy/', selectedRequest, input, 42, undefined, selectedEndInput);
@@ -200,6 +207,20 @@ test('queues the natural loop with the identical first and last H3 frame', async
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion-loop-flf_00001_.mp4&subfolder=mullet&type=output');
+});
+
+test('queues and validates the selected five-second 124-frame natural loop', async () => {
+  const { result, queued } = await runMode(
+    requests.loopFive,
+    'portrait-motion-loop-flf_00002_.mp4',
+    undefined,
+    mp4Five
+  );
+  assert.equal(queued.prompt['6'].inputs.length, 124);
+  assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
+  assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
+  assert.equal(result.durationSeconds, 124 / 24);
+  assert.deepEqual(result.bytes, mp4Five);
 });
 
 test('queues generated-keyframe FLF with the distinct Qwen image as H3 last frame', async () => {

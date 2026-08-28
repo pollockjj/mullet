@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
   PORTRAIT_VIDEO_DURATION_SECONDS,
+  PORTRAIT_VIDEO_DURATIONS,
   PORTRAIT_VIDEO_FPS,
   PORTRAIT_VIDEO_FRAMES,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
@@ -59,16 +60,21 @@ const endInput = {
   imageSha256: 'b'.repeat(64)
 };
 
-test('maps every portrait ratio to a 768p MiniMax grid and exact three-second first-to-last span', () => {
+test('maps every portrait ratio and duration to the bounded MiniMax frame grid', () => {
+  assert.deepEqual(PORTRAIT_VIDEO_DURATIONS, [3, 5]);
   assert.deepEqual(portraitVideoDimensions('2:3'), { width: 768, height: 1152, frames: 73, fps: 24 });
+  assert.deepEqual(portraitVideoDimensions('2:3', 5), { width: 768, height: 1152, frames: 124, fps: 24 });
   for (const aspectRatio of ['2:3', '3:4', '4:5', '9:16']) {
-    const dimensions = portraitVideoDimensions(aspectRatio);
-    assert.equal(dimensions.width % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
-    assert.equal(dimensions.height % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
-    assert.equal(Math.min(dimensions.width, dimensions.height), 768);
-    assert.equal((dimensions.frames - 5) % 17, 0);
-    assert.equal((dimensions.frames - 1) / PORTRAIT_VIDEO_FPS, PORTRAIT_VIDEO_DURATION_SECONDS);
+    for (const duration of PORTRAIT_VIDEO_DURATIONS) {
+      const dimensions = portraitVideoDimensions(aspectRatio, duration);
+      assert.equal(dimensions.width % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
+      assert.equal(dimensions.height % MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.multiple, 0);
+      assert.equal(Math.min(dimensions.width, dimensions.height), 768);
+      assert.equal((dimensions.frames - 5) % 17, 0);
+    }
   }
+  assert.equal((portraitVideoDimensions('2:3', 3).frames - 1) / PORTRAIT_VIDEO_FPS, PORTRAIT_VIDEO_DURATION_SECONDS);
+  assert.equal((portraitVideoDimensions('2:3', 5).frames - 1) / PORTRAIT_VIDEO_FPS, 5.125);
   assert.equal(PORTRAIT_VIDEO_FRAMES, 73);
 });
 
@@ -118,6 +124,21 @@ test('compiles the default loop by wiring the same image as first and last H3 fr
   assert.equal(portraitVideoOutputNode(request), '15');
 });
 
+test('compiles the selected five-second loop as 124 identical-frame-conditioned frames', () => {
+  const request = buildPortraitVideoRequest(
+    portrait(),
+    '2:3',
+    'a'.repeat(64),
+    PORTRAIT_VIDEO_MODE_LOOP_FLF,
+    5
+  );
+  const graph = buildMiniMaxH3PortraitVideoWorkflow(request, firstInput, 42);
+  assert.equal(request.durationSeconds, 5);
+  assert.equal(graph['6'].inputs.length, 124);
+  assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);
+  assert.deepEqual(graph['6'].inputs.last_frame, ['5', 0]);
+});
+
 test('compiles Qwen end-frame generation followed by distinct H3 first/last conditioning', () => {
   const request = buildPortraitVideoRequest(
     portrait(),
@@ -147,7 +168,7 @@ test('compiles Qwen end-frame generation followed by distinct H3 first/last cond
 test('rejects arbitrary templates, durations, paths, and invalid end-frame usage', () => {
   const built = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64));
   assert.throws(() => normalizePortraitVideoRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait-video model/);
-  assert.throws(() => normalizePortraitVideoRequest({ ...built, durationSeconds: 5 }), /unsupported portrait-video duration/);
+  assert.throws(() => normalizePortraitVideoRequest({ ...built, durationSeconds: 4 }), /unsupported portrait-video duration/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, mode: 'anything' }), /unsupported portrait-video mode/);
   assert.throws(() => normalizePortraitVideoRequest({ ...built, source: { ...built.source, portraitWidth: 832 } }), /dimensions do not match/);
   assert.throws(() => buildMiniMaxH3PortraitVideoWorkflow(built, {
@@ -158,4 +179,6 @@ test('rejects arbitrary templates, durations, paths, and invalid end-frame usage
   assert.throws(() => buildMiniMaxH3PortraitVideoWorkflow(generated, firstInput, 1), /end-frame input is required/);
   assert.throws(() => buildMiniMaxH3PortraitVideoWorkflow(generated, firstInput, 1, firstInput), /must differ/);
   assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(generated));
+  const fiveSeconds = buildPortraitVideoRequest(portrait(), '2:3', 'a'.repeat(64), PORTRAIT_VIDEO_MODE_LOOP_FLF, 5);
+  assert.notEqual(portraitVideoRequestKey(built), portraitVideoRequestKey(fiveSeconds));
 });

@@ -503,10 +503,11 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   if (hasGeneratedEndFrame !== (isRecord(value.endFrameTemplate) && value.endFrameTemplate.id === PORTRAIT_END_FRAME_TEMPLATE_ID)) {
     throw new Error('invalid portrait-video end-frame template');
   }
+  const durations = value.durations;
   if (
-    !Array.isArray(value.durations)
-    || value.durations.length !== PORTRAIT_VIDEO_DURATIONS.length
-    || !PORTRAIT_VIDEO_DURATIONS.every((duration, index) => value.durations[index] === duration)
+    !Array.isArray(durations)
+    || durations.length !== PORTRAIT_VIDEO_DURATIONS.length
+    || !PORTRAIT_VIDEO_DURATIONS.every((duration, index) => durations[index] === duration)
   ) throw new Error('invalid portrait-video durations');
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,

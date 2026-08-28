@@ -23,6 +23,7 @@ const mp4Bytes = buildH264AacMp4Fixture({
   frames: 73,
   audioTimingEntries: [{ count: 95, delta: 1_024 }]
 });
+const mp4FiveBytes = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 124 });
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -39,7 +40,7 @@ function png(width, height, marker = 0) {
   return bytes;
 }
 
-function motionRequest(imageSha256, mode = 'i2v') {
+function motionRequest(imageSha256, mode = 'i2v', durationSeconds = 3) {
   return {
     spec: 'mullet_portrait_video_request_v4',
     modelTemplate: 'minimax-h3-fl2va-portrait-v1',
@@ -63,7 +64,7 @@ function motionRequest(imageSha256, mode = 'i2v') {
       }
     },
     aspectRatio: '2:3',
-    durationSeconds: 3
+    durationSeconds
   };
 }
 
@@ -242,11 +243,13 @@ function fakeComfy() {
           response.end();
           return;
         }
+        const queuedVideo = state.prompts.findLast((prompt) => prompt.client_id === 'mullet-portrait-video');
+        const videoBytes = queuedVideo?.prompt?.['6']?.inputs?.length === 124 ? mp4FiveBytes : mp4Bytes;
         response.writeHead(200, {
           'content-type': 'video/mp4',
-          'content-length': String(mp4Bytes.byteLength)
+          'content-length': String(videoBytes.byteLength)
         });
-        response.end(mp4Bytes);
+        response.end(videoBytes);
         return;
       }
       if (
@@ -346,7 +349,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
       { aspectRatio: '4:5', width: 768, height: 960 },
       { aspectRatio: '9:16', width: 768, height: 1344 }
     ]);
-    assert.deepEqual(capabilities.durations, [3]);
+    assert.deepEqual(capabilities.durations, [3, 5]);
     const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
     assert.deepEqual(
       new Set(queriedNodes),
@@ -414,6 +417,23 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(queued.prompt['15'].class_type, 'SaveVideo');
   });
 
+  await context.test('POST queues selected five-second loop with the 124-frame timing tuple', async () => {
+    fake.reset();
+    const selected = motionRequest(imageSha256, 'flf2v_loop', 5);
+    const response = await post(formFor(selected, imageBytes));
+    const responseBytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
+    assert.deepEqual(responseBytes, mp4FiveBytes);
+    assert.equal(response.headers.get('x-mullet-frames'), '124');
+    assert.equal(response.headers.get('x-mullet-fps'), '24');
+    assert.equal(response.headers.get('x-mullet-duration-seconds'), '5');
+    assert.equal(response.headers.get('x-mullet-encoded-duration-seconds'), String(124 / 24));
+    const queued = fake.state.prompts[0];
+    assert.equal(queued.prompt['6'].inputs.length, 124);
+    assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
+    assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
+  });
+
   await context.test('POST generates a Qwen end frame before queuing distinct-frame FLF motion', async () => {
     fake.reset();
     const generatedRequest = motionRequest(imageSha256, 'flf2v_generated');
@@ -466,6 +486,10 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
 
     fake.reset();
     assert.equal((await post(formFor({ ...request, mode: 'unsupported' }, imageBytes))).status, 400);
+    assert.equal(fake.state.calls.length, 0);
+
+    fake.reset();
+    assert.equal((await post(formFor({ ...request, durationSeconds: 4 }, imageBytes))).status, 400);
     assert.equal(fake.state.calls.length, 0);
   });
 

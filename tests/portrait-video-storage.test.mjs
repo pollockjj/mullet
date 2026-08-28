@@ -42,7 +42,8 @@ function request(overrides = {}) {
 }
 
 function stored(overrides = {}) {
-  const motionRequest = request();
+  const motionRequest = overrides.request ?? request();
+  const frames = motionRequest.durationSeconds === 5 ? 124 : 73;
   return {
     spec: STORED_PORTRAIT_VIDEO_SPEC,
     conversationId: motionRequest.source.conversationId,
@@ -54,15 +55,15 @@ function stored(overrides = {}) {
     seed: 42,
     width: 768,
     height: 1152,
-    frames: 73,
+    frames,
     fps: 24,
-    durationSeconds: 3,
-    encodedDurationSeconds: 3.042,
+    durationSeconds: motionRequest.durationSeconds,
+    encodedDurationSeconds: frames / 24,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     endFrame: null,
     videoSha256: 'b'.repeat(64),
-    video: new Blob([buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 73 })], { type: 'video/mp4' }),
+    video: new Blob([buildH264AacMp4Fixture({ width: 768, height: 1152, frames })], { type: 'video/mp4' }),
     ...overrides
   };
 }
@@ -73,12 +74,26 @@ test('normalizes a provenance-bound H.264/AAC MP4 without canonical transcript t
   assert.equal(result.frames, 73);
   assert.equal(result.fps, 24);
   assert.equal(result.durationSeconds, 3);
-  assert.equal(result.encodedDurationSeconds, 3.042);
+  assert.equal(result.encodedDurationSeconds, 73 / 24);
   assert.equal(result.mode, 'i2v');
   assert.equal(result.endFrame, null);
   assert.equal(result.requestKey, portraitVideoRequestKey(result.request));
   assert.equal(JSON.stringify(result).includes('assistant'), false);
   assert.equal(JSON.stringify(result).includes('transcript'), false);
+});
+
+test('normalizes five-second media only with its 124-frame request tuple', () => {
+  const fiveRequest = request({ durationSeconds: 5 });
+  const value = stored({
+    request: fiveRequest,
+    requestKey: portraitVideoRequestKey(fiveRequest)
+  });
+  const result = normalizeStoredPortraitVideo(value);
+  assert.equal(result.durationSeconds, 5);
+  assert.equal(result.frames, 124);
+  assert.equal(result.encodedDurationSeconds, 124 / 24);
+  assert.throws(() => normalizeStoredPortraitVideo({ ...value, frames: 73 }), /timing is invalid/);
+  assert.throws(() => normalizeStoredPortraitVideo({ ...value, durationSeconds: 3 }), /timing is invalid/);
 });
 
 test('rejects unmatched request keys, conversations, hashes, timing, dimensions, and blobs', () => {
@@ -270,6 +285,24 @@ test('does not install a valid prior-mode restore after selection changes', asyn
       return video;
     },
     isCurrent: () => selectedMode === 'i2v',
+    accepts: () => true,
+    install: () => { installed = true; }
+  });
+  assert.equal(restored, null);
+  assert.equal(installed, false);
+});
+
+test('does not install a valid prior-duration restore after duration selection changes', async () => {
+  let selectedDuration = 3;
+  let installed = false;
+  const restored = await restoreStoredPortraitVideo({
+    exclusive: async (operation) => operation(),
+    load: async () => {
+      const video = stored();
+      selectedDuration = 5;
+      return video;
+    },
+    isCurrent: () => selectedDuration === 3,
     accepts: () => true,
     install: () => { installed = true; }
   });
