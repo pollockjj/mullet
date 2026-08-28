@@ -286,7 +286,7 @@
   let portraitSetting = '';
   let portraitAttire = '';
   let portraitLora = '';
-  let portraitAspectRatio: PortraitAspectRatio = '2:3';
+  const portraitAspectRatio: PortraitAspectRatio = '2:3';
   let portraitMegapixels: PortraitMegapixels = 0.9;
   let portraitRequest: PortraitRequest | null = null;
   let portraitCurrent = false;
@@ -436,7 +436,6 @@
   const portraitSettingStorageKey = 'mullet.portrait-setting';
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
-  const portraitAspectStorageKey = 'mullet.portrait-aspect';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
@@ -507,7 +506,7 @@
   );
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
   $: portraitDisplayAspectRatio = expressionsEnabled && generatedPortraitUrl && generatedPortrait
-    ? `${generatedPortrait.width} / ${generatedPortrait.height}`
+    ? '2 / 3'
     : '3 / 4';
   $: portraitVideoRequest = currentPortraitVideoRequest(
     generatedPortrait,
@@ -780,10 +779,6 @@
     portraitSetting = localStorage.getItem(portraitSettingStorageKey) ?? '';
     portraitAttire = localStorage.getItem(portraitAttireStorageKey) ?? '';
     portraitLora = localStorage.getItem(portraitLoraStorageKey) ?? '';
-    const savedAspect = localStorage.getItem(portraitAspectStorageKey);
-    if (savedAspect === '2:3' || savedAspect === '3:4' || savedAspect === '4:5' || savedAspect === '9:16') {
-      portraitAspectRatio = savedAspect;
-    }
     const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       portraitMegapixels = savedMegapixels;
@@ -796,7 +791,6 @@
     localStorage.setItem(portraitAttireStorageKey, portraitAttire.trim());
     if (portraitLora) localStorage.setItem(portraitLoraStorageKey, portraitLora);
     else localStorage.removeItem(portraitLoraStorageKey);
-    localStorage.setItem(portraitAspectStorageKey, portraitAspectRatio);
     localStorage.setItem(portraitMegapixelsStorageKey, String(portraitMegapixels));
     portraitController?.abort();
     lastPortraitAttemptKey = '';
@@ -4072,12 +4066,6 @@
             </label>
           {/if}
           <div class="portrait-grid">
-            <label>
-              <span>Aspect</span>
-              <select bind:value={portraitAspectRatio} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait aspect ratio">
-                {#each portraitCapabilities.aspectRatios as ratio}<option value={ratio.id}>{ratio.label}</option>{/each}
-              </select>
-            </label>
             <label>
               <span>Megapixels</span>
               <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
