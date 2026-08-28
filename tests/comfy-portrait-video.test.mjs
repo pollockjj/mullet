@@ -73,7 +73,7 @@ function dynamicInfo(node, section, inputName, options) {
   } } } };
 }
 
-function capabilityResponse(node, includeLastFrame = true) {
+function capabilityResponse(node, includeLastFrame = true, lengthStep = 17) {
   const files = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const endFiles = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
   if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [files.unet, endFiles.unet]);
@@ -94,7 +94,11 @@ function capabilityResponse(node, includeLastFrame = true) {
     optional: { codec: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'h264' }] }] }
   } } };
   if (node === 'MiniMaxH3ImageToVideo') return { [node]: { input: {
-    required: {},
+    required: {
+      width: ['INT', { min: 32, max: 16384, step: 32 }],
+      height: ['INT', { min: 32, max: 16384, step: 32 }],
+      length: ['INT', { min: 5, max: 3600, step: lengthStep }]
+    },
     optional: {
       first_frame: ['IMAGE', {}],
       ...(includeLastFrame ? { last_frame: ['IMAGE', {}] } : {})
@@ -120,6 +124,11 @@ test('requires the exact installed H3 FL2VA stack and native first/last-frame in
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, false));
   }, 'http://comfy'), /last_frame metadata/);
+
+  await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    return Response.json(capabilityResponse(node, true, 16));
+  }, 'http://comfy'), /MiniMaxH3ImageToVideo\.length cannot represent 73/);
 
   const withoutEndFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));

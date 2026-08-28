@@ -92,7 +92,11 @@ function capabilityResponse(node) {
     optional: { codec: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'h264' }] }] }
   } } };
   if (node === 'MiniMaxH3ImageToVideo') return { [node]: { input: {
-    required: {},
+    required: {
+      width: ['INT', { min: 32, max: 16384, step: 32 }],
+      height: ['INT', { min: 32, max: 16384, step: 32 }],
+      length: ['INT', { min: 5, max: 3600, step: 17 }]
+    },
     optional: { first_frame: ['IMAGE', {}], last_frame: ['IMAGE', {}] }
   } } };
   if (node === 'LoadImage') return standardInfo(node, 'image', [], { image_upload: true });
