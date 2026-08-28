@@ -407,11 +407,15 @@ function parseTaskOperations(value: unknown, request: AssistantMemoryRequest): T
       && record.operation !== 'cancel'
       && record.operation !== 'reopen'
     ) throw new Error(`assistant-memory task operation ${index} action is invalid`);
+    const dueText = boundedText(record.due_text, `assistant-memory task operation ${index} due_text`, 0, 80);
+    if (dueText && !request.turns[0].content.includes(dueText)) {
+      throw new Error(`assistant-memory task operation ${index} due_text is not a verbatim excerpt from the current user message`);
+    }
     return {
       operation: record.operation,
       key: memoryKey(record.key, `assistant-memory task operation ${index} key`),
       text: boundedText(record.text, `assistant-memory task operation ${index} text`, 1, 240),
-      dueText: boundedText(record.due_text, `assistant-memory task operation ${index} due_text`, 0, 80),
+      dueText,
       evidence: responseEvidence(record.evidence, request, `assistant-memory task operation ${index} evidence`)
     };
   });
