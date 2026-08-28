@@ -1,9 +1,13 @@
 import {
   LTX25_PORTRAIT_VIDEO_TEMPLATE,
+  PORTRAIT_VIDEO_CAPABILITIES_SPEC,
   PORTRAIT_VIDEO_DIMENSIONS,
   PORTRAIT_VIDEO_DURATION_SECONDS,
+  PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
+  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
   buildLtx25PortraitVideoWorkflow,
+  buildQwenPortraitEndFrameWorkflow,
   portraitVideoOutputNode,
   type PortraitVideoCapabilities,
   type PortraitVideoInputReference,
@@ -20,9 +24,18 @@ export type ComfyPortraitVideo = {
   sha256: string;
 };
 
+export type ComfyPortraitEndFrame = {
+  bytes: Uint8Array;
+  contentType: 'image/png';
+  promptId: string;
+  filename: string;
+  sha256: string;
+};
+
 export class ComfyPortraitVideoOutputTooLargeError extends Error {}
 
 const OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024;
+const END_FRAME_OUTPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -90,10 +103,34 @@ export async function loadPortraitVideoCapabilities(
   requireOption(optionList(info.SaveWEBM, 'SaveWEBM', 'codec'), LTX25_PORTRAIT_VIDEO_TEMPLATE.codec, 'the VP9 WebM encoder');
   const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
   if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
+  let endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null = null;
+  try {
+    const endFramePairs = await Promise.all(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes.map(async (nodeName) => {
+      const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
+      const body = await responseJson(response, 'portrait end-frame capability query');
+      return [nodeName, nodeInfo(body, nodeName)] as const;
+    }));
+    const endFrameInfo = Object.fromEntries(endFramePairs) as Record<string, Record<string, unknown>>;
+    const template = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
+    requireOption(optionList(endFrameInfo.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the Qwen Image Edit diffusion model');
+    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the Qwen Image Edit text encoder');
+    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'type'), 'qwen_image', 'the qwen_image text-encoder mode');
+    requireOption(optionList(endFrameInfo.VAELoader, 'VAELoader', 'vae_name'), template.modelFiles.vae, 'the Qwen Image Edit VAE');
+    requireOption(optionList(endFrameInfo.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.lora, 'the Qwen Image Edit Lightning LoRA');
+    requireOption(optionList(endFrameInfo.KSampler, 'KSampler', 'sampler_name'), template.sampler, 'the Qwen Image Edit sampler');
+    requireOption(optionList(endFrameInfo.KSampler, 'KSampler', 'scheduler'), template.scheduler, 'the Qwen Image Edit scheduler');
+    endFrameTemplate = template;
+  } catch (cause) {
+    if (signal?.aborted) throw cause;
+  }
+  const modes = endFrameTemplate
+    ? PORTRAIT_VIDEO_MODES
+    : PORTRAIT_VIDEO_MODES.filter(({ id }) => id !== PORTRAIT_VIDEO_MODE_GENERATED_FLF);
   return {
-    spec: 'mullet_portrait_video_capabilities_v2',
+    spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     template: LTX25_PORTRAIT_VIDEO_TEMPLATE,
-    modes: PORTRAIT_VIDEO_MODES,
+    endFrameTemplate,
+    modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
     durations: [PORTRAIT_VIDEO_DURATION_SECONDS]
   };
@@ -191,14 +228,34 @@ function outputVideo(entry: Record<string, unknown>, request: PortraitVideoReque
     throw new Error('ComfyUI portrait-video history did not mark the output animated');
   }
   const video = output.images[0];
-  const filenamePattern = request.mode === 'flf2v_loop'
-    ? /^portrait-motion-loop-flf_\d+_\.webm$/
-    : /^portrait-motion_\d+_\.webm$/;
+  const filenamePattern = request.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
+    ? /^portrait-motion-generated-flf_\d+_\.webm$/
+    : request.mode === 'flf2v_loop'
+      ? /^portrait-motion-loop-flf_\d+_\.webm$/
+      : /^portrait-motion_\d+_\.webm$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait-video filename');
   }
   if (video.subfolder !== 'mullet' || video.type !== 'output') throw new Error('ComfyUI returned an unexpected portrait-video location');
   return { filename: video.filename, subfolder: 'mullet', type: 'output' };
+}
+
+function outputEndFrame(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
+  if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
+  const outputNode = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.outputNode;
+  if (!isRecord(entry.outputs) || Object.keys(entry.outputs).length !== 1 || !isRecord(entry.outputs[outputNode])) {
+    throw new Error('ComfyUI portrait end-frame history omitted the selected output node');
+  }
+  const output = entry.outputs[outputNode];
+  if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
+    throw new Error('ComfyUI portrait end-frame history omitted the image');
+  }
+  const image = output.images[0];
+  if (typeof image.filename !== 'string' || !/^portrait-generated-end-frame_\d+_\.png$/.test(image.filename)) {
+    throw new Error('ComfyUI returned an unexpected portrait end-frame filename');
+  }
+  if (image.subfolder !== 'mullet' || image.type !== 'output') throw new Error('ComfyUI returned an unexpected portrait end-frame location');
+  return { filename: image.filename, subfolder: 'mullet', type: 'output' };
 }
 
 function pollDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -232,6 +289,26 @@ async function waitForVideo(
       if (failure) throw new Error(failure);
       const video = outputVideo(entry, request);
       if (video) return video;
+    }
+    await pollDelay(250, signal);
+  }
+}
+
+async function waitForEndFrame(
+  fetcher: Fetcher,
+  baseUrl: string,
+  id: string,
+  signal?: AbortSignal
+): Promise<{ filename: string; subfolder: 'mullet'; type: 'output' }> {
+  while (true) {
+    signal?.throwIfAborted();
+    const response = await fetcher(endpoint(baseUrl, `/history/${encodeURIComponent(id)}`), { signal });
+    const entry = historyEntry(await responseJson(response, 'portrait end-frame history query'), id);
+    if (entry) {
+      const failure = historyFailure(entry);
+      if (failure) throw new Error(failure.replace('portrait-video', 'portrait end-frame'));
+      const image = outputEndFrame(entry);
+      if (image) return image;
     }
     await pollDelay(250, signal);
   }
@@ -276,13 +353,85 @@ async function readBoundedVideo(response: Response): Promise<Uint8Array> {
   return bytes;
 }
 
-export async function runComfyPortraitVideo(
+async function readBoundedEndFrame(response: Response): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > END_FRAME_OUTPUT_LIMIT_BYTES) {
+    throw new ComfyPortraitVideoOutputTooLargeError('ComfyUI portrait end-frame output exceeds 20 MiB');
+  }
+  if (!response.body) throw new Error('ComfyUI portrait end-frame output has no body');
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > END_FRAME_OUTPUT_LIMIT_BYTES) {
+      await reader.cancel();
+      throw new ComfyPortraitVideoOutputTooLargeError('ComfyUI portrait end-frame output exceeds 20 MiB');
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+export async function runComfyPortraitEndFrame(
   fetcher: Fetcher,
   baseUrl: string,
   request: PortraitVideoRequest,
   input: PortraitVideoInputReference,
   seed: number,
   signal?: AbortSignal
+): Promise<ComfyPortraitEndFrame> {
+  let id = '';
+  let completed = false;
+  try {
+    const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: buildQwenPortraitEndFrameWorkflow(request, input, seed),
+        client_id: 'mullet-portrait-end-frame'
+      }),
+      signal
+    });
+    id = promptId(await responseJson(queueResponse, 'portrait end-frame queue submission'));
+    const image = await waitForEndFrame(fetcher, baseUrl, id, signal);
+    completed = true;
+    const query = new URLSearchParams(image);
+    const outputResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
+    if (!outputResponse.ok) throw new Error(`ComfyUI portrait end-frame fetch failed (${outputResponse.status})`);
+    const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+    if (contentType !== 'image/png') throw new Error('ComfyUI portrait end-frame output is not PNG');
+    const bytes = await readBoundedEndFrame(outputResponse);
+    validatePortraitVideoPng(bytes, request.source.portraitWidth, request.source.portraitHeight);
+    return {
+      bytes,
+      contentType: 'image/png',
+      promptId: id,
+      filename: image.filename,
+      sha256: await sha256Hex(bytes)
+    };
+  } catch (cause) {
+    if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
+    throw cause;
+  }
+}
+
+export async function runComfyPortraitVideo(
+  fetcher: Fetcher,
+  baseUrl: string,
+  request: PortraitVideoRequest,
+  input: PortraitVideoInputReference,
+  seed: number,
+  signal?: AbortSignal,
+  endFrameInput?: PortraitVideoInputReference
 ): Promise<ComfyPortraitVideo> {
   let id = '';
   let completed = false;
@@ -291,7 +440,7 @@ export async function runComfyPortraitVideo(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildLtx25PortraitVideoWorkflow(request, input, seed),
+        prompt: buildLtx25PortraitVideoWorkflow(request, input, seed, endFrameInput),
         client_id: 'mullet-portrait-video'
       }),
       signal
