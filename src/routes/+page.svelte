@@ -4,6 +4,7 @@
   import { onMount, tick } from 'svelte';
   import {
     embeddedLoreEntryCount,
+    characterSourceIdentifier,
     firstCharacterMessage,
     normalizeCharacterCard,
     parseCharacterCardJson,
@@ -95,7 +96,7 @@
     if (savedCard) {
       try {
         activeCard = normalizeCharacterCard(JSON.parse(savedCard));
-        cardSourceIdentifier = localStorage.getItem(cardSourceIdentifierStorageKey) ?? '';
+        cardSourceIdentifier = characterSourceIdentifier(localStorage.getItem(cardSourceIdentifierStorageKey) ?? '');
         portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
         if (messages.length === 0) messages = freshConversation();
@@ -267,7 +268,7 @@
       const seedGreeting = messages.length === 0 || replaceOpeningGreeting;
 
       activeCard = imported;
-      cardSourceIdentifier = file.name;
+      cardSourceIdentifier = characterSourceIdentifier(file.name);
       portraitDataUrl = nextPortrait;
       embeddedLorebook = embeddedLoreFromCard(imported);
       lastLoreActivations = null;

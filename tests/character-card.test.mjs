@@ -4,6 +4,7 @@ import { deflateSync } from 'node:zlib';
 
 import {
   characterDepthPrompt,
+  characterSourceIdentifier,
   compileCharacterMessages,
   embeddedLoreEntryCount,
   firstCharacterMessage,
@@ -209,6 +210,12 @@ test('uses the V3 nickname for character macros while retaining the full card na
   assert.equal(card.data.name, 'Kerr Avon');
   assert.equal(firstCharacterMessage(card, 'John'), 'Avon distrusts John.');
   assert.equal(compileCharacterMessages(card, [{ role: 'user', content: 'Hello' }], 'John')[0].content.split('\n')[0], 'Speak as Avon to John.');
+});
+
+test('uses the SillyTavern avatar filename without its final extension as the character filter identity', () => {
+  assert.equal(characterSourceIdentifier('Blake.png'), 'Blake');
+  assert.equal(characterSourceIdentifier('Blake.card.json'), 'Blake.card');
+  assert.equal(characterSourceIdentifier('No extension'), 'No extension');
 });
 
 test('rejects malformed and unsupported cards with field-specific errors', () => {

@@ -197,6 +197,10 @@ export function substituteCardMacros(value: string, characterName: string, userN
     .replace(/<user>/gi, userName);
 }
 
+export function characterSourceIdentifier(fileName: string): string {
+  return fileName.replace(/\.[^/.]+$/, '');
+}
+
 export function firstCharacterMessage(card: ImportedCharacterCard, userName = 'You'): string {
   return substituteCardMacros(card.data.firstMes, card.data.nickname || card.data.name, userName);
 }

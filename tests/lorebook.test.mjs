@@ -394,16 +394,16 @@ test('applies inclusive and exclusive character-name and tag filters', async () 
     }
   });
   const book = nativeBook([
-    nativeEntry({ uid: 0, comment: 'Name include', constant: true, characterFilter: { names: ['Blake.png'], tags: [], isExclude: false } }),
+    nativeEntry({ uid: 0, comment: 'Name include', constant: true, characterFilter: { names: ['Blake'], tags: [], isExclude: false } }),
     nativeEntry({ uid: 1, comment: 'Tag include', constant: true, characterFilter: { names: [], tags: ['crew-tag-id'], isExclude: false } }),
-    nativeEntry({ uid: 2, comment: 'Name exclude', constant: true, characterFilter: { names: ['Blake.png'], tags: [], isExclude: true } }),
-    nativeEntry({ uid: 3, comment: 'Other include', constant: true, characterFilter: { names: ['Servalan.png'], tags: [], isExclude: false } }),
-    nativeEntry({ uid: 4, comment: 'Both dimensions required', constant: true, characterFilter: { names: ['Blake.png'], tags: ['federation-tag-id'], isExclude: false } }),
-    nativeEntry({ uid: 5, comment: 'Either exclusion rejects', constant: true, characterFilter: { names: ['Servalan.png'], tags: ['crew-tag-id'], isExclude: true } })
+    nativeEntry({ uid: 2, comment: 'Name exclude', constant: true, characterFilter: { names: ['Blake'], tags: [], isExclude: true } }),
+    nativeEntry({ uid: 3, comment: 'Other include', constant: true, characterFilter: { names: ['Servalan'], tags: [], isExclude: false } }),
+    nativeEntry({ uid: 4, comment: 'Both dimensions required', constant: true, characterFilter: { names: ['Blake'], tags: ['federation-tag-id'], isExclude: false } }),
+    nativeEntry({ uid: 5, comment: 'Either exclusion rejects', constant: true, characterFilter: { names: ['Servalan'], tags: ['crew-tag-id'], isExclude: true } })
   ]);
   const result = await scanLorebooks([book], [], { recursive: false }, {
     card,
-    characterFilterNames: ['Blake.png'],
+    characterFilterNames: ['Blake'],
     characterTags: ['crew-tag-id']
   });
   assert.deepEqual(result.activated.map((entry) => entry.name), ['Name include', 'Tag include']);
