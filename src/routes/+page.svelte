@@ -1361,7 +1361,7 @@
           requestKey,
           activeController.signal
         ),
-        install: installGeneratedInlineScene
+        install: (scene) => installGeneratedInlineScene(scene)
       });
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
