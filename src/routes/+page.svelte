@@ -193,6 +193,36 @@
   import { serializeChatRequest } from '$lib/chat-request-size';
   import { assertFinalizedChatStream, parseChatStreamPayload } from '$lib/chat-stream';
   import {
+    ASSISTANT_MEMORY_TIMEOUT_MS,
+    assistantMemoryLorebook,
+    assistantMemoryResultMatchesRequest,
+    buildAssistantMemoryRequest,
+    normalizeAssistantMemoryResult,
+    type AssistantMemoryRequest,
+    type AssistantMemoryResult
+  } from '$lib/assistant-memory';
+  import {
+    assistantMemoryReadyForSend,
+    assistantMemoryRequestKey,
+    currentAssistantMemoryRequest,
+    parseAssistantMemoryActiveHeader
+  } from '$lib/assistant-memory-client';
+  import {
+    AssistantMemoryConflictError,
+    clearAssistantMemoryAtEpoch,
+    clearStoredAssistantMemory,
+    commitAssistantMemoryResult,
+    createStoredAssistantMemoryPendingTurn,
+    loadStoredAssistantMemory,
+    loadStoredAssistantMemoryPendingTurn,
+    rollbackStoredAssistantMemoryWrite,
+    runPersonalAssistantTurnExclusive,
+    runStoredAssistantMemoryExclusive,
+    saveStoredAssistantMemory,
+    saveStoredAssistantMemoryPendingTurn,
+    type StoredAssistantMemoryPendingTurn
+  } from '$lib/assistant-memory-storage';
+  import {
     CONVERSATION_MODE_FICTION,
     CONVERSATION_MODE_PERSONAL_ASSISTANT,
     normalizeConversationMode,
@@ -346,6 +376,20 @@
   let sidecarError = '';
   let lastExpressionAttemptKey = '';
   let sidecarController: AbortController | null = null;
+  let assistantMemoryId = '';
+  let assistantMemoryEpoch = '';
+  let assistantMemoryResult: AssistantMemoryResult | null = null;
+  let assistantMemoryBook: ImportedLorebook | null = null;
+  let assistantMemoryPending: StoredAssistantMemoryPendingTurn | null = null;
+  let assistantMemoryRequest: AssistantMemoryRequest | null = null;
+  let assistantMemoryPersistenceReady = false;
+  let assistantMemoryPersistenceAvailable = true;
+  let assistantMemoryBusy = false;
+  let assistantTurnBusy = false;
+  let assistantMemoryError = '';
+  let lastAssistantMemoryActive: boolean | null = null;
+  let assistantMemoryGeneration = 0;
+  let assistantMemoryController: AbortController | null = null;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
@@ -365,6 +409,8 @@
   const livingHistoryBoundariesStorageKey = 'mullet.living-history-finalized-boundaries';
   const livingHistoryEpochStorageKey = 'mullet.living-history-epoch';
   const conversationIdStorageKey = 'mullet.conversation-id';
+  const assistantMemoryIdStorageKey = 'mullet.assistant-memory-id';
+  const assistantMemoryEpochStorageKey = 'mullet.assistant-memory-epoch';
   const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
   const portraitSubjectStorageKey = 'mullet.portrait-subject';
   const portraitSettingStorageKey = 'mullet.portrait-setting';
@@ -411,6 +457,12 @@
         ...(livingHistoryBook ? [livingHistoryBook] : [])
       ]
     : [];
+  $: assistantMemoryBook = assistantMemoryResult ? assistantMemoryLorebook(assistantMemoryResult) : null;
+  $: assistantMemoryRequest = currentAssistantMemoryRequest(
+    assistantMemoryId,
+    assistantMemoryPending,
+    assistantMemoryResult
+  );
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
   $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
     ? defaultScenarioPortraitProfile(activeCard)
@@ -585,7 +637,7 @@
         cardSourceIdentifier = characterSourceIdentifier(localStorage.getItem(cardSourceIdentifierStorageKey) ?? '');
         portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
-        if (messages.length === 0) messages = freshConversation();
+        if (messages.length === 0 && conversationMode === CONVERSATION_MODE_FICTION) messages = freshConversation();
       } catch {
         localStorage.removeItem(cardStorageKey);
         localStorage.removeItem(portraitStorageKey);
@@ -622,6 +674,14 @@
     const savedConversationId = localStorage.getItem(conversationIdStorageKey);
     conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
+    const savedAssistantMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
+    assistantMemoryId = isSidecarConversationId(savedAssistantMemoryId) ? savedAssistantMemoryId : crypto.randomUUID();
+    localStorage.setItem(assistantMemoryIdStorageKey, assistantMemoryId);
+    const savedAssistantMemoryEpoch = localStorage.getItem(assistantMemoryEpochStorageKey);
+    assistantMemoryEpoch = isSidecarConversationId(savedAssistantMemoryEpoch) ? savedAssistantMemoryEpoch : crypto.randomUUID();
+    localStorage.setItem(assistantMemoryEpochStorageKey, assistantMemoryEpoch);
+    window.addEventListener('storage', handleAssistantMemoryGenerationChange);
+    void restoreAssistantMemory(true);
     const savedLivingHistoryEpoch = localStorage.getItem(livingHistoryEpochStorageKey);
     const allowLegacyLivingHistory = !isSidecarConversationId(savedLivingHistoryEpoch);
     livingHistoryEpoch = allowLegacyLivingHistory ? crypto.randomUUID() : savedLivingHistoryEpoch;
@@ -652,6 +712,9 @@
 
   onDestroy(() => {
     if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
+    if (browser) window.removeEventListener('storage', handleAssistantMemoryGenerationChange);
+    assistantMemoryGeneration += 1;
+    assistantMemoryController?.abort();
     livingHistoryController?.abort();
     portraitController?.abort();
     portraitVideoGeneration += 1;
@@ -2554,6 +2617,242 @@
     } catch (cause) {
       disableSidecarPersistence(cause);
     }
+  }
+
+  function assistantMemoryIsCurrent(generation: number, epoch: string, memoryId: string): boolean {
+    return generation === assistantMemoryGeneration
+      && epoch === assistantMemoryEpoch
+      && memoryId === assistantMemoryId
+      && localStorage.getItem(assistantMemoryEpochStorageKey) === epoch
+      && localStorage.getItem(assistantMemoryIdStorageKey) === memoryId;
+  }
+
+  function disableAssistantMemoryPersistence(cause: unknown) {
+    assistantMemoryGeneration += 1;
+    assistantMemoryController?.abort();
+    assistantMemoryBusy = false;
+    assistantMemoryPersistenceAvailable = false;
+    assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory persistence failed.';
+  }
+
+  async function restoreAssistantMemory(resumePending: boolean) {
+    const restoreGeneration = assistantMemoryGeneration;
+    const restoreEpoch = assistantMemoryEpoch;
+    const restoreMemoryId = assistantMemoryId;
+    assistantMemoryPersistenceReady = false;
+    try {
+      await runStoredAssistantMemoryExclusive(async () => {
+        if (!assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) return;
+        const [storedResult, storedPending] = await Promise.all([
+          loadStoredAssistantMemory(restoreEpoch, restoreMemoryId),
+          loadStoredAssistantMemoryPendingTurn(restoreEpoch, restoreMemoryId)
+        ]);
+        if (!assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) return;
+        assistantMemoryResult = storedResult;
+        assistantMemoryPending = storedPending;
+      });
+    } catch (cause) {
+      disableAssistantMemoryPersistence(cause);
+    } finally {
+      if (assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) {
+        assistantMemoryPersistenceReady = true;
+      }
+    }
+    if (
+      resumePending
+      && assistantMemoryPending
+      && assistantMemoryPersistenceReady
+      && assistantMemoryPersistenceAvailable
+    ) void retryAssistantMemory();
+  }
+
+  function handleAssistantMemoryGenerationChange(event: StorageEvent) {
+    if (event.key !== assistantMemoryEpochStorageKey && event.key !== assistantMemoryIdStorageKey) return;
+    const storedEpoch = localStorage.getItem(assistantMemoryEpochStorageKey);
+    const storedMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
+    if (!isSidecarConversationId(storedEpoch) || !isSidecarConversationId(storedMemoryId)) {
+      disableAssistantMemoryPersistence(new Error('Another tab published an invalid assistant-memory generation.'));
+      return;
+    }
+    if (storedEpoch === assistantMemoryEpoch && storedMemoryId === assistantMemoryId) return;
+    assistantMemoryGeneration += 1;
+    assistantMemoryController?.abort();
+    assistantMemoryEpoch = storedEpoch;
+    assistantMemoryId = storedMemoryId;
+    assistantMemoryResult = null;
+    assistantMemoryPending = null;
+    assistantMemoryError = '';
+    assistantMemoryPersistenceAvailable = true;
+    void restoreAssistantMemory(true);
+  }
+
+  async function updateAssistantMemory(
+    selectedRequest: AssistantMemoryRequest,
+    selectedPending: StoredAssistantMemoryPendingTurn
+  ) {
+    const selectedGeneration = assistantMemoryGeneration;
+    const selectedEpoch = assistantMemoryEpoch;
+    const selectedMemoryId = assistantMemoryId;
+    const selectedKey = assistantMemoryRequestKey(selectedRequest, selectedPending);
+    assistantMemoryBusy = true;
+    assistantMemoryError = '';
+    const activeController = new AbortController();
+    assistantMemoryController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, ASSISTANT_MEMORY_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${base}/api/sidecar/assistant-memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(selectedRequest),
+        signal: activeController.signal
+      });
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
+      }
+      if (!response.ok) {
+        const detail = payload
+          && typeof payload === 'object'
+          && 'message' in payload
+          && typeof payload.message === 'string'
+          ? payload.message
+          : `Assistant-memory sidecar failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      const result = normalizeAssistantMemoryResult(payload);
+      if (!assistantMemoryResultMatchesRequest(result, selectedRequest)) {
+        throw new Error('Assistant-memory sidecar returned a mismatched completed turn.');
+      }
+      const isCurrent = () => {
+        const liveRequest = currentAssistantMemoryRequest(assistantMemoryId, assistantMemoryPending, assistantMemoryResult);
+        return assistantMemoryIsCurrent(selectedGeneration, selectedEpoch, selectedMemoryId)
+          && Boolean(liveRequest && assistantMemoryRequestKey(liveRequest, assistantMemoryPending) === selectedKey);
+      };
+      const committed = await commitAssistantMemoryResult(result, {
+        save: (current) => saveStoredAssistantMemory(current, selectedEpoch, selectedPending),
+        isCurrent,
+        discard: rollbackStoredAssistantMemoryWrite,
+        install: (current) => {
+          assistantMemoryResult = current;
+          assistantMemoryPending = null;
+        },
+        exclusive: runStoredAssistantMemoryExclusive
+      });
+      if (!committed) throw new Error('Assistant memory changed before this turn could commit.');
+    } catch (cause) {
+      if (cause instanceof AssistantMemoryConflictError) {
+        assistantMemoryError = cause.message;
+      } else if (cause instanceof DOMException && cause.name === 'AbortError') {
+        assistantMemoryError = timedOut
+          ? `Assistant-memory sidecar timed out after ${ASSISTANT_MEMORY_TIMEOUT_MS / 1000} seconds.`
+          : 'Assistant-memory update was interrupted.';
+      } else {
+        assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory sidecar failed.';
+      }
+      throw new Error(assistantMemoryError);
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (assistantMemoryController === activeController) {
+        assistantMemoryBusy = false;
+        assistantMemoryController = null;
+      }
+    }
+  }
+
+  async function reconcileAssistantMemoryPending() {
+    const selectedRequest = currentAssistantMemoryRequest(assistantMemoryId, assistantMemoryPending, assistantMemoryResult);
+    const selectedPending = assistantMemoryPending;
+    if (!selectedRequest || !selectedPending) return;
+    await updateAssistantMemory(selectedRequest, selectedPending);
+  }
+
+  async function retryAssistantMemory() {
+    if (assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable) return;
+    assistantTurnBusy = true;
+    try {
+      await runPersonalAssistantTurnExclusive(async () => {
+        await restoreAssistantMemory(false);
+        if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
+          throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
+        }
+        await reconcileAssistantMemoryPending();
+      });
+      if (!assistantMemoryPending) {
+        assistantMemoryError = '';
+        if (errorMessage.startsWith('Assistant-memory')) errorMessage = '';
+      }
+    } catch (cause) {
+      assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory retry failed.';
+      errorMessage = assistantMemoryError;
+    } finally {
+      assistantTurnBusy = false;
+    }
+  }
+
+  async function persistCompletedAssistantMemoryTurn() {
+    const request = buildAssistantMemoryRequest(assistantMemoryId, conversationId, messages, assistantMemoryResult);
+    const pending = createStoredAssistantMemoryPendingTurn(
+      assistantMemoryId,
+      assistantMemoryEpoch,
+      request.source,
+      request.turns
+    );
+    await runStoredAssistantMemoryExclusive(async () => {
+      await saveStoredAssistantMemoryPendingTurn(pending);
+    });
+    assistantMemoryPending = pending;
+    const persistedRequest = currentAssistantMemoryRequest(assistantMemoryId, pending, assistantMemoryResult);
+    if (!persistedRequest) throw new Error('The completed assistant turn could not be reconstructed from durable storage.');
+    await updateAssistantMemory(persistedRequest, pending);
+  }
+
+  async function clearAssistantMemory() {
+    if (assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable) return;
+    if ((assistantMemoryResult || assistantMemoryPending) && !window.confirm('Clear all persistent assistant memory and any pending update?')) return;
+    assistantTurnBusy = true;
+    try {
+      await runPersonalAssistantTurnExclusive(async () => {
+        assistantMemoryGeneration += 1;
+        assistantMemoryController?.abort();
+        const nextEpoch = crypto.randomUUID();
+        await clearAssistantMemoryAtEpoch(nextEpoch, {
+          exclusive: runStoredAssistantMemoryExclusive,
+          publishEpoch: (epoch) => {
+            assistantMemoryEpoch = epoch;
+            localStorage.setItem(assistantMemoryEpochStorageKey, epoch);
+          },
+          clear: clearStoredAssistantMemory
+        });
+        assistantMemoryResult = null;
+        assistantMemoryPending = null;
+        assistantMemoryError = '';
+        lastAssistantMemoryActive = null;
+        assistantMemoryPersistenceReady = true;
+      });
+    } catch (cause) {
+      disableAssistantMemoryPersistence(cause);
+      errorMessage = assistantMemoryError;
+    } finally {
+      assistantTurnBusy = false;
+    }
+  }
+
+  function assistantMemoryStatusText(): string {
+    if (!assistantMemoryPersistenceReady) return 'Restoring the durable ledger…';
+    if (!assistantMemoryPersistenceAvailable) return 'Durable memory is unavailable.';
+    if (assistantMemoryBusy) return 'Updating structured memory for the completed turn…';
+    if (assistantMemoryPending) return 'A completed turn is waiting to be committed.';
+    if (!assistantMemoryResult) return 'No completed assistant turns have been recorded.';
+    const recordCount = assistantMemoryResult.output.facts.length
+      + assistantMemoryResult.output.preferences.length
+      + assistantMemoryResult.output.tasks.length;
+    return `Revision ${assistantMemoryResult.output.revision} · ${recordCount} structured records · ready for the next turn.`;
   }
 
   function persistExpressionsEnabled() {
