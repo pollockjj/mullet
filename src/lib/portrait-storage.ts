@@ -183,7 +183,7 @@ export async function commitStoredPortrait(
   portrait: StoredPortrait,
   operations: PortraitCommitOperations
 ): Promise<boolean> {
-  const normalized = await verifyStoredPortrait(portrait);
+  const normalized = normalizeStoredPortrait(portrait);
   if (!operations.isCurrent()) return false;
   await operations.save(normalized);
   if (!operations.isCurrent()) {
