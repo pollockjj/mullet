@@ -345,7 +345,7 @@
   });
 
   onDestroy(() => {
-    window.removeEventListener('storage', handleLivingHistoryEpochChange);
+    if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
     livingHistoryController?.abort();
     portraitController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
