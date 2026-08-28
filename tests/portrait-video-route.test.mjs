@@ -6,12 +6,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
-import { LTX25_PORTRAIT_VIDEO_TEMPLATE } from '../src/lib/portrait-video.ts';
+import {
+  LTX25_PORTRAIT_VIDEO_TEMPLATE,
+  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE
+} from '../src/lib/portrait-video.ts';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-portrait-video-route');
 const publicOrigin = 'https://mullet.test';
-const promptId = '33333333-3333-4333-8333-333333333333';
+const videoPromptId = '33333333-3333-4333-8333-333333333333';
+const endFramePromptId = '44444444-4444-4444-8444-444444444444';
 const webmBytes = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
 
 function sha256(bytes) {
@@ -30,13 +34,15 @@ function png(width, height) {
 
 function motionRequest(imageSha256, mode = 'i2v') {
   return {
-    spec: 'mullet_portrait_video_request_v2',
-    modelTemplate: 'ltx-2.5-distilled-portrait-v2',
+    spec: 'mullet_portrait_video_request_v3',
+    modelTemplate: 'ltx-2.5-distilled-portrait-v3',
+    endFrameModelTemplate: mode === 'flf2v_generated' ? 'qwen-image-edit-2511-lightning-4step-v1' : null,
     mode,
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       portraitRequestKey: 'route-test-portrait-request',
       portraitPromptId: '11111111-1111-4111-8111-111111111111',
+      portraitSeed: 41,
       portraitGeneratedAt: 17,
       portraitWidth: 768,
       portraitHeight: 1152,
@@ -64,12 +70,18 @@ function dynamicInfo(node, inputName, options) {
 
 function capabilityResponse(node) {
   const files = LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
-  if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [files.unet]);
+  const endFiles = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
+  if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [files.unet, endFiles.unet]);
   if (node === 'CLIPLoader') return { [node]: { input: { required: {
-    clip_name: [[files.clip]],
-    type: [['ltxv']]
+    clip_name: [[files.clip, endFiles.clip]],
+    type: [['ltxv', 'qwen_image']]
   } } } };
-  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, files.audioVae]);
+  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, files.audioVae, endFiles.vae]);
+  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [endFiles.lora]);
+  if (node === 'KSampler') return { [node]: { input: { required: {
+    sampler_name: [['euler']],
+    scheduler: [['simple']]
+  } } } };
   if (node === 'LatentUpscaleModelLoader') return dynamicInfo(node, 'model_name', [files.latentUpscaler]);
   if (node === 'KSamplerSelect') return dynamicInfo(node, 'sampler_name', ['euler_ancestral']);
   if (node === 'SaveWEBM') return dynamicInfo(node, 'codec', ['vp9']);
@@ -146,22 +158,47 @@ function fakeComfy() {
       }
       if (url.pathname === '/prompt' && request.method === 'POST') {
         const queued = JSON.parse((await requestBytes(request)).toString('utf8'));
+        queued.assignedPromptId = queued.client_id === 'mullet-portrait-end-frame' ? endFramePromptId : videoPromptId;
         state.prompts.push(queued);
-        responseJson(response, 200, { prompt_id: promptId, node_errors: {} });
+        responseJson(response, 200, { prompt_id: queued.assignedPromptId, node_errors: {} });
         return;
       }
-      if (url.pathname === `/history/${promptId}`) {
-        if (state.mode === 'history-error') {
+      if (url.pathname.startsWith('/history/')) {
+        const historyId = decodeURIComponent(url.pathname.slice('/history/'.length));
+        const queued = state.prompts.find((prompt) => prompt.assignedPromptId === historyId);
+        if (!queued) {
+          responseJson(response, 404, { error: 'unknown prompt' });
+          return;
+        }
+        if (state.mode === 'history-error' && historyId === videoPromptId) {
           responseJson(response, 200, {
-            [promptId]: { status: { completed: true, status_str: 'error' }, outputs: {} }
+            [historyId]: { status: { completed: true, status_str: 'error' }, outputs: {} }
           });
           return;
         }
-        const loopFlf = Boolean(state.prompts.at(-1)?.prompt?.['35']);
-        const outputNode = loopFlf ? '35' : '31';
-        const filename = loopFlf ? 'portrait-motion-loop-flf_00001_.webm' : 'portrait-motion_00001_.webm';
+        if (historyId === endFramePromptId) {
+          responseJson(response, 200, {
+            [historyId]: {
+              status: { completed: true, status_str: 'success' },
+              outputs: {
+                '14': {
+                  images: [{ filename: 'portrait-generated-end-frame_00001_.png', subfolder: 'mullet', type: 'output' }]
+                }
+              }
+            }
+          });
+          return;
+        }
+        const generatedFlf = Boolean(queued.prompt?.['36']);
+        const loopFlf = Boolean(queued.prompt?.['35']) && !generatedFlf;
+        const outputNode = loopFlf || generatedFlf ? '35' : '31';
+        const filename = generatedFlf
+          ? 'portrait-motion-generated-flf_00001_.webm'
+          : loopFlf
+            ? 'portrait-motion-loop-flf_00001_.webm'
+            : 'portrait-motion_00001_.webm';
         responseJson(response, 200, {
-          [promptId]: {
+          [historyId]: {
             status: { completed: true, status_str: 'success' },
             outputs: {
               [outputNode]: {
@@ -174,6 +211,15 @@ function fakeComfy() {
         return;
       }
       if (url.pathname === '/view') {
+        if (url.searchParams.get('filename')?.endsWith('.png')) {
+          const endFrameBytes = png(768, 1152);
+          response.writeHead(200, {
+            'content-type': 'image/png',
+            'content-length': String(endFrameBytes.byteLength)
+          });
+          response.end(endFrameBytes);
+          return;
+        }
         if (state.mode === 'oversized') {
           response.writeHead(200, {
             'content-type': 'video/webm',
@@ -189,7 +235,10 @@ function fakeComfy() {
         response.end(webmBytes);
         return;
       }
-      if (url.pathname === `/api/jobs/${promptId}/cancel` && request.method === 'POST') {
+      if (
+        request.method === 'POST'
+        && (url.pathname === `/api/jobs/${videoPromptId}/cancel` || url.pathname === `/api/jobs/${endFramePromptId}/cancel`)
+      ) {
         responseJson(response, 200, { cancelled: true });
         return;
       }
@@ -273,9 +322,10 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v2');
-    assert.equal(capabilities.template.id, 'ltx-2.5-distilled-portrait-v2');
-    assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop']);
+    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v3');
+    assert.equal(capabilities.template.id, 'ltx-2.5-distilled-portrait-v3');
+    assert.equal(capabilities.endFrameTemplate.id, 'qwen-image-edit-2511-lightning-4step-v1');
+    assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
     assert.deepEqual(capabilities.aspectRatios, [
       { aspectRatio: '2:3', width: 384, height: 576 },
       { aspectRatio: '3:4', width: 384, height: 512 },
@@ -284,8 +334,14 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     ]);
     assert.deepEqual(capabilities.durations, [2]);
     const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
-    assert.deepEqual(new Set(queriedNodes), new Set(LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes));
-    assert.equal(queriedNodes.length, LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes.length);
+    assert.deepEqual(
+      new Set(queriedNodes),
+      new Set([...LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes, ...QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes])
+    );
+    assert.equal(
+      queriedNodes.length,
+      LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes.length + QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes.length
+    );
   });
 
   await context.test('POST uploads exact portrait bytes and proxies the fixed WebM with provenance headers', async () => {
@@ -297,13 +353,13 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.headers.get('content-type'), 'video/webm');
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(response.headers.get('x-mullet-prompt-id'), promptId);
+    assert.equal(response.headers.get('x-mullet-prompt-id'), videoPromptId);
     assert.equal(response.headers.get('x-mullet-width'), '384');
     assert.equal(response.headers.get('x-mullet-height'), '576');
     assert.equal(response.headers.get('x-mullet-frames'), '49');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
     assert.equal(response.headers.get('x-mullet-duration-seconds'), '2');
-    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-portrait-v2');
+    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-portrait-v3');
     assert.equal(response.headers.get('x-mullet-video-mode'), 'i2v');
     assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
     assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(webmBytes));
@@ -346,6 +402,43 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(queued.prompt['35'].class_type, 'SaveWEBM');
   });
 
+  await context.test('POST generates a Qwen end frame before queuing distinct-frame FLF motion', async () => {
+    fake.reset();
+    const generatedRequest = motionRequest(imageSha256, 'flf2v_generated');
+    const response = await post(formFor(generatedRequest, imageBytes));
+    const responseBytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
+    assert.deepEqual(responseBytes, webmBytes);
+    assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_generated');
+    assert.equal(response.headers.get('x-mullet-end-frame-model-template'), 'qwen-image-edit-2511-lightning-4step-v1');
+    assert.equal(response.headers.get('x-mullet-end-frame-prompt-id'), endFramePromptId);
+    assert.equal(response.headers.get('x-mullet-end-frame-width'), '768');
+    assert.equal(response.headers.get('x-mullet-end-frame-height'), '1152');
+    assert.equal(response.headers.get('x-mullet-end-frame-sha256'), sha256(png(768, 1152)));
+    const videoSeed = Number(response.headers.get('x-mullet-seed'));
+    const endFrameSeed = Number(response.headers.get('x-mullet-end-frame-seed'));
+    assert.equal(endFrameSeed, videoSeed === Number.MAX_SAFE_INTEGER ? 0 : videoSeed + 1);
+
+    assert.equal(fake.state.uploads.length, 2);
+    assert.deepEqual(fake.state.uploads[0].bytes, imageBytes);
+    assert.deepEqual(fake.state.uploads[1].bytes, png(768, 1152));
+    assert.equal(fake.state.prompts.length, 2);
+    const endFramePrompt = fake.state.prompts[0];
+    const videoPrompt = fake.state.prompts[1];
+    assert.equal(endFramePrompt.client_id, 'mullet-portrait-end-frame');
+    assert.equal(endFramePrompt.prompt['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+    assert.equal(endFramePrompt.prompt['4'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[0].name}`);
+    assert.equal(endFramePrompt.prompt['12'].inputs.seed, endFrameSeed);
+    assert.deepEqual(endFramePrompt.prompt['14'].inputs.images, ['15', 0]);
+    assert.equal(videoPrompt.client_id, 'mullet-portrait-video');
+    assert.equal(videoPrompt.prompt['1'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[0].name}`);
+    assert.equal(videoPrompt.prompt['36'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[1].name}`);
+    assert.deepEqual(videoPrompt.prompt['12'].inputs.image, ['2', 0]);
+    assert.deepEqual(videoPrompt.prompt['13'].inputs.image, ['37', 0]);
+    assert.deepEqual(videoPrompt.prompt['24'].inputs.image, ['2', 0]);
+    assert.deepEqual(videoPrompt.prompt['25'].inputs.image, ['37', 0]);
+  });
+
   await context.test('POST rejects mismatched hash, IHDR, and multipart shape before ComfyUI', async () => {
     fake.reset();
     const hashMismatch = motionRequest('b'.repeat(64));
@@ -370,7 +463,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     fake.reset('history-error');
     const response = await post(formFor(request, imageBytes));
     assert.equal(response.status, 502, await response.text());
-    const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${promptId}/cancel`);
+    const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
     assert.equal(cancellations.length, 1);
     assert.equal(fake.state.calls.some(({ path }) => path === '/interrupt'), false);
   });
