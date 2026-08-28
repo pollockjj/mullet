@@ -86,3 +86,19 @@ test('reserves one supplemental slot without mutating imported or generated raw 
   assert.equal(JSON.stringify(imports.map((book) => book.raw)), importedBytes);
   assert.equal(JSON.stringify(generated.raw), generatedBytes);
 });
+
+test('updates finalized history through an aborted partial transcript suffix', () => {
+  const finalized = transcript(5);
+  const finalizedBoundaries = boundaries(finalized);
+  const withAbortedPartial = [
+    ...finalized,
+    { role: 'user', content: 'Abort this turn.' },
+    { role: 'assistant', content: 'Partial response that never received a terminal event.' }
+  ];
+  assert.equal(pendingLivingHistoryMessageCount(finalizedBoundaries, null), 10);
+  const request = currentLivingHistoryRequest(conversationId, withAbortedPartial, null, finalizedBoundaries);
+  assert.notEqual(request, null);
+  assert.equal(request.source.messageCount, finalized.length);
+  assert.equal(request.turns.length, 10);
+  assert.equal(JSON.stringify(request).includes('Partial response that never received a terminal event.'), false);
+});

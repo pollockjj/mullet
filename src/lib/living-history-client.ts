@@ -79,8 +79,14 @@ export function currentLivingHistoryRequest(
   if (result && !applicableResult) return null;
   const pending = pendingLivingHistoryBoundaries(boundaries, applicableResult);
   if (pending.length === 0) return null;
+  const finalizedMessageCount = pending.at(-1)?.messageCount ?? 0;
   try {
-    return buildLivingHistoryRequest(conversationId, messages, applicableResult, pending);
+    return buildLivingHistoryRequest(
+      conversationId,
+      messages.slice(0, finalizedMessageCount),
+      applicableResult,
+      pending
+    );
   } catch {
     return null;
   }
