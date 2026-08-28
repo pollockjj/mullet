@@ -168,6 +168,7 @@
   let portraitVideoCapabilitiesLoading = false;
   let portraitVideoPersistenceReady = false;
   let portraitVideoPersistenceAvailable = true;
+  let portraitVideoPersistenceOperations = 0;
   let portraitVideoBusy = false;
   let portraitVideoError = '';
   let portraitVideoRequest: PortraitVideoRequest | null = null;
@@ -276,13 +277,23 @@
   $: expressionSnapshot = currentExpressionSnapshot(conversationId, messages);
   $: expressionResult = sidecarState?.channels.expression ?? null;
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
-  $: portraitRequest = currentPortraitRequest(expressionResult, expressionCurrent);
+  $: portraitRequest = currentPortraitRequest(
+    expressionResult,
+    expressionCurrent,
+    portraitSubject,
+    portraitSetting,
+    portraitAttire,
+    portraitLora,
+    portraitAspectRatio,
+    portraitMegapixels
+  );
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
   $: portraitVideoRequest = currentPortraitVideoRequest(
     generatedPortrait,
     portraitCurrent,
     portraitImageDigestPromptId,
-    portraitImageSha256
+    portraitImageSha256,
+    portraitAspectRatio
   );
   $: portraitVideoCurrent = Boolean(
     generatedPortraitVideo
@@ -533,6 +544,7 @@
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
     removeInstalledPortraitVideo();
+    portraitVideoPersistenceOperations = 0;
     portraitVideoPersistenceAvailable = false;
     portraitVideoPersistenceReady = true;
     portraitMotionEnabled = false;
@@ -540,13 +552,21 @@
     portraitVideoError = cause instanceof Error ? cause.message : 'Portrait-motion persistence failed.';
   }
 
-  function clearStoredPortraitVideoLocked(generation: number) {
+  function beginPortraitVideoPersistenceOperation() {
+    portraitVideoPersistenceOperations += 1;
     portraitVideoPersistenceReady = false;
+  }
+
+  function endPortraitVideoPersistenceOperation() {
+    portraitVideoPersistenceOperations = Math.max(0, portraitVideoPersistenceOperations - 1);
+    portraitVideoPersistenceReady = portraitVideoPersistenceOperations === 0;
+  }
+
+  function clearStoredPortraitVideoLocked(generation: number) {
+    beginPortraitVideoPersistenceOperation();
     void runStoredPortraitVideoExclusive(clearStoredPortraitVideo)
-      .then(() => {
-        if (generation === portraitVideoGeneration) portraitVideoPersistenceReady = true;
-      })
-      .catch(disablePortraitVideoPersistence);
+      .catch(disablePortraitVideoPersistence)
+      .finally(endPortraitVideoPersistenceOperation);
   }
 
   function beginPortraitVideoSourceChange(preserveStoredMotion: boolean): number {
@@ -590,11 +610,12 @@
     portrait: StoredPortrait | null,
     staticCurrent: boolean,
     digestPromptId: string,
-    imageSha256: string
+    imageSha256: string,
+    aspectRatio: PortraitAspectRatio
   ): PortraitVideoRequest | null {
     if (!portrait || !staticCurrent || digestPromptId !== portrait.promptId || !imageSha256) return null;
     try {
-      return buildPortraitVideoRequest(portrait, portraitAspectRatio, imageSha256);
+      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256);
     } catch {
       return null;
     }
@@ -611,7 +632,8 @@
       generatedPortrait,
       portraitCurrent,
       portraitImageDigestPromptId,
-      portraitImageSha256
+      portraitImageSha256,
+      portraitAspectRatio
     );
     return !signal?.aborted
       && generation === portraitVideoGeneration
@@ -624,23 +646,26 @@
 
   async function restoreGeneratedPortraitVideo() {
     const generation = portraitVideoGeneration;
+    beginPortraitVideoPersistenceOperation();
     const restoredRequest = currentPortraitVideoRequest(
       generatedPortrait,
       portraitCurrent,
       portraitImageDigestPromptId,
-      portraitImageSha256
+      portraitImageSha256,
+      portraitAspectRatio
     );
     const restoredKey = restoredRequest ? portraitVideoRequestKey(restoredRequest) : '';
     try {
       await restoreStoredPortraitVideo({
         exclusive: runStoredPortraitVideoExclusive,
-        load: loadStoredPortraitVideo,
+        load: loadVerifiedStoredPortraitVideo,
         isCurrent: () => {
           const request = currentPortraitVideoRequest(
             generatedPortrait,
             portraitCurrent,
             portraitImageDigestPromptId,
-            portraitImageSha256
+            portraitImageSha256,
+            portraitAspectRatio
           );
           return generation === portraitVideoGeneration
             && Boolean(restoredRequest && request && portraitVideoRequestKey(request) === restoredKey);
@@ -651,7 +676,28 @@
     } catch (cause) {
       disablePortraitVideoPersistence(cause);
     } finally {
-      if (generation === portraitVideoGeneration) portraitVideoPersistenceReady = true;
+      endPortraitVideoPersistenceOperation();
+    }
+  }
+
+  async function loadVerifiedStoredPortraitVideo(): Promise<StoredPortraitVideo | null> {
+    const stored = await loadStoredPortraitVideo();
+    if (stored === null) return null;
+    try {
+      const video = normalizeStoredPortraitVideo(stored);
+      const signature = new Uint8Array(await video.video.slice(0, 4).arrayBuffer());
+      if (
+        signature[0] !== 0x1a
+        || signature[1] !== 0x45
+        || signature[2] !== 0xdf
+        || signature[3] !== 0xa3
+        || await blobSha256(video.video) !== video.videoSha256
+      ) throw new Error('stored portrait motion bytes are invalid');
+      return video;
+    } catch {
+      await clearStoredPortraitVideo();
+      portraitVideoError = 'Stored portrait motion was invalid and was discarded.';
+      return null;
     }
   }
 
@@ -819,16 +865,25 @@
     }
   }
 
-  function currentPortraitRequest(result: ExpressionSidecarResult | null, current: boolean): PortraitRequest | null {
+  function currentPortraitRequest(
+    result: ExpressionSidecarResult | null,
+    current: boolean,
+    subject: string,
+    setting: string,
+    attire: string,
+    lora: string,
+    aspectRatio: PortraitAspectRatio,
+    megapixels: PortraitMegapixels
+  ): PortraitRequest | null {
     if (!result || !current) return null;
     try {
       return buildPortraitRequest(result, {
-        subject: portraitSubject,
-        setting: portraitSetting,
-        attire: portraitAttire,
-        lora: portraitLora || null,
-        aspectRatio: portraitAspectRatio,
-        megapixels: portraitMegapixels
+        subject,
+        setting,
+        attire,
+        lora: lora || null,
+        aspectRatio,
+        megapixels
       });
     } catch {
       return null;
@@ -859,7 +914,7 @@
 
   async function generatePortrait(selectedRequest: PortraitRequest | null = portraitRequest) {
     if (!selectedRequest || !portraitCapabilities || portraitBusy || !portraitPersistenceReady || !portraitPersistenceAvailable) return;
-    invalidatePortraitVideoForPortraitChange(true);
+    suspendPortraitVideoForStaticGeneration();
     const key = portraitRequestKey(selectedRequest);
     lastPortraitAttemptKey = key;
     portraitBusy = true;
@@ -900,7 +955,16 @@
         image
       });
       const isCurrent = () => {
-        const liveRequest = currentPortraitRequest(expressionResult, expressionCurrent);
+        const liveRequest = currentPortraitRequest(
+          expressionResult,
+          expressionCurrent,
+          portraitSubject,
+          portraitSetting,
+          portraitAttire,
+          portraitLora,
+          portraitAspectRatio,
+          portraitMegapixels
+        );
         return selectedRequest.source.conversationId === conversationId
           && Boolean(liveRequest && portraitRequestKey(liveRequest) === key);
       };
@@ -923,6 +987,15 @@
         portraitController = null;
       }
     }
+  }
+
+  function suspendPortraitVideoForStaticGeneration() {
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoController = null;
+    portraitVideoBusy = false;
+    portraitVideoError = '';
+    lastPortraitVideoAttemptKey = '';
   }
 
   async function resetPortraitForConversation() {
@@ -1853,7 +1926,7 @@
   <main>
     <aside>
       <div class:active={activeCard || generatedPortraitUrl} class:generated={expressionsEnabled && generatedPortraitUrl} class="portrait">
-        {#if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitVideoBusy && !portraitVideoError}
+        {#if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
           <video src={generatedPortraitVideoUrl} autoplay muted loop playsinline aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}></video>
           <span class="portrait-status">{portraitVideoBusy ? 'Animating…' : generatedPortrait?.source.expression}</span>
         {:else if expressionsEnabled && generatedPortraitUrl}
@@ -2013,7 +2086,7 @@
         <div class="portrait-heading">
           <div>
             <span class="eyebrow">Portrait motion</span>
-            <strong>{portraitVideoBusy ? 'Animating…' : portraitVideoCurrent ? 'Current loop' : generatedPortraitVideo ? 'Stale' : 'No loop yet'}</strong>
+            <strong>{portraitVideoBusy ? 'Animating…' : portraitVideoError ? 'Static fallback' : portraitVideoCurrent ? 'Current loop' : generatedPortraitVideo ? 'Stale' : 'No loop yet'}</strong>
           </div>
           <label class="toggle">
             <input
