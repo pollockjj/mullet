@@ -77,9 +77,21 @@ const STORE_NAME = 'state';
 const ACTIVE_VIDEO_KEY = 'active-inline-scene-video';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
+  'mullet_stored_inline_scene_video_v1',
+  'mullet_stored_inline_scene_video_envelope_v1',
+  'mullet_stored_inline_scene_video_v2',
+  'mullet_stored_inline_scene_video_envelope_v2'
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isObsoleteStoredInlineSceneVideo(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.spec === 'string'
+    && OBSOLETE_INLINE_SCENE_VIDEO_SPECS.has(value.spec);
 }
 
 function safeInteger(value: unknown, name: string, minimum: number, maximum: number): number {
@@ -343,6 +355,10 @@ export async function restoreStoredInlineSceneVideo(
     if (!operations.isCurrent()) return null;
     const stored = await operations.load();
     if (!operations.isCurrent() || stored === null) return null;
+    if (isObsoleteStoredInlineSceneVideo(stored)) {
+      await operations.discardInvalid();
+      return null;
+    }
     let verified: StoredInlineSceneVideo;
     try {
       verified = await verifyStoredInlineSceneVideo(unwrapStoredInlineSceneVideo(stored));

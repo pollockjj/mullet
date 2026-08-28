@@ -197,6 +197,35 @@ test('discards a malformed writer envelope inside its restore lock', async () =>
   assert.equal(discardedInsideLock, true);
 });
 
+test('silently discards obsolete v1 and v2 motion inside the restore lock', async () => {
+  for (const spec of [
+    'mullet_stored_inline_scene_video_v1',
+    'mullet_stored_inline_scene_video_envelope_v1',
+    'mullet_stored_inline_scene_video_v2',
+    'mullet_stored_inline_scene_video_envelope_v2'
+  ]) {
+    let lockHeld = false;
+    let discardedInsideLock = false;
+    const restored = await restoreStoredInlineSceneVideo({
+      exclusive: async (operation) => {
+        lockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          lockHeld = false;
+        }
+      },
+      load: async () => ({ spec }),
+      discardInvalid: async () => { discardedInsideLock = lockHeld; },
+      isCurrent: () => true,
+      accepts: () => true,
+      install: () => assert.fail('obsolete motion installed')
+    });
+    assert.equal(restored, null);
+    assert.equal(discardedInsideLock, true);
+  }
+});
+
 test('restores only accepted current motion and installs before releasing the lock', async () => {
   let lockHeld = false;
   let installedWhileLocked = false;
