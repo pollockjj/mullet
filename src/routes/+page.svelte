@@ -152,8 +152,11 @@
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
+    PORTRAIT_VIDEO_DURATION_SECONDS,
+    PORTRAIT_VIDEO_FPS,
+    PORTRAIT_VIDEO_FRAMES,
     PORTRAIT_VIDEO_MODE_GENERATED_FLF,
-    PORTRAIT_VIDEO_MODE_I2V,
+    PORTRAIT_VIDEO_MODE_LOOP_FLF,
     PORTRAIT_VIDEO_MODES,
     PORTRAIT_VIDEO_TIMEOUT_MS,
     buildPortraitVideoRequest,
@@ -163,6 +166,7 @@
     type PortraitVideoMode,
     type PortraitVideoRequest
   } from '$lib/portrait-video';
+  import { validateH264AacMp4 } from '$lib/mp4';
   import {
     STORED_PORTRAIT_VIDEO_SPEC,
     clearStoredPortraitVideo,
@@ -281,7 +285,7 @@
   let lastPortraitAttemptKey = '';
   let portraitController: AbortController | null = null;
   let portraitMotionEnabled = false;
-  let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_I2V;
+  let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
@@ -424,7 +428,7 @@
   const portraitAspectStorageKey = 'mullet.portrait-aspect';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
-  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode';
+  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
@@ -687,7 +691,7 @@
     const savedPortraitVideoMode = localStorage.getItem(portraitVideoModeStorageKey);
     portraitVideoMode = PORTRAIT_VIDEO_MODES.some(({ id }) => id === savedPortraitVideoMode)
       ? savedPortraitVideoMode as PortraitVideoMode
-      : PORTRAIT_VIDEO_MODE_I2V;
+      : PORTRAIT_VIDEO_MODE_LOOP_FLF;
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
     restorePortraitSettings();
@@ -1877,20 +1881,34 @@
     if (stored === null) return null;
     try {
       const video = normalizeStoredPortraitVideo(stored);
-      const signature = new Uint8Array(await video.video.slice(0, 4).arrayBuffer());
-      if (
-        signature[0] !== 0x1a
-        || signature[1] !== 0x45
-        || signature[2] !== 0xdf
-        || signature[3] !== 0xa3
-        || await blobSha256(video.video) !== video.videoSha256
-      ) throw new Error('stored portrait motion bytes are invalid');
+      await verifyPortraitVideoBytes(video);
       return video;
     } catch {
       await clearStoredPortraitVideo();
       portraitVideoError = 'Stored portrait motion was invalid and was discarded.';
       return null;
     }
+  }
+
+  async function verifyPortraitVideoBytes(video: StoredPortraitVideo): Promise<void> {
+      const bytes = new Uint8Array(await video.video.arrayBuffer());
+      if (
+        bytes.length < 12
+        || bytes[4] !== 0x66
+        || bytes[5] !== 0x74
+        || bytes[6] !== 0x79
+        || bytes[7] !== 0x70
+        || await blobSha256(video.video) !== video.videoSha256
+      ) throw new Error('stored portrait motion bytes are invalid');
+      const metadata = validateH264AacMp4(bytes, {
+        width: video.width,
+        height: video.height,
+        frames: video.frames,
+        fps: video.fps
+      });
+      if (metadata.durationSeconds !== video.encodedDurationSeconds) {
+        throw new Error('stored portrait motion duration is invalid');
+      }
   }
 
   async function loadPortraitVideoGenerator() {
@@ -1908,7 +1926,7 @@
       }
       portraitVideoCapabilities = normalizePortraitVideoCapabilities(payload);
       if (!portraitVideoCapabilities.modes.some(({ id }) => id === portraitVideoMode)) {
-        portraitVideoMode = PORTRAIT_VIDEO_MODE_I2V;
+        portraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
         localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
       }
     } catch (cause) {
@@ -1995,14 +2013,14 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      if (video.type !== 'video/webm' || video.size < 4) throw new Error('Portrait-motion generator returned an invalid video.');
+      if (video.type !== 'video/mp4' || video.size < 12) throw new Error('Portrait-motion generator returned an invalid video.');
       const videoBytes = new Uint8Array(await video.arrayBuffer());
       if (
-        videoBytes[0] !== 0x1a
-        || videoBytes[1] !== 0x45
-        || videoBytes[2] !== 0xdf
-        || videoBytes[3] !== 0xa3
-      ) throw new Error('Portrait-motion generator returned an invalid WebM signature.');
+        videoBytes[4] !== 0x66
+        || videoBytes[5] !== 0x74
+        || videoBytes[6] !== 0x79
+        || videoBytes[7] !== 0x70
+      ) throw new Error('Portrait-motion generator returned an invalid MP4 signature.');
       const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
       const mode = response.headers.get('x-mullet-video-mode') ?? '';
       const inputImageSha256 = responseHeaderSha256(response, 'x-mullet-input-sha256');
@@ -2057,12 +2075,14 @@
         frames: responseHeaderInteger(response, 'x-mullet-frames', 1, 10_000),
         fps: responseHeaderInteger(response, 'x-mullet-fps', 1, 1_000),
         durationSeconds: responseHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
+        encodedDurationSeconds: responseHeaderNumber(response, 'x-mullet-encoded-duration-seconds', 1, 3_600),
         generatedAt: Date.now(),
         inputImageSha256,
         endFrame,
         videoSha256,
         video
       });
+      await verifyPortraitVideoBytes(stored);
       await commitStoredPortraitVideo(stored, {
         exclusive: runStoredPortraitVideoExclusive,
         save: saveStoredPortraitVideo,
@@ -2099,7 +2119,7 @@
 
   function persistPortraitVideoMode() {
     if (!PORTRAIT_VIDEO_MODES.some(({ id }) => id === portraitVideoMode)) {
-      portraitVideoMode = PORTRAIT_VIDEO_MODE_I2V;
+      portraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
     }
     localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
     portraitVideoGeneration += 1;
@@ -2173,6 +2193,16 @@
   function responseHeaderInteger(response: Response, name: string, minimum: number, maximum: number): number {
     const value = Number(response.headers.get(name));
     if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new Error(`Portrait response omitted ${name}.`);
+    return value;
+  }
+
+  function responseHeaderNumber(response: Response, name: string, minimum: number, maximum: number): number {
+    const raw = response.headers.get(name);
+    if (raw === null || !/^(0|[1-9]\d*)(?:\.\d+)?$/.test(raw)) throw new Error(`Portrait response omitted ${name}.`);
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < minimum || value > maximum || String(value) !== raw) {
+      throw new Error(`Portrait response omitted ${name}.`);
+    }
     return value;
   }
 
@@ -3930,8 +3960,8 @@
               </select>
             </label>
           {/if}
-          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · 49 frames @ 24 FPS · 2-second motion span · {portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'A→B VP9 WebM' : 'looping VP9 WebM'}</small>
-          {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames</small>{/if}
+          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · MiniMax H3 FL2VA · {PORTRAIT_VIDEO_FRAMES} frames @ {PORTRAIT_VIDEO_FPS} FPS · {PORTRAIT_VIDEO_DURATION_SECONDS.toFixed(3)}-second first-to-last span · {(PORTRAIT_VIDEO_FRAMES / PORTRAIT_VIDEO_FPS).toFixed(3)}-second H.264/AAC MP4</small>
+          {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button
             on:click={() => void generatePortraitVideo()}
