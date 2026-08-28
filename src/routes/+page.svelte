@@ -2979,36 +2979,43 @@
   }
 
   async function send() {
-    if (browser) reconcileLivingHistoryEpochFromStorage();
+    const selectedConversationMode = conversationMode;
+    const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
+    if (browser && fictionMode) reconcileLivingHistoryEpochFromStorage();
     const content = draft.trim();
     if (
       !content
       || streaming
       || !lorePersistenceReady
-      || !livingHistoryReadyForChat(livingHistoryEnabled, livingHistoryPersistenceReady)
+      || !livingHistoryReadyForChat(fictionMode && livingHistoryEnabled, livingHistoryPersistenceReady)
     ) return;
 
     const outboundMessages = [...messages, { role: 'user' as const, content }];
     let supplementalLorebooks: ImportedLorebook[];
-    try {
-      supplementalLorebooks = assembleSupplementalLorebooks(importedLorebooks, livingHistoryBook);
-    } catch (cause) {
-      errorMessage = cause instanceof Error ? cause.message : 'Supplemental lorebooks could not be prepared.';
-      return;
+    if (fictionMode) {
+      try {
+        supplementalLorebooks = assembleSupplementalLorebooks(importedLorebooks, livingHistoryBook);
+      } catch (cause) {
+        errorMessage = cause instanceof Error ? cause.message : 'Supplemental lorebooks could not be prepared.';
+        return;
+      }
+    } else {
+      supplementalLorebooks = [];
     }
     let requestBody: string;
     try {
       requestBody = serializeChatRequest({
+        mode: selectedConversationMode,
         messages: outboundMessages,
         maxTokens: tokenLimit,
-        characterCard: activeCard?.raw ?? null,
+        characterCard: fictionMode ? activeCard?.raw ?? null : null,
         userName: 'You',
-        personaDescription,
-        characterFilterNames: cardSourceIdentifier ? [cardSourceIdentifier] : [],
+        personaDescription: fictionMode ? personaDescription : '',
+        characterFilterNames: fictionMode && cardSourceIdentifier ? [cardSourceIdentifier] : [],
         characterTagIds: [],
         loreTimedState,
-        loreEnabled,
-        lorebooks: loreEnabled
+        loreEnabled: fictionMode && loreEnabled,
+        lorebooks: fictionMode && loreEnabled
           ? supplementalLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
           : [],
         lorebookSettings: loreSettings
@@ -3058,6 +3065,9 @@
       if (!response.ok || !response.body) {
         const detail = await response.text();
         throw new Error(detail || `Request failed (${response.status})`);
+      }
+      if (response.headers.get('x-mullet-mode') !== selectedConversationMode) {
+        throw new Error('Server response mode does not match this conversation.');
       }
 
       lastLoreActivations = readLoreActivations(response.headers.get('x-mullet-lore-entries'));
@@ -3123,7 +3133,7 @@
     } finally {
       streaming = false;
       controller = null;
-      if (completedResponse) {
+      if (completedResponse && fictionMode) {
         recordFinalizedLivingHistoryBoundary();
         publishFinalizedInlineSceneSource();
       }
