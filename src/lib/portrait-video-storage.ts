@@ -6,11 +6,12 @@ import {
   normalizePortraitVideoRequest,
   portraitVideoDimensions,
   portraitVideoRequestKey,
+  type PortraitVideoMode,
   type PortraitVideoRequest
 } from './portrait-video.ts';
 
-export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v1' as const;
-export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v1' as const;
+export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v2' as const;
+export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v2' as const;
 
 export type StoredPortraitVideo = {
   spec: typeof STORED_PORTRAIT_VIDEO_SPEC;
@@ -18,6 +19,7 @@ export type StoredPortraitVideo = {
   requestKey: string;
   request: PortraitVideoRequest;
   modelTemplate: typeof PORTRAIT_VIDEO_TEMPLATE_ID;
+  mode: PortraitVideoMode;
   promptId: string;
   seed: number;
   width: number;
@@ -91,6 +93,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
   if (value.modelTemplate !== request.modelTemplate || value.modelTemplate !== PORTRAIT_VIDEO_TEMPLATE_ID) {
     throw new Error('stored portrait-video template is invalid');
   }
+  if (value.mode !== request.mode) throw new Error('stored portrait-video mode is invalid');
   if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) {
     throw new Error('stored portrait-video prompt ID is invalid');
   }
@@ -113,6 +116,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     requestKey,
     request,
     modelTemplate: PORTRAIT_VIDEO_TEMPLATE_ID,
+    mode: request.mode,
     promptId: value.promptId,
     seed: safeInteger(value.seed, 'stored portrait-video seed', 0, Number.MAX_SAFE_INTEGER),
     width,
@@ -129,6 +133,10 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
 
 export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
   if (value === null) return null;
+  if (isRecord(value) && (
+    value.spec === 'mullet_stored_portrait_video_v1'
+    || value.spec === 'mullet_stored_portrait_video_envelope_v1'
+  )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('video' in value)) {
     throw new Error('stored portrait-video envelope is invalid');

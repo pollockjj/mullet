@@ -13,8 +13,9 @@ import {
 
 function request(overrides = {}) {
   return {
-    spec: 'mullet_portrait_video_request_v1',
-    modelTemplate: 'ltx-2.5-i2v-distilled-v1',
+    spec: 'mullet_portrait_video_request_v2',
+    modelTemplate: 'ltx-2.5-distilled-portrait-v2',
+    mode: 'i2v',
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       portraitRequestKey: 'opaque-portrait-request-key',
@@ -45,6 +46,7 @@ function stored(overrides = {}) {
     requestKey: portraitVideoRequestKey(motionRequest),
     request: motionRequest,
     modelTemplate: motionRequest.modelTemplate,
+    mode: motionRequest.mode,
     promptId: '22222222-2222-4222-8222-222222222222',
     seed: 42,
     width: 384,
@@ -65,6 +67,7 @@ test('normalizes a provenance-bound WebM without canonical transcript text', () 
   assert.equal(result.video.type, 'video/webm');
   assert.equal(result.frames, 49);
   assert.equal(result.fps, 24);
+  assert.equal(result.mode, 'i2v');
   assert.equal(result.requestKey, portraitVideoRequestKey(result.request));
   assert.equal(JSON.stringify(result).includes('assistant'), false);
   assert.equal(JSON.stringify(result).includes('transcript'), false);
@@ -74,6 +77,7 @@ test('rejects unmatched request keys, conversations, hashes, timing, dimensions,
   assert.throws(() => normalizeStoredPortraitVideo(stored({ requestKey: 'wrong' })), /request key is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ mode: 'flf2v_loop' })), /mode is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ frames: 48 })), /timing is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ width: 512 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
@@ -88,6 +92,15 @@ test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
     video: value
   }), value);
   assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
+});
+
+test('discards obsolete v1 direct values and envelopes for automatic regeneration', () => {
+  assert.equal(unwrapStoredPortraitVideo({ spec: 'mullet_stored_portrait_video_v1' }), null);
+  assert.equal(unwrapStoredPortraitVideo({
+    spec: 'mullet_stored_portrait_video_envelope_v1',
+    writeId: 'legacy-writer',
+    video: { spec: 'mullet_stored_portrait_video_v1' }
+  }), null);
 });
 
 test('rolls back a write that becomes stale before installation', async () => {
