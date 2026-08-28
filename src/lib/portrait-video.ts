@@ -6,21 +6,26 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v2' as const;
-export const PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v2' as const;
+export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v3' as const;
+export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v3' as const;
+export const PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v3' as const;
+export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-lightning-4step-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;
 export const PORTRAIT_VIDEO_FPS = 24 as const;
 export const PORTRAIT_VIDEO_FRAMES = 49 as const;
 export const PORTRAIT_VIDEO_MODE_I2V = 'i2v' as const;
 export const PORTRAIT_VIDEO_MODE_LOOP_FLF = 'flf2v_loop' as const;
+export const PORTRAIT_VIDEO_MODE_GENERATED_FLF = 'flf2v_generated' as const;
 
 export const PORTRAIT_VIDEO_MODES = Object.freeze([
   { id: PORTRAIT_VIDEO_MODE_I2V, label: 'Image to video' },
-  { id: PORTRAIT_VIDEO_MODE_LOOP_FLF, label: 'Looping first/last frame' }
+  { id: PORTRAIT_VIDEO_MODE_LOOP_FLF, label: 'Looping first/last frame' },
+  { id: PORTRAIT_VIDEO_MODE_GENERATED_FLF, label: 'Generated second-frame FLF' }
 ] as const);
 
 export type PortraitVideoMode = (typeof PORTRAIT_VIDEO_MODES)[number]['id'];
+export type PortraitVideoModeDefinition = (typeof PORTRAIT_VIDEO_MODES)[number];
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
   { aspectRatio: '2:3', width: 384, height: 576 },
@@ -67,7 +72,8 @@ export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   ],
   outputNodes: {
     [PORTRAIT_VIDEO_MODE_I2V]: '31',
-    [PORTRAIT_VIDEO_MODE_LOOP_FLF]: '35'
+    [PORTRAIT_VIDEO_MODE_LOOP_FLF]: '35',
+    [PORTRAIT_VIDEO_MODE_GENERATED_FLF]: '35'
   },
   multiple: 64,
   sampler: 'euler_ancestral',
@@ -78,10 +84,47 @@ export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   promptGuide: 'locked head-and-chest portrait camera, restrained natural motion, seamless end pose, no cuts'
 } as const);
 
+export const QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
+  id: PORTRAIT_END_FRAME_TEMPLATE_ID,
+  label: 'Qwen Image Edit 2511 Lightning',
+  modelFamily: 'qwen-image-edit-2511',
+  workflowRevision: 'b972309e5337293cc003bb19d19aec4681fff623',
+  workflowSha256: 'ca314101ca20bed846292727aa60c75f42499cdb734f5e8b212dcdddb45a43b7',
+  modelFiles: {
+    unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
+    clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+    vae: 'qwen_image_vae.safetensors',
+    lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'FluxKontextImageScale',
+    'ModelSamplingAuraFlow',
+    'CFGNorm',
+    'LoraLoaderModelOnly',
+    'TextEncodeQwenImageEditPlus',
+    'VAEEncode',
+    'KSampler',
+    'VAEDecode',
+    'ImageScale',
+    'SaveImage'
+  ],
+  outputNode: '14',
+  steps: 4,
+  cfg: 1,
+  sampler: 'euler',
+  scheduler: 'simple',
+  shift: 3.1
+} as const);
+
 export type PortraitVideoSource = {
   conversationId: string;
   portraitRequestKey: string;
   portraitPromptId: string;
+  portraitSeed: number;
   portraitGeneratedAt: number;
   portraitWidth: number;
   portraitHeight: number;
@@ -92,6 +135,7 @@ export type PortraitVideoSource = {
 export type PortraitVideoRequest = {
   spec: typeof PORTRAIT_VIDEO_REQUEST_SPEC;
   modelTemplate: typeof PORTRAIT_VIDEO_TEMPLATE_ID;
+  endFrameModelTemplate: typeof PORTRAIT_END_FRAME_TEMPLATE_ID | null;
   mode: PortraitVideoMode;
   source: PortraitVideoSource;
   aspectRatio: PortraitAspectRatio;
@@ -99,9 +143,10 @@ export type PortraitVideoRequest = {
 };
 
 export type PortraitVideoCapabilities = {
-  spec: 'mullet_portrait_video_capabilities_v2';
+  spec: typeof PORTRAIT_VIDEO_CAPABILITIES_SPEC;
   template: typeof LTX25_PORTRAIT_VIDEO_TEMPLATE;
-  modes: typeof PORTRAIT_VIDEO_MODES;
+  endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null;
+  modes: readonly PortraitVideoModeDefinition[];
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
   durations: readonly [typeof PORTRAIT_VIDEO_DURATION_SECONDS];
 };
@@ -111,6 +156,7 @@ export type PortraitVideoInputPortrait = {
   requestKey: string;
   source: PortraitSource;
   promptId: string;
+  seed: number;
   width: number;
   height: number;
   generatedAt: number;
@@ -173,12 +219,14 @@ export function buildPortraitVideoRequest(
       conversationId: portrait.conversationId,
       portraitRequestKey: portrait.requestKey,
       portraitPromptId: portrait.promptId,
+      portraitSeed: portrait.seed,
       portraitGeneratedAt: portrait.generatedAt,
       portraitWidth: portrait.width,
       portraitHeight: portrait.height,
       portraitImageSha256: imageSha256,
       portraitSource: portrait.source
     },
+    endFrameModelTemplate: mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? PORTRAIT_END_FRAME_TEMPLATE_ID : null,
     aspectRatio,
     durationSeconds: PORTRAIT_VIDEO_DURATION_SECONDS
   });
@@ -192,6 +240,8 @@ export function isPortraitVideoSource(value: unknown): value is PortraitVideoSou
     && value.portraitRequestKey.length <= 5000
     && typeof value.portraitPromptId === 'string'
     && UUID_PATTERN.test(value.portraitPromptId)
+    && Number.isSafeInteger(value.portraitSeed)
+    && Number(value.portraitSeed) >= 0
     && Number.isSafeInteger(value.portraitGeneratedAt)
     && Number(value.portraitGeneratedAt) >= 1
     && Number.isSafeInteger(value.portraitWidth)
@@ -209,6 +259,8 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
   if (value.spec !== PORTRAIT_VIDEO_REQUEST_SPEC) throw new Error(`portrait-video spec must be ${PORTRAIT_VIDEO_REQUEST_SPEC}`);
   if (value.modelTemplate !== PORTRAIT_VIDEO_TEMPLATE_ID) throw new Error('unsupported portrait-video model template');
   if (!PORTRAIT_VIDEO_MODES.some((entry) => entry.id === value.mode)) throw new Error('unsupported portrait-video mode');
+  const expectedEndFrameTemplate = value.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? PORTRAIT_END_FRAME_TEMPLATE_ID : null;
+  if (value.endFrameModelTemplate !== expectedEndFrameTemplate) throw new Error('portrait-video end-frame template does not match its mode');
   if (!isPortraitVideoSource(value.source)) throw new Error('portrait-video source is invalid');
   const aspectRatio = value.aspectRatio;
   if (typeof aspectRatio !== 'string' || !dimensionMap.has(aspectRatio as PortraitAspectRatio)) {
@@ -223,11 +275,13 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
   return {
     spec: PORTRAIT_VIDEO_REQUEST_SPEC,
     modelTemplate: PORTRAIT_VIDEO_TEMPLATE_ID,
+    endFrameModelTemplate: expectedEndFrameTemplate,
     mode: value.mode as PortraitVideoMode,
     source: {
       conversationId: value.source.conversationId,
       portraitRequestKey: value.source.portraitRequestKey,
       portraitPromptId: value.source.portraitPromptId,
+      portraitSeed: Number(value.source.portraitSeed),
       portraitGeneratedAt: Number(value.source.portraitGeneratedAt),
       portraitWidth,
       portraitHeight,
@@ -245,6 +299,7 @@ export function portraitVideoRequestKey(request: PortraitVideoRequest): string {
     normalized.source.conversationId,
     normalized.source.portraitRequestKey,
     normalized.source.portraitPromptId,
+    normalized.source.portraitSeed,
     normalized.source.portraitGeneratedAt,
     normalized.source.portraitWidth,
     normalized.source.portraitHeight,
@@ -254,6 +309,7 @@ export function portraitVideoRequestKey(request: PortraitVideoRequest): string {
     normalized.source.portraitSource.fingerprint,
     normalized.source.portraitSource.expression,
     normalized.modelTemplate,
+    normalized.endFrameModelTemplate ?? '',
     normalized.mode,
     normalized.aspectRatio,
     normalized.durationSeconds
@@ -264,7 +320,9 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
   const normalized = normalizePortraitVideoRequest(request);
   const loopInstruction = normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF
     ? 'The identical supplied portrait is the first and final keyframe; motion returns exactly to that final keyframe.'
-    : 'The final pose matches the first pose for a seamless loop.';
+    : normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
+      ? 'The supplied portraits are the first and final keyframes; move continuously from the first pose to the distinct final pose.'
+      : 'The final pose matches the first pose for a seamless loop.';
   return [
     'The camera remains completely locked on the head-and-chest portrait.',
     `The subject breathes naturally, blinks once, and holds a restrained ${normalized.source.portraitSource.expression} expression.`,
@@ -274,23 +332,110 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
   ].join(' ');
 }
 
-export function buildLtx25PortraitVideoWorkflow(
+export function portraitVideoEndFrameSeed(videoSeed: number): number {
+  const seed = integer(videoSeed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
+  return seed === Number.MAX_SAFE_INTEGER ? 0 : seed + 1;
+}
+
+export function buildPortraitEndFramePrompt(request: PortraitVideoRequest): string {
+  const normalized = normalizePortraitVideoRequest(request);
+  if (normalized.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) throw new Error('portrait-video mode does not generate an end frame');
+  return [
+    'Preserve the exact same subject, face, identity, hairstyle, attire, lighting, camera framing, and background.',
+    `Show the next instant: the subject turns their head slightly and shifts their gaze to the side with a subtle natural ${normalized.source.portraitSource.expression} expression change.`,
+    'Keep the head-and-chest portrait composition and photorealistic cinematic detail.',
+    'Do not add or remove objects. No text or watermark.'
+  ].join(' ');
+}
+
+function validatePortraitVideoInputReference(
+  input: PortraitVideoInputReference,
+  expectedSha256?: string
+): void {
+  if (
+    input.subfolder !== 'mullet/motion-inputs'
+    || input.type !== 'input'
+    || !SHA256_PATTERN.test(input.imageSha256)
+    || (expectedSha256 !== undefined && input.imageSha256 !== expectedSha256)
+    || !INPUT_IMAGE_PATTERN.test(input.name)
+  ) throw new Error('portrait-video input reference is invalid');
+}
+
+export function buildQwenPortraitEndFrameWorkflow(
   request: PortraitVideoRequest,
   portraitInput: PortraitVideoInputReference,
   seed: number
 ): Record<string, unknown> {
   const normalized = normalizePortraitVideoRequest(request);
-  if (
-    portraitInput.subfolder !== 'mullet/motion-inputs'
-    || portraitInput.type !== 'input'
-    || portraitInput.imageSha256 !== normalized.source.portraitImageSha256
-    || !INPUT_IMAGE_PATTERN.test(portraitInput.name)
-  ) throw new Error('portrait-video input reference is invalid');
+  if (normalized.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) throw new Error('portrait-video mode does not generate an end frame');
+  validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
+  const validatedSeed = integer(seed, 'portrait end-frame seed', 0, Number.MAX_SAFE_INTEGER);
+  const template = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
+  return {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'qwen_image', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
+    '4': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
+    '5': { class_type: 'FluxKontextImageScale', inputs: { image: ['4', 0] } },
+    '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: template.shift } },
+    '7': { class_type: 'CFGNorm', inputs: { model: ['6', 0], strength: 1, pre_cfg: false } },
+    '8': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['7', 0], lora_name: template.modelFiles.lora, strength_model: 1 } },
+    '9': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: buildPortraitEndFramePrompt(normalized) } },
+    '10': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: '' } },
+    '11': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
+    '12': {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['8', 0],
+        positive: ['9', 0],
+        negative: ['10', 0],
+        latent_image: ['11', 0],
+        seed: validatedSeed,
+        steps: template.steps,
+        cfg: template.cfg,
+        sampler_name: template.sampler,
+        scheduler: template.scheduler,
+        denoise: 1
+      }
+    },
+    '13': { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['3', 0] } },
+    '14': { class_type: 'SaveImage', inputs: { images: ['15', 0], filename_prefix: 'mullet/portrait-generated-end-frame' } },
+    '15': {
+      class_type: 'ImageScale',
+      inputs: {
+        image: ['13', 0],
+        upscale_method: 'lanczos',
+        width: normalized.source.portraitWidth,
+        height: normalized.source.portraitHeight,
+        crop: 'disabled'
+      }
+    }
+  };
+}
+
+export function buildLtx25PortraitVideoWorkflow(
+  request: PortraitVideoRequest,
+  portraitInput: PortraitVideoInputReference,
+  seed: number,
+  endFrameInput?: PortraitVideoInputReference
+): Record<string, unknown> {
+  const normalized = normalizePortraitVideoRequest(request);
+  validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio);
-  if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF) {
-    return buildLtx25LoopFlfPortraitVideoWorkflow(normalized, portraitInput, validatedSeed, width, height, frames, fps);
+  if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF || normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
+    const lastInput = normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? endFrameInput : portraitInput;
+    if (!lastInput) throw new Error('portrait-video generated end-frame input is required');
+    validatePortraitVideoInputReference(lastInput);
+    if (normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && lastInput.imageSha256 === portraitInput.imageSha256) {
+      throw new Error('portrait-video generated end frame must differ from its source');
+    }
+    if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF && endFrameInput !== undefined) {
+      throw new Error('portrait-video loop mode does not accept a separate end frame');
+    }
+    return buildLtx25FlfPortraitVideoWorkflow(normalized, portraitInput, lastInput, validatedSeed, width, height, frames, fps);
   }
+  if (endFrameInput !== undefined) throw new Error('portrait-video I2V mode does not accept an end frame');
   return {
     '1': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
     '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
@@ -335,9 +480,10 @@ export function buildLtx25PortraitVideoWorkflow(
   };
 }
 
-function buildLtx25LoopFlfPortraitVideoWorkflow(
+function buildLtx25FlfPortraitVideoWorkflow(
   request: PortraitVideoRequest,
   portraitInput: PortraitVideoInputReference,
+  endFrameInput: PortraitVideoInputReference,
   seed: number,
   width: number,
   height: number,
@@ -345,6 +491,8 @@ function buildLtx25LoopFlfPortraitVideoWorkflow(
   fps: number
 ): Record<string, unknown> {
   const nextSeed = seed + 42 <= Number.MAX_SAFE_INTEGER ? seed + 42 : seed - 42;
+  const generatedEndFrame = request.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF;
+  const endFrameImage = generatedEndFrame ? ['37', 0] : ['2', 0];
   return {
     '1': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
     '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
@@ -358,7 +506,7 @@ function buildLtx25LoopFlfPortraitVideoWorkflow(
     '10': { class_type: 'LTXVConditioning', inputs: { positive: ['8', 0], negative: ['9', 0], frame_rate: fps } },
     '11': { class_type: 'EmptyLTXVLatentVideo', inputs: { width: width / 2, height: height / 2, length: frames, batch_size: 1 } },
     '12': { class_type: 'LTXVAddGuide', inputs: { positive: ['10', 0], negative: ['10', 1], vae: ['5', 0], latent: ['11', 0], image: ['2', 0], frame_idx: 0, strength: 0.7 } },
-    '13': { class_type: 'LTXVAddGuide', inputs: { positive: ['12', 0], negative: ['12', 1], vae: ['5', 0], latent: ['12', 2], image: ['2', 0], frame_idx: -1, strength: 0.7 } },
+    '13': { class_type: 'LTXVAddGuide', inputs: { positive: ['12', 0], negative: ['12', 1], vae: ['5', 0], latent: ['12', 2], image: endFrameImage, frame_idx: -1, strength: 0.7 } },
     '14': { class_type: 'LTXVEmptyLatentAudio', inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ['6', 0] } },
     '15': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['13', 2], audio_latent: ['14', 0] } },
     '16': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['13', 0], negative: ['13', 1], video_cfg: 1, audio_cfg: 1 } },
@@ -370,7 +518,7 @@ function buildLtx25LoopFlfPortraitVideoWorkflow(
     '22': { class_type: 'LTXVCropGuides', inputs: { positive: ['13', 0], negative: ['13', 1], latent: ['21', 0] } },
     '23': { class_type: 'LTXVLatentUpsampler', inputs: { samples: ['22', 2], upscale_model: ['7', 0], vae: ['5', 0] } },
     '24': { class_type: 'LTXVAddGuide', inputs: { positive: ['10', 0], negative: ['10', 1], vae: ['5', 0], latent: ['23', 0], image: ['2', 0], frame_idx: 0, strength: 0.7 } },
-    '25': { class_type: 'LTXVAddGuide', inputs: { positive: ['24', 0], negative: ['24', 1], vae: ['5', 0], latent: ['24', 2], image: ['2', 0], frame_idx: -1, strength: 0.7 } },
+    '25': { class_type: 'LTXVAddGuide', inputs: { positive: ['24', 0], negative: ['24', 1], vae: ['5', 0], latent: ['24', 2], image: endFrameImage, frame_idx: -1, strength: 0.7 } },
     '26': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['25', 2], audio_latent: ['21', 1] } },
     '27': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['25', 0], negative: ['25', 1], video_cfg: 1, audio_cfg: 1 } },
     '28': { class_type: 'RandomNoise', inputs: { noise_seed: nextSeed } },
@@ -384,12 +532,16 @@ function buildLtx25LoopFlfPortraitVideoWorkflow(
       class_type: 'SaveWEBM',
       inputs: {
         images: ['34', 0],
-        filename_prefix: 'mullet/portrait-motion-loop-flf',
+        filename_prefix: generatedEndFrame ? 'mullet/portrait-motion-generated-flf' : 'mullet/portrait-motion-loop-flf',
         codec: LTX25_PORTRAIT_VIDEO_TEMPLATE.codec,
         fps,
         crf: LTX25_PORTRAIT_VIDEO_TEMPLATE.crf
       }
-    }
+    },
+    ...(generatedEndFrame ? {
+      '36': { class_type: 'LoadImage', inputs: { image: `${endFrameInput.subfolder}/${endFrameInput.name}` } },
+      '37': { class_type: 'LTXVPreprocess', inputs: { image: ['36', 0], img_compression: 18 } }
+    } : {})
   };
 }
 
@@ -398,16 +550,27 @@ export function portraitVideoOutputNode(request: PortraitVideoRequest): string {
 }
 
 export function normalizePortraitVideoCapabilities(value: unknown): PortraitVideoCapabilities {
-  if (!isRecord(value) || value.spec !== 'mullet_portrait_video_capabilities_v2') {
+  if (!isRecord(value) || value.spec !== PORTRAIT_VIDEO_CAPABILITIES_SPEC) {
     throw new Error('invalid portrait-video capabilities');
   }
   if (!isRecord(value.template) || value.template.id !== PORTRAIT_VIDEO_TEMPLATE_ID) {
     throw new Error('invalid portrait-video template');
   }
+  if (!Array.isArray(value.modes) || value.modes.length < 1) throw new Error('invalid portrait-video modes');
+  const modeIds = value.modes.map((mode) => isRecord(mode) ? mode.id : null);
+  if (modeIds.some((id) => !PORTRAIT_VIDEO_MODES.some((mode) => mode.id === id)) || new Set(modeIds).size !== modeIds.length) {
+    throw new Error('invalid portrait-video modes');
+  }
+  const modes = PORTRAIT_VIDEO_MODES.filter((mode) => modeIds.includes(mode.id));
+  const hasGeneratedEndFrame = modes.some((mode) => mode.id === PORTRAIT_VIDEO_MODE_GENERATED_FLF);
+  if (hasGeneratedEndFrame !== (isRecord(value.endFrameTemplate) && value.endFrameTemplate.id === PORTRAIT_END_FRAME_TEMPLATE_ID)) {
+    throw new Error('invalid portrait-video end-frame template');
+  }
   return {
-    spec: 'mullet_portrait_video_capabilities_v2',
+    spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     template: LTX25_PORTRAIT_VIDEO_TEMPLATE,
-    modes: PORTRAIT_VIDEO_MODES,
+    endFrameTemplate: hasGeneratedEndFrame ? QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE : null,
+    modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
     durations: [PORTRAIT_VIDEO_DURATION_SECONDS]
   };
