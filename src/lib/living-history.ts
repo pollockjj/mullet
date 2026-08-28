@@ -266,9 +266,9 @@ export function livingHistoryLorebook(result: LivingHistoryResult): ImportedLore
         insertion_order: 950,
         position: 'after_char',
         use_regex: false,
-        exclude_recursion: true,
-        prevent_recursion: true,
         extensions: {
+          exclude_recursion: true,
+          prevent_recursion: true,
           mullet: {
             kind: 'living_history',
             conversation_id: normalized.source.conversationId,
