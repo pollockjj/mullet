@@ -386,7 +386,12 @@
         payload = null;
       }
       if (!response.ok) {
-        const detail = payload && typeof payload.message === 'string' ? payload.message : `Portrait generator failed (${response.status}).`;
+        const detail = payload
+          && typeof payload === 'object'
+          && 'message' in payload
+          && typeof payload.message === 'string'
+          ? payload.message
+          : `Portrait generator failed (${response.status}).`;
         throw new Error(detail);
       }
       portraitCapabilities = normalizePortraitCapabilities(payload);
@@ -679,9 +684,18 @@
         body: JSON.stringify(selectedRequest),
         signal: activeController.signal
       });
-      const payload = await response.json().catch(() => null);
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
+        payload = null;
+      }
       if (!response.ok) {
-        const detail = payload && typeof payload.message === 'string'
+        const detail = payload
+          && typeof payload === 'object'
+          && 'message' in payload
+          && typeof payload.message === 'string'
           ? payload.message
           : `Living-history sidecar failed (${response.status}).`;
         throw new Error(detail);
