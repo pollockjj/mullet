@@ -3,10 +3,13 @@ import test from 'node:test';
 
 import {
   PORTRAIT_REQUEST_SPEC,
+  PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
   buildPortraitPrompt,
   buildPortraitRequest,
+  buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   normalizePortraitRequest,
   portraitDimensions,
@@ -33,6 +36,27 @@ function request(overrides = {}) {
     setting: 'the Liberator flight deck',
     attire: 'a dark leather tunic',
     lora: null,
+    aspectRatio: '2:3',
+    megapixels: 0.9,
+    ...overrides
+  });
+}
+
+function referenceRequest(overrides = {}) {
+  return buildPortraitRequest(expression, {
+    modelTemplate: PORTRAIT_REFERENCE_TEMPLATE_ID,
+    subject: "Sally Knyvette portraying Jenna Stannis in the 1979 BBC television series Blake's 7",
+    setting: 'the Liberator flight deck',
+    attire: "Jenna's burgundy and silver-grey leather spaceflight tunic",
+    lora: null,
+    referenceImage: {
+      name: 'jenna-stannis-v1.jpg',
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8'
+    },
+    characterId: 'jenna-stannis',
+    profileFingerprint: '1234abcd',
     aspectRatio: '2:3',
     megapixels: 0.9,
     ...overrides
@@ -86,11 +110,34 @@ test('compiles the proven Z-Image graph and inserts only compatible LoRAs', () =
   assert.deepEqual(withLora['6'].inputs.model, ['11', 0]);
 });
 
+test('binds Jenna identity provenance and compiles the proven Qwen reference graph', () => {
+  const built = referenceRequest();
+  assert.equal(built.modelTemplate, PORTRAIT_REFERENCE_TEMPLATE_ID);
+  assert.equal(built.source.characterId, 'jenna-stannis');
+  assert.equal(built.source.profileFingerprint, '1234abcd');
+  assert.equal(built.referenceImage.name, 'jenna-stannis-v1.jpg');
+  const prompt = buildPortraitPrompt(built);
+  assert.match(prompt, /supplied canonical reference as the identity source/);
+  assert.match(prompt, /Preserve identity; do not substitute another person/);
+
+  const graph = buildQwenReferencePortraitWorkflow(built, 19790213);
+  assert.equal(graph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
+  assert.equal(graph['9'].class_type, 'TextEncodeQwenImageEditPlus');
+  assert.equal(graph['12'].inputs.seed, 19790213);
+  assert.deepEqual(graph['15'].inputs.width, 768);
+  assert.deepEqual(graph['15'].inputs.height, 1152);
+  assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
+});
+
 test('rejects arbitrary templates, dimensions, LoRA paths, and stale sources', () => {
   const built = request();
   assert.throws(() => normalizePortraitRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait model/);
   assert.throws(() => normalizePortraitRequest({ ...built, megapixels: 9 }), /unsupported portrait megapixel/);
   assert.throws(() => normalizePortraitRequest({ ...built, lora: '../escape.safetensors' }), /LoRA is invalid/);
   assert.throws(() => normalizePortraitRequest({ ...built, source: { ...built.source, messageIndex: 0 } }), /latest response/);
+  assert.throws(() => normalizePortraitRequest({ ...referenceRequest(), referenceImage: null }), /requires an identity reference/);
+  assert.throws(() => normalizePortraitRequest({ ...referenceRequest(), lora: 'zimage/kristi6.safetensors' }), /does not accept a Z-Image LoRA/);
   assert.notEqual(portraitRequestKey(built), portraitRequestKey(request({ attire: 'a Federation uniform' })));
+  assert.notEqual(portraitRequestKey(referenceRequest()), portraitRequestKey(referenceRequest({ profileFingerprint: '5678abcd' })));
 });

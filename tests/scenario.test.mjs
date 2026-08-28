@@ -5,6 +5,7 @@ import test from 'node:test';
 import { compileCharacterMessages } from '../src/lib/character-card.ts';
 import { combineLorebooks, injectLoreContext, normalizeLorebook, scanLorebooks } from '../src/lib/lorebook.ts';
 import {
+  defaultScenarioPortraitProfile,
   isScenarioCard,
   normalizeScenarioCatalog,
   validateScenarioPackage
@@ -27,7 +28,7 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   const { catalog, entry } = bundledScenario();
   assert.equal(catalog.spec, 'mullet_scenario_catalog_v1');
   assert.equal(entry.id, 'blakes-7-post-gan');
-  assert.equal(entry.version, '1.0.1');
+  assert.equal(entry.version, '1.0.2');
 
   const duplicate = asset('catalog.json');
   duplicate.scenarios.push(structuredClone(duplicate.scenarios[0]));
@@ -67,6 +68,17 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   assert.equal(cardRaw.data.character_version, '0.1.1');
   assert.equal(cardRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(lorebookRaw.data.extensions.mullet.user_definition, 'female_she_her');
+  assert.equal(packaged.portraitCast.defaultProfileId, 'jenna-stannis');
+  const portraitProfile = defaultScenarioPortraitProfile(packaged.card);
+  assert.equal(portraitProfile.id, 'jenna-stannis');
+  assert.equal(portraitProfile.displayName, 'Jenna Stannis');
+  assert.match(portraitProfile.subject, /Sally Knyvette portraying Jenna Stannis/);
+  assert.match(portraitProfile.attire, /burgundy, maroon, and silver-grey leather/);
+  assert.match(portraitProfile.setting, /Liberator flight deck/);
+  assert.equal(portraitProfile.modelTemplate, 'qwen-image-edit-2511-reference-v1');
+  assert.equal(portraitProfile.referenceImage.name, 'jenna-stannis-v1.jpg');
+  assert.match(portraitProfile.referenceImage.sha256, /^[0-9a-f]{64}$/);
+  assert.match(portraitProfile.fingerprint, /^[0-9a-f]{8}$/);
   const protagonist = lorebookRaw.data.entries.find((loreEntry) => loreEntry.id === 1);
   assert.match(protagonist.content, /protagonist is a woman and uses she\/her pronouns/);
   assert.equal(protagonist.extensions.mullet.user_definition, 'female_she_her');
@@ -97,6 +109,21 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   const duplicateCard = structuredClone(cardRaw);
   duplicateCard.data.character_book = structuredClone(duplicateLore.data);
   assert.throws(() => validateScenarioPackage(entry, duplicateCard, duplicateLore), /entry ids must be unique/);
+
+  const duplicateAliasLore = structuredClone(lorebookRaw);
+  duplicateAliasLore.data.extensions.mullet.portrait_cast_v1.profiles.push({
+    ...structuredClone(duplicateAliasLore.data.extensions.mullet.portrait_cast_v1.profiles[0]),
+    id: 'duplicate-jenna'
+  });
+  const duplicateAliasCard = structuredClone(cardRaw);
+  duplicateAliasCard.data.character_book = structuredClone(duplicateAliasLore.data);
+  assert.throws(() => validateScenarioPackage(entry, duplicateAliasCard, duplicateAliasLore), /duplicate scenario portrait alias/);
+
+  const missingProfileLore = structuredClone(lorebookRaw);
+  missingProfileLore.data.extensions.mullet.portrait_cast_v1.default_profile_id = 'unknown-character';
+  const missingProfileCard = structuredClone(cardRaw);
+  missingProfileCard.data.character_book = structuredClone(missingProfileLore.data);
+  assert.throws(() => validateScenarioPackage(entry, missingProfileCard, missingProfileLore), /default profile does not exist/);
 });
 
 test('keeps validated embedded scenario lore authoritative over same-name imported state', () => {
