@@ -2741,9 +2741,42 @@
     draft = text;
   }
 
+  function persistConversationMode() {
+    localStorage.setItem(conversationModeStorageKey, conversationMode);
+  }
+
+  async function replaceConversationMode(nextMode: ConversationMode) {
+    if (streaming || nextMode === conversationMode) return;
+    if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
+    conversationMode = nextMode;
+    persistConversationMode();
+    messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+    errorMessage = '';
+    noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+      ? 'Personal Assistant started on an isolated neutral model channel.'
+      : 'Fiction workspace started.';
+    lastLoreActivations = null;
+    lastLivingHistoryFired = null;
+    lastLoreActivationCount = 0;
+    lastLoreBudget = 0;
+    loreTimedState = emptyLoreTimedState();
+    localStorage.removeItem(loreTimedStateStorageKey);
+    await resetSidecarForConversation();
+    persist();
+    await scrollToLatest();
+  }
+
+  async function startPersonalAssistant() {
+    await replaceConversationMode(CONVERSATION_MODE_PERSONAL_ASSISTANT);
+  }
+
+  async function startFictionWorkspace() {
+    await replaceConversationMode(CONVERSATION_MODE_FICTION);
+  }
+
   async function clearConversation() {
     if (streaming) return;
-    messages = freshConversation();
+    messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
