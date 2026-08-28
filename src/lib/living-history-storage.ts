@@ -79,6 +79,17 @@ export function migrateStoredLivingHistoryResult(value: unknown): LivingHistoryR
   return normalizeLivingHistoryResult(value);
 }
 
+export function livingHistoryWriteBaseMatches(
+  persistedResult: unknown | null,
+  candidate: LivingHistoryResult
+): boolean {
+  const normalized = normalizeLivingHistoryResult(candidate);
+  const persistedFingerprint = persistedResult === null
+    ? LIVING_HISTORY_EMPTY_STATE_FINGERPRINT
+    : livingHistoryStateFingerprint(migrateStoredLivingHistoryResult(persistedResult));
+  return persistedFingerprint === normalized.parentFingerprint;
+}
+
 function boundedStorageId(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > 200) {
     throw new Error(`${name} is invalid`);
@@ -213,10 +224,7 @@ export async function saveStoredLivingHistory(
           if (previousRaw !== null && unwrapped === null) {
             throw new LivingHistoryConflictError('The persisted living-history epoch changed before this update committed.');
           }
-          const persistedFingerprint = unwrapped === null
-            ? LIVING_HISTORY_EMPTY_STATE_FINGERPRINT
-            : livingHistoryStateFingerprint(migrateStoredLivingHistoryResult(unwrapped));
-          if (persistedFingerprint !== normalized.parentFingerprint) throw new LivingHistoryConflictError();
+          if (!livingHistoryWriteBaseMatches(unwrapped, normalized)) throw new LivingHistoryConflictError();
           store.put(envelope, ACTIVE_HISTORY_KEY);
         } catch (cause) {
           failure = cause;
