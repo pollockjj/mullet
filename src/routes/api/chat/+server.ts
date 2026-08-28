@@ -13,6 +13,7 @@ import {
   type ImportedCharacterCard
 } from '$lib/character-card';
 import {
+  combineLorebooks,
   compileUnboundLoreMessages,
   injectLoreContext,
   lorePromptContextTokens,
@@ -22,6 +23,7 @@ import {
   type ImportedLorebook,
   type LoreScanResult
 } from '$lib/lorebook';
+import { isScenarioCard } from '$lib/scenario';
 
 type Role = 'system' | 'user' | 'assistant';
 
@@ -113,15 +115,10 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         const name = typeof candidate.name === 'string' ? candidate.name : `Lorebook ${index + 1}`;
         importedBooks.push(normalizeLorebook(candidate.raw ?? candidate, name, 'imported'));
       });
-      const uniqueImportedBooks = [...new Map(importedBooks.map((book) => [book.name, book])).values()];
-      const importedNames = new Set(uniqueImportedBooks.map((book) => book.name));
       const embeddedBook = characterCard?.data.characterBook
         ? normalizeLorebook(characterCard.data.characterBook, `${characterCard.data.name} lore`, 'embedded')
         : null;
-      const books = [
-        ...(embeddedBook && !importedNames.has(embeddedBook.name) ? [embeddedBook] : []),
-        ...uniqueImportedBooks
-      ];
+      const books = combineLorebooks(embeddedBook, importedBooks, isScenarioCard(characterCard));
       if (books.reduce((total, book) => total + book.entries.length, 0) > 20_000) {
         throw new Error('active lorebooks may contain at most 20000 entries');
       }

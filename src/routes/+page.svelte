@@ -12,6 +12,7 @@
   } from '$lib/character-card';
   import {
     DEFAULT_LOREBOOK_SETTINGS,
+    combineLorebooks,
     emptyLoreTimedState,
     normalizeLorebook,
     normalizeLoreTimedState,
@@ -81,10 +82,7 @@
   const loreTimedStateStorageKey = 'mullet.lore-timed-state';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
-  $: activeLorebooks = [
-    ...(embeddedLorebook && !importedLorebooks.some((book) => book.name === embeddedLorebook?.name) ? [embeddedLorebook] : []),
-    ...importedLorebooks
-  ];
+  $: activeLorebooks = combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard));
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
 
   const starters = [

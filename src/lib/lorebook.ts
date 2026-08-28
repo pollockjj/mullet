@@ -493,6 +493,21 @@ export function parseLorebookJson(
   return normalizeLorebook(parsed, fallbackName, origin);
 }
 
+export function combineLorebooks(
+  embeddedBook: ImportedLorebook | null,
+  importedBooks: ImportedLorebook[],
+  embeddedAuthoritative = false
+): ImportedLorebook[] {
+  const uniqueImported = [...new Map(importedBooks.map((book) => [book.name, book])).values()];
+  if (!embeddedBook) return uniqueImported;
+  if (embeddedAuthoritative) {
+    return [embeddedBook, ...uniqueImported.filter((book) => book.name !== embeddedBook.name)];
+  }
+  return uniqueImported.some((book) => book.name === embeddedBook.name)
+    ? uniqueImported
+    : [embeddedBook, ...uniqueImported];
+}
+
 function integerSetting(value: unknown, name: string, minimum: number, maximum: number, fallback: number): number {
   if (value === undefined || value === null) return fallback;
   if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {

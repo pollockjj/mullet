@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { compileCharacterMessages } from '../src/lib/character-card.ts';
-import { injectLoreContext, normalizeLorebook, scanLorebooks } from '../src/lib/lorebook.ts';
+import { combineLorebooks, injectLoreContext, normalizeLorebook, scanLorebooks } from '../src/lib/lorebook.ts';
 import {
   isScenarioCard,
   normalizeScenarioCatalog,
@@ -90,6 +90,21 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   const duplicateCard = structuredClone(cardRaw);
   duplicateCard.data.character_book = structuredClone(duplicateLore.data);
   assert.throws(() => validateScenarioPackage(entry, duplicateCard, duplicateLore), /entry ids must be unique/);
+});
+
+test('keeps validated embedded scenario lore authoritative over same-name imported state', () => {
+  const { entry, cardRaw, lorebookRaw } = bundledScenario();
+  const { card } = validateScenarioPackage(entry, cardRaw, lorebookRaw);
+  const embedded = normalizeLorebook(card.data.characterBook, entry.title, 'embedded');
+  const staleRaw = structuredClone(lorebookRaw);
+  staleRaw.data.entries[0].content = 'STALE IMPORT WITHOUT THE TIMELINE GATE';
+  const staleImported = normalizeLorebook(staleRaw, entry.title, 'imported');
+
+  assert.equal(combineLorebooks(embedded, [staleImported], false)[0].origin, 'imported');
+  const scenarioStack = combineLorebooks(embedded, [staleImported], true);
+  assert.equal(scenarioStack.length, 1);
+  assert.equal(scenarioStack[0].origin, 'embedded');
+  assert.match(scenarioStack[0].entries[0].content, /present is locked to the minutes after/i);
 });
 
 test('activates the scenario timeline and named cast without polluting canonical history', async () => {
