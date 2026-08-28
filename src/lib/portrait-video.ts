@@ -349,11 +349,17 @@ export function buildFlux2Klein9BPortraitEndFrameWorkflow(
   const normalized = normalizePortraitVideoRequest(request);
   if (normalized.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) throw new Error('portrait-video mode does not generate an end frame');
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
+  const referenceMegapixels = PORTRAIT_MEGAPIXELS.find((megapixels) => {
+    const dimensions = portraitDimensions(normalized.aspectRatio, megapixels);
+    return dimensions.width === normalized.source.portraitWidth && dimensions.height === normalized.source.portraitHeight;
+  });
+  if (referenceMegapixels === undefined) throw new Error('portrait end-frame source megapixel target is invalid');
   return buildFlux2Klein9BReferenceEditWorkflow({
     referencePath: `${portraitInput.subfolder}/${portraitInput.name}`,
     prompt: buildPortraitEndFramePrompt(normalized),
     width: normalized.source.portraitWidth,
     height: normalized.source.portraitHeight,
+    referenceMegapixels,
     seed,
     filenamePrefix: 'mullet/portrait-generated-end-frame'
   });

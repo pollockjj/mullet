@@ -399,6 +399,7 @@ type Flux2Klein9BReferenceEditSettings = {
   prompt: string;
   width: number;
   height: number;
+  referenceMegapixels: PortraitMegapixels;
   seed: number;
   filenamePrefix: 'mullet/portrait-reference' | 'mullet/portrait-generated-end-frame';
 };
@@ -417,7 +418,7 @@ export function buildFlux2Klein9BReferenceEditWorkflow(
     throw new Error('FLUX.2 Klein edit reference path is invalid');
   }
   const prompt = textField(settings.prompt, 'FLUX.2 Klein edit prompt', 1, 2000);
-  const referenceMegapixels = (width * height) / (1024 * 1024);
+  if (!megapixelSet.has(settings.referenceMegapixels)) throw new Error('unsupported FLUX.2 Klein edit megapixel target');
   return {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'flux2', device: 'default' } },
@@ -426,7 +427,7 @@ export function buildFlux2Klein9BReferenceEditWorkflow(
     '5': { class_type: 'ImageScaleToTotalPixels', inputs: {
       image: ['4', 0],
       upscale_method: 'nearest-exact',
-      megapixels: referenceMegapixels,
+      megapixels: settings.referenceMegapixels,
       resolution_steps: 1
     } },
     '6': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
@@ -463,6 +464,7 @@ export function buildFlux2Klein9BReferencePortraitWorkflow(request: PortraitRequ
     prompt: buildPortraitPrompt(normalized),
     width,
     height,
+    referenceMegapixels: normalized.megapixels,
     seed,
     filenamePrefix: 'mullet/portrait-reference'
   });

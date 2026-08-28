@@ -126,7 +126,7 @@ test('binds Jenna identity provenance and compiles the official FLUX.2 Klein 9B 
   assert.equal(graph['3'].inputs.vae_name, 'full_encoder_small_decoder.safetensors');
   assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   assert.equal(graph['5'].class_type, 'ImageScaleToTotalPixels');
-  assert.equal(graph['5'].inputs.megapixels, 704 * 704 / (1024 * 1024));
+  assert.equal(graph['5'].inputs.megapixels, 0.5);
   assert.equal(graph['6'].class_type, 'VAEEncode');
   assert.equal(graph['7'].class_type, 'CLIPTextEncode');
   assert.equal(graph['8'].class_type, 'ConditioningZeroOut');
