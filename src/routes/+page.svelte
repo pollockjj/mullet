@@ -397,6 +397,7 @@
   let lastAssistantMemoryActive: boolean | null = null;
   let assistantMemoryGeneration = 0;
   let assistantMemoryController: AbortController | null = null;
+  let workspaceBusy = false;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
@@ -2974,12 +2975,14 @@
       || streaming
       || scenarioLoading
       || assistantTurnBusy
+      || workspaceBusy
       || assistantMemoryBusy
       || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
     ) return;
     errorMessage = '';
     noticeMessage = '';
     scenarioLoading = true;
+    workspaceBusy = true;
     try {
       const packaged = await loadScenarioPackage(selectedScenario);
       if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
@@ -3006,6 +3009,7 @@
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario failed to start.';
     } finally {
       scenarioLoading = false;
+      workspaceBusy = false;
     }
   }
 
@@ -3098,27 +3102,33 @@
   async function replaceConversationMode(nextMode: ConversationMode) {
     if (
       streaming
+      || workspaceBusy
       || assistantTurnBusy
       || assistantMemoryBusy
       || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
       || nextMode === conversationMode
     ) return;
     if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
-    conversationMode = nextMode;
-    messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
-    errorMessage = '';
-    noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
-      ? 'Personal Assistant started on an isolated neutral model channel.'
-      : 'Fiction workspace started.';
-    lastLoreActivations = null;
-    lastLivingHistoryFired = null;
-    lastLoreActivationCount = 0;
-    lastLoreBudget = 0;
-    loreTimedState = emptyLoreTimedState();
-    localStorage.removeItem(loreTimedStateStorageKey);
-    await resetSidecarForConversation();
-    persist();
-    await scrollToLatest();
+    workspaceBusy = true;
+    try {
+      conversationMode = nextMode;
+      messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+      errorMessage = '';
+      noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+        ? 'Personal Assistant started on an isolated neutral model channel.'
+        : 'Fiction workspace started.';
+      lastLoreActivations = null;
+      lastLivingHistoryFired = null;
+      lastLoreActivationCount = 0;
+      lastLoreBudget = 0;
+      loreTimedState = emptyLoreTimedState();
+      localStorage.removeItem(loreTimedStateStorageKey);
+      await resetSidecarForConversation();
+      persist();
+      await scrollToLatest();
+    } finally {
+      workspaceBusy = false;
+    }
   }
 
   async function startPersonalAssistant() {
@@ -3132,20 +3142,26 @@
   async function clearConversation() {
     if (
       streaming
+      || workspaceBusy
       || assistantTurnBusy
       || assistantMemoryBusy
       || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
     ) return;
-    messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
-    errorMessage = '';
-    noticeMessage = '';
-    lastLoreActivations = null;
-    lastLivingHistoryFired = null;
-    lastLoreBudget = 0;
-    loreTimedState = emptyLoreTimedState();
-    localStorage.removeItem(loreTimedStateStorageKey);
-    await resetSidecarForConversation();
-    persist();
+    workspaceBusy = true;
+    try {
+      messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
+      errorMessage = '';
+      noticeMessage = '';
+      lastLoreActivations = null;
+      lastLivingHistoryFired = null;
+      lastLoreBudget = 0;
+      loreTimedState = emptyLoreTimedState();
+      localStorage.removeItem(loreTimedStateStorageKey);
+      await resetSidecarForConversation();
+      persist();
+    } finally {
+      workspaceBusy = false;
+    }
   }
 
   async function portraitFromPng(file: File): Promise<string> {
@@ -3174,6 +3190,7 @@
 
     errorMessage = '';
     noticeMessage = '';
+    workspaceBusy = true;
     try {
       if (file.size > MAX_CHARACTER_CARD_PNG_BYTES) throw new Error('Character card exceeds 25 MB.');
       const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
@@ -3203,6 +3220,7 @@
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Character card import failed.';
     } finally {
+      workspaceBusy = false;
       input.value = '';
     }
   }
@@ -3347,6 +3365,8 @@
     if (
       !content
       || streaming
+      || workspaceBusy
+      || scenarioLoading
       || !lorePersistenceReady
       || !livingHistoryReadyForChat(fictionMode && livingHistoryEnabled, livingHistoryPersistenceReady)
     ) return;
@@ -3581,7 +3601,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || assistantTurnBusy || assistantMemoryBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
+      <span class:live={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
@@ -3692,12 +3712,12 @@
           <button
             class:active={conversationMode === CONVERSATION_MODE_FICTION}
             on:click={() => void startFictionWorkspace()}
-            disabled={streaming || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || conversationMode === CONVERSATION_MODE_FICTION}
+            disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || conversationMode === CONVERSATION_MODE_FICTION}
           >Fiction</button>
           <button
             class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
             on:click={() => void startPersonalAssistant()}
-            disabled={streaming || assistantTurnBusy || assistantMemoryBusy || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+            disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
           >Assistant</button>
         </div>
       </section>
@@ -3707,15 +3727,15 @@
         type="file"
         accept=".json,.png,application/json,image/png"
         on:change={importCharacterCard}
-        disabled={streaming}
+        disabled={streaming || workspaceBusy}
         aria-label="Choose a character card"
       />
       <div class="card-actions">
-        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming}>
+        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming || workspaceBusy}>
           {activeCard ? 'Replace card' : 'Import card'}
         </button>
         {#if activeCard}
-          <button class="card-button" on:click={removeCharacterCard} disabled={streaming}>Remove</button>
+          <button class="card-button" on:click={removeCharacterCard} disabled={streaming || workspaceBusy}>Remove</button>
         {/if}
       </div>
       <section class="scenario-picker" aria-label="Bundled scenarios">
@@ -4204,7 +4224,7 @@
           disabled={streaming}
         ></textarea>
       </label>
-      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || messages.length === 0}>
+      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || messages.length === 0}>
         {conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Reset assistant chat' : 'Clear conversation'}
       </button>
     </aside>
@@ -4272,7 +4292,7 @@
             on:keydown={composerKeydown}
             placeholder={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Ask, plan, or assign something…' : 'Write the next turn…'}
             rows="2"
-            disabled={streaming || assistantTurnBusy}
+            disabled={streaming || workspaceBusy || assistantTurnBusy}
             aria-label="Message"
           ></textarea>
           {#if streaming}
@@ -4281,7 +4301,7 @@
             <button
               class="send"
               on:click={send}
-              disabled={!draft.trim() || !lorePersistenceReady || !livingHistoryReadyForChat(conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled, livingHistoryPersistenceReady) || !assistantMemoryReadyForSend(conversationMode, assistantMemoryPersistenceReady, assistantMemoryPersistenceAvailable, streaming || assistantTurnBusy, assistantMemoryBusy, assistantMemoryPending)}
+              disabled={!draft.trim() || workspaceBusy || scenarioLoading || !lorePersistenceReady || !livingHistoryReadyForChat(conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled, livingHistoryPersistenceReady) || !assistantMemoryReadyForSend(conversationMode, assistantMemoryPersistenceReady, assistantMemoryPersistenceAvailable, streaming || workspaceBusy || assistantTurnBusy, assistantMemoryBusy, assistantMemoryPending)}
             >Send</button>
           {/if}
         </div>
@@ -4295,7 +4315,7 @@
               step="1"
               bind:value={tokenLimit}
               on:change={persistTokenLimit}
-              disabled={streaming || assistantTurnBusy}
+              disabled={streaming || workspaceBusy || assistantTurnBusy}
               aria-label="Maximum response tokens"
             />
             <span>tokens</span>
