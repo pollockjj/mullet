@@ -5,9 +5,9 @@ import {
   PORTRAIT_VIDEO_DURATIONS,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
-  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
+  MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
+  buildMageFlowPortraitEndFrameWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
-  buildQwenPortraitEndFrameWorkflow,
   portraitVideoDimensions,
   portraitVideoOutputNode,
   type PortraitVideoCapabilities,
@@ -172,22 +172,21 @@ export async function loadPortraitVideoCapabilities(
   }
   const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
   if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
-  let endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null = null;
+  let endFrameTemplate: typeof MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null = null;
   try {
-    const endFramePairs = await Promise.all(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes.map(async (nodeName) => {
+    const endFramePairs = await Promise.all(MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes.map(async (nodeName) => {
       const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
       const body = await responseJson(response, 'portrait end-frame capability query');
       return [nodeName, nodeInfo(body, nodeName)] as const;
     }));
     const endFrameInfo = Object.fromEntries(endFramePairs) as Record<string, Record<string, unknown>>;
-    const template = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
-    requireOption(optionList(endFrameInfo.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the Qwen Image Edit diffusion model');
-    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the Qwen Image Edit text encoder');
-    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'type'), 'qwen_image', 'the qwen_image text-encoder mode');
-    requireOption(optionList(endFrameInfo.VAELoader, 'VAELoader', 'vae_name'), template.modelFiles.vae, 'the Qwen Image Edit VAE');
-    requireOption(optionList(endFrameInfo.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.lora, 'the Qwen Image Edit Lightning LoRA');
-    requireOption(optionList(endFrameInfo.KSampler, 'KSampler', 'sampler_name'), template.sampler, 'the Qwen Image Edit sampler');
-    requireOption(optionList(endFrameInfo.KSampler, 'KSampler', 'scheduler'), template.scheduler, 'the Qwen Image Edit scheduler');
+    const template = MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
+    requireOption(optionList(endFrameInfo.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the Mage-Flow Edit Turbo diffusion model');
+    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the Mage-Flow text encoder');
+    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'type'), 'mage', 'the mage text-encoder mode');
+    requireOption(optionList(endFrameInfo.VAELoader, 'VAELoader', 'vae_name'), template.modelFiles.vae, 'the Mage-Flow VAE');
+    requireOption(optionList(endFrameInfo.KSampler, 'KSampler', 'sampler_name'), template.sampler, 'the Mage-Flow sampler');
+    requireOption(optionList(endFrameInfo.KSampler, 'KSampler', 'scheduler'), template.scheduler, 'the Mage-Flow scheduler');
     endFrameTemplate = template;
   } catch (cause) {
     if (signal?.aborted) throw cause;
@@ -311,7 +310,7 @@ function outputVideo(entry: Record<string, unknown>, request: PortraitVideoReque
 
 function outputEndFrame(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  const outputNode = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.outputNode;
+  const outputNode = MAGE_FLOW_EDIT_PORTRAIT_END_FRAME_TEMPLATE.outputNode;
   if (!isRecord(entry.outputs) || Object.keys(entry.outputs).length !== 1 || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI portrait end-frame history omitted the selected output node');
   }
@@ -465,7 +464,7 @@ export async function runComfyPortraitEndFrame(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildQwenPortraitEndFrameWorkflow(request, input, seed),
+        prompt: buildMageFlowPortraitEndFrameWorkflow(request, input, seed),
         client_id: 'mullet-portrait-end-frame'
       }),
       signal
