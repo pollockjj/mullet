@@ -9,14 +9,18 @@ import {
   inlineSceneDimensions,
   inlineSceneImageRequestKey
 } from '../src/lib/inline-scene.ts';
-import { buildInlineSceneVideoRequest } from '../src/lib/inline-scene-video.ts';
 import {
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  buildInlineSceneVideoRequest
+} from '../src/lib/inline-scene-video.ts';
+import {
+  loadInlineSceneVideoCapabilities,
   runComfyInlineSceneVideo,
   sha256InlineSceneVideoBytes,
   uploadInlineSceneVideoInput,
   validateInlineSceneVideoPng
 } from '../src/lib/server/comfy-inline-scene-video.ts';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
+import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const promptId = '22222222-2222-4222-8222-222222222222';
@@ -56,6 +60,48 @@ function png(width, height) {
   return bytes;
 }
 
+function capabilityInfo(nodeName) {
+  const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const required = {};
+  const optional = {};
+  if (nodeName === 'UNETLoader') required.unet_name = [[template.modelFiles.unet], {}];
+  if (nodeName === 'CLIPLoader') {
+    required.clip_name = [[template.modelFiles.clip], {}];
+    required.type = [['minimax'], {}];
+  }
+  if (nodeName === 'VAELoader') {
+    required.vae_name = [[template.modelFiles.videoVae, template.modelFiles.audioVae], {}];
+  }
+  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[template.modelFiles.turboLora], {}];
+  if (nodeName === 'KSamplerSelect') required.sampler_name = [[template.sampler], {}];
+  if (nodeName === 'BasicScheduler') required.scheduler = [[template.scheduler], {}];
+  if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
+  if (nodeName === 'SaveVideo') {
+    required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }] }];
+    optional.codec = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }] }];
+  }
+  return { [nodeName]: { input: { required, optional } } };
+}
+
+test('requires the exact installed MiniMax H3 FL2VA stack', async () => {
+  const capabilities = await loadInlineSceneVideoCapabilities(async (inputUrl) => {
+    const nodeName = decodeURIComponent(String(inputUrl).split('/').at(-1));
+    return Response.json(capabilityInfo(nodeName));
+  }, 'http://comfy');
+  assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v2');
+  assert.equal(capabilities.template.id, 'minimax-h3-fl2va-i2v-turbo-v1');
+  assert.deepEqual(capabilities.durations, [5]);
+  await assert.rejects(
+    loadInlineSceneVideoCapabilities(async (inputUrl) => {
+      const nodeName = decodeURIComponent(String(inputUrl).split('/').at(-1));
+      const info = capabilityInfo(nodeName);
+      if (nodeName === 'LoraLoaderModelOnly') info[nodeName].input.required.lora_name = [['other.safetensors'], {}];
+      return Response.json(info);
+    }, 'http://comfy'),
+    /four-step Turbo LoRA/
+  );
+});
+
 test('uploads only digest-matched static scene bytes to the isolated input namespace', async () => {
   const bytes = png(1328, 752);
   const digest = await sha256InlineSceneVideoBytes(bytes);
@@ -80,7 +126,7 @@ test('accepts only PNG bytes with the exact static scene dimensions', () => {
   assert.throws(() => validateInlineSceneVideoPng(new Uint8Array(24), 1328, 752), /PNG header/);
 });
 
-test('queues and returns only the fixed animated scene-motion WebM', async () => {
+test('queues and returns only the fixed H.264/AAC scene-motion MP4', async () => {
   const videoRequest = request();
   const input = {
     name: 'scene-motion-44444444-4444-4444-8444-444444444444.png',
@@ -88,7 +134,7 @@ test('queues and returns only the fixed animated scene-motion WebM', async () =>
     type: 'input',
     imageSha256: videoRequest.source.sceneImageSha256
   };
-  const webm = buildVp9WebmFixture();
+  const mp4 = buildH264AacMp4Fixture();
   let queued;
   const result = await runComfyInlineSceneVideo(async (inputUrl, init = {}) => {
     const url = String(inputUrl);
@@ -101,21 +147,22 @@ test('queues and returns only the fixed animated scene-motion WebM', async () =>
         [comfyPromptId]: {
           status: { completed: true, status_str: 'success' },
           outputs: {
-            '31': {
-              images: [{ filename: 'scene-motion_00001_.webm', subfolder: 'mullet', type: 'output' }],
+            '15': {
+              images: [{ filename: 'scene-motion_00001_.mp4', subfolder: 'mullet', type: 'output' }],
               animated: [true]
             }
           }
         }
       });
     }
-    if (url.includes('/view?')) return new Response(webm, { headers: { 'content-type': 'video/webm' } });
+    if (url.includes('/view?')) return new Response(mp4, { headers: { 'content-type': 'video/mp4' } });
     throw new Error('unexpected URL ' + url);
   }, 'http://comfy', videoRequest, input, 42);
   assert.equal(queued.client_id, 'mullet-inline-scene-video');
-  assert.equal(queued.prompt['31'].inputs.filename_prefix, 'mullet/scene-motion');
-  assert.equal(result.contentType, 'video/webm');
-  assert.equal(result.sha256, await sha256InlineSceneVideoBytes(webm));
+  assert.equal(queued.prompt['1'].inputs.unet_name, 'minimax_h3_fl2va_pruned_int8_convrot.safetensors');
+  assert.equal(queued.prompt['15'].inputs.filename_prefix, 'mullet/scene-motion');
+  assert.equal(result.contentType, 'video/mp4');
+  assert.equal(result.sha256, await sha256InlineSceneVideoBytes(mp4));
 });
 
 test('rejects unsafe history and cancels only its own incomplete prompt', async () => {
@@ -136,8 +183,8 @@ test('rejects unsafe history and cancels only its own incomplete prompt', async 
           [comfyPromptId]: {
             status: { completed: true, status_str: 'success' },
             outputs: {
-              '31': {
-                images: [{ filename: '../secret.webm', subfolder: 'mullet', type: 'output' }],
+              '15': {
+                images: [{ filename: '../secret.mp4', subfolder: 'mullet', type: 'output' }],
                 animated: [true]
               }
             }
