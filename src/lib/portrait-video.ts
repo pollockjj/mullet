@@ -6,14 +6,14 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v3' as const;
-export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v3' as const;
-export const PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v3' as const;
+export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v4' as const;
+export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v4' as const;
+export const PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
 export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-lightning-4step-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
-export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;
+export const PORTRAIT_VIDEO_DURATION_SECONDS = 3 as const;
 export const PORTRAIT_VIDEO_FPS = 24 as const;
-export const PORTRAIT_VIDEO_FRAMES = 49 as const;
+export const PORTRAIT_VIDEO_FRAMES = 73 as const;
 export const PORTRAIT_VIDEO_MODE_I2V = 'i2v' as const;
 export const PORTRAIT_VIDEO_MODE_LOOP_FLF = 'flf2v_loop' as const;
 export const PORTRAIT_VIDEO_MODE_GENERATED_FLF = 'flf2v_generated' as const;
@@ -28,60 +28,52 @@ export type PortraitVideoMode = (typeof PORTRAIT_VIDEO_MODES)[number]['id'];
 export type PortraitVideoModeDefinition = (typeof PORTRAIT_VIDEO_MODES)[number];
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '2:3', width: 384, height: 576 },
-  { aspectRatio: '3:4', width: 384, height: 512 },
-  { aspectRatio: '4:5', width: 512, height: 640 },
-  { aspectRatio: '9:16', width: 576, height: 1024 }
+  { aspectRatio: '2:3', width: 768, height: 1152 },
+  { aspectRatio: '3:4', width: 768, height: 1024 },
+  { aspectRatio: '4:5', width: 768, height: 960 },
+  { aspectRatio: '9:16', width: 768, height: 1344 }
 ] as const);
 
-export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
+export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
   id: PORTRAIT_VIDEO_TEMPLATE_ID,
-  label: 'LTX 2.5 Distilled',
-  modelFamily: 'ltx-2.5',
+  label: 'MiniMax H3 FL2VA Turbo',
+  modelFamily: 'minimax-h3-fl2va',
   modelFiles: {
-    unet: 'ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors',
-    clip: 'gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors',
-    videoVae: 'ltx-2.5-video-vae-bf16.safetensors',
-    audioVae: 'ltx-2.5-audio-vae-bf16.safetensors',
-    latentUpscaler: 'ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors'
+    unet: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
+    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
+    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
+    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
+    turboLora: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors'
   },
   requiredNodes: [
     'UNETLoader',
     'CLIPLoader',
     'VAELoader',
     'LoadImage',
-    'CLIPTextEncode',
-    'LTXVPreprocess',
-    'LTXVConditioning',
-    'EmptyLTXVLatentVideo',
-    'LTXVImgToVideoInplace',
-    'LTXVAddGuide',
-    'LTXVCropGuides',
-    'LTXVEmptyLatentAudio',
-    'LTXVConcatAVLatent',
-    'LTXVSeparateAVLatent',
-    'LTXVDualCFGGuider',
-    'LTXVLatentUpsampler',
-    'LatentUpscaleModelLoader',
-    'RandomNoise',
+    'MiniMaxH3ImageToVideo',
+    'BasicGuider',
     'KSamplerSelect',
-    'ManualSigmas',
+    'BasicScheduler',
+    'RandomNoise',
     'SamplerCustomAdvanced',
-    'VAEDecodeTiled',
-    'SaveWEBM'
+    'VAEDecode',
+    'VAEDecodeAudio',
+    'CreateVideo',
+    'SaveVideo',
+    'LoraLoaderModelOnly'
   ],
-  outputNodes: {
-    [PORTRAIT_VIDEO_MODE_I2V]: '31',
-    [PORTRAIT_VIDEO_MODE_LOOP_FLF]: '35',
-    [PORTRAIT_VIDEO_MODE_GENERATED_FLF]: '35'
-  },
-  multiple: 64,
-  sampler: 'euler_ancestral',
-  firstPassSigmas: '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
-  secondPassSigmas: '0.85, 0.7250, 0.4219, 0.0',
-  codec: 'vp9',
-  crf: 32,
-  promptGuide: 'locked head-and-chest portrait camera, restrained natural motion, seamless end pose, no cuts'
+  outputNode: '15',
+  multiple: 32,
+  shortEdge: 768,
+  maxPixels: 768 * 1344,
+  sampler: 'res_multistep',
+  scheduler: 'simple',
+  steps: 4,
+  denoise: 1,
+  format: 'auto',
+  codec: 'auto',
+  bitDepth: 8,
+  promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, native quiet ambience, no cuts'
 } as const);
 
 export const QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
@@ -144,7 +136,7 @@ export type PortraitVideoRequest = {
 
 export type PortraitVideoCapabilities = {
   spec: typeof PORTRAIT_VIDEO_CAPABILITIES_SPEC;
-  template: typeof LTX25_PORTRAIT_VIDEO_TEMPLATE;
+  template: typeof MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
   endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE | null;
   modes: readonly PortraitVideoModeDefinition[];
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
@@ -173,8 +165,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const INPUT_IMAGE_PATTERN = /^portrait-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const dimensionMap = new Map(PORTRAIT_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
-
-const NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, cluttered background, camera cuts, camera shake, black frames';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -322,13 +312,14 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
     ? 'The identical supplied portrait is the first and final keyframe; motion returns exactly to that final keyframe.'
     : normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
       ? 'The supplied portraits are the first and final keyframes; move continuously from the first pose to the distinct final pose.'
-      : 'The final pose matches the first pose for a seamless loop.';
+      : 'Continue natural motion forward from the supplied first frame.';
   return [
     'The camera remains completely locked on the head-and-chest portrait.',
     `The subject breathes naturally, blinks once, and holds a restrained ${normalized.source.portraitSource.expression} expression.`,
     'Hair and clothing move subtly.',
     loopInstruction,
-    'No camera movement, no cuts, no speech, no text, no black frames.'
+    'No camera movement, no cuts, no speech, no text, no black frames.',
+    'Audio: quiet synchronized room tone and subtle clothing or hair movement only; no dialogue, narration, or music.'
   ].join(' ');
 }
 
@@ -413,7 +404,7 @@ export function buildQwenPortraitEndFrameWorkflow(
   };
 }
 
-export function buildLtx25PortraitVideoWorkflow(
+export function buildMiniMaxH3PortraitVideoWorkflow(
   request: PortraitVideoRequest,
   portraitInput: PortraitVideoInputReference,
   seed: number,
@@ -423,130 +414,61 @@ export function buildLtx25PortraitVideoWorkflow(
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio);
-  if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF || normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
-    const lastInput = normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? endFrameInput : portraitInput;
-    if (!lastInput) throw new Error('portrait-video generated end-frame input is required');
-    validatePortraitVideoInputReference(lastInput);
-    if (normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && lastInput.imageSha256 === portraitInput.imageSha256) {
+  let lastFrame: [string, number] | null = null;
+  if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF) {
+    if (endFrameInput !== undefined) throw new Error('portrait-video loop mode does not accept a separate end frame');
+    lastFrame = ['5', 0];
+  } else if (normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
+    if (!endFrameInput) throw new Error('portrait-video generated end-frame input is required');
+    validatePortraitVideoInputReference(endFrameInput);
+    if (endFrameInput.imageSha256 === portraitInput.imageSha256) {
       throw new Error('portrait-video generated end frame must differ from its source');
     }
-    if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF && endFrameInput !== undefined) {
-      throw new Error('portrait-video loop mode does not accept a separate end frame');
-    }
-    return buildLtx25FlfPortraitVideoWorkflow(normalized, portraitInput, lastInput, validatedSeed, width, height, frames, fps);
+    lastFrame = ['17', 0];
+  } else if (endFrameInput !== undefined) {
+    throw new Error('portrait-video I2V mode does not accept an end frame');
   }
-  if (endFrameInput !== undefined) throw new Error('portrait-video I2V mode does not accept an end frame');
+  const template = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
+  const filenamePrefix = normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
+    ? 'mullet/portrait-motion-generated-flf'
+    : normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF
+      ? 'mullet/portrait-motion-loop-flf'
+      : 'mullet/portrait-motion';
   return {
-    '1': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
-    '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
-    '3': { class_type: 'UNETLoader', inputs: { unet_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
-    '4': { class_type: 'CLIPLoader', inputs: { clip_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip, type: 'ltxv', device: 'default' } },
-    '5': { class_type: 'VAELoader', inputs: { vae_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.videoVae } },
-    '6': { class_type: 'VAELoader', inputs: { vae_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.audioVae } },
-    '7': { class_type: 'LatentUpscaleModelLoader', inputs: { model_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.latentUpscaler } },
-    '8': { class_type: 'CLIPTextEncode', inputs: { text: buildPortraitVideoPrompt(normalized), clip: ['4', 0] } },
-    '9': { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE_PROMPT, clip: ['4', 0] } },
-    '10': { class_type: 'LTXVConditioning', inputs: { positive: ['8', 0], negative: ['9', 0], frame_rate: fps } },
-    '11': { class_type: 'EmptyLTXVLatentVideo', inputs: { width: width / 2, height: height / 2, length: frames, batch_size: 1 } },
-    '12': { class_type: 'LTXVImgToVideoInplace', inputs: { vae: ['5', 0], image: ['2', 0], latent: ['11', 0], strength: 0.7, bypass: false } },
-    '13': { class_type: 'LTXVEmptyLatentAudio', inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ['6', 0] } },
-    '14': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['12', 0], audio_latent: ['13', 0] } },
-    '15': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['10', 0], negative: ['10', 1], video_cfg: 1, audio_cfg: 1 } },
-    '16': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '17': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler } },
-    '18': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.firstPassSigmas } },
-    '19': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['16', 0], guider: ['15', 0], sampler: ['17', 0], sigmas: ['18', 0], latent_image: ['14', 0] } },
-    '20': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['19', 0] } },
-    '21': { class_type: 'LTXVLatentUpsampler', inputs: { samples: ['20', 0], upscale_model: ['7', 0], vae: ['5', 0] } },
-    '22': { class_type: 'LTXVImgToVideoInplace', inputs: { vae: ['5', 0], image: ['2', 0], latent: ['21', 0], strength: 1, bypass: false } },
-    '23': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['22', 0], audio_latent: ['20', 1] } },
-    '24': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['10', 0], negative: ['10', 1], video_cfg: 1, audio_cfg: 1 } },
-    '25': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed + 42 <= Number.MAX_SAFE_INTEGER ? validatedSeed + 42 : validatedSeed - 42 } },
-    '26': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler } },
-    '27': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.secondPassSigmas } },
-    '28': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['25', 0], guider: ['24', 0], sampler: ['26', 0], sigmas: ['27', 0], latent_image: ['23', 0] } },
-    '29': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['28', 0] } },
-    '30': { class_type: 'VAEDecodeTiled', inputs: { samples: ['29', 0], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
-    '31': {
-      class_type: 'SaveWEBM',
-      inputs: {
-        images: ['30', 0],
-        filename_prefix: 'mullet/portrait-motion',
-        codec: LTX25_PORTRAIT_VIDEO_TEMPLATE.codec,
-        fps,
-        crf: LTX25_PORTRAIT_VIDEO_TEMPLATE.crf
-      }
-    }
-  };
-}
-
-function buildLtx25FlfPortraitVideoWorkflow(
-  request: PortraitVideoRequest,
-  portraitInput: PortraitVideoInputReference,
-  endFrameInput: PortraitVideoInputReference,
-  seed: number,
-  width: number,
-  height: number,
-  frames: number,
-  fps: number
-): Record<string, unknown> {
-  const nextSeed = seed + 42 <= Number.MAX_SAFE_INTEGER ? seed + 42 : seed - 42;
-  const generatedEndFrame = request.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF;
-  const endFrameImage = generatedEndFrame ? ['37', 0] : ['2', 0];
-  return {
-    '1': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
-    '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
-    '3': { class_type: 'UNETLoader', inputs: { unet_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
-    '4': { class_type: 'CLIPLoader', inputs: { clip_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip, type: 'ltxv', device: 'default' } },
-    '5': { class_type: 'VAELoader', inputs: { vae_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.videoVae } },
-    '6': { class_type: 'VAELoader', inputs: { vae_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.audioVae } },
-    '7': { class_type: 'LatentUpscaleModelLoader', inputs: { model_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.latentUpscaler } },
-    '8': { class_type: 'CLIPTextEncode', inputs: { text: buildPortraitVideoPrompt(request), clip: ['4', 0] } },
-    '9': { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE_PROMPT, clip: ['4', 0] } },
-    '10': { class_type: 'LTXVConditioning', inputs: { positive: ['8', 0], negative: ['9', 0], frame_rate: fps } },
-    '11': { class_type: 'EmptyLTXVLatentVideo', inputs: { width: width / 2, height: height / 2, length: frames, batch_size: 1 } },
-    '12': { class_type: 'LTXVAddGuide', inputs: { positive: ['10', 0], negative: ['10', 1], vae: ['5', 0], latent: ['11', 0], image: ['2', 0], frame_idx: 0, strength: 0.7 } },
-    '13': { class_type: 'LTXVAddGuide', inputs: { positive: ['12', 0], negative: ['12', 1], vae: ['5', 0], latent: ['12', 2], image: endFrameImage, frame_idx: -1, strength: 0.7 } },
-    '14': { class_type: 'LTXVEmptyLatentAudio', inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ['6', 0] } },
-    '15': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['13', 2], audio_latent: ['14', 0] } },
-    '16': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['13', 0], negative: ['13', 1], video_cfg: 1, audio_cfg: 1 } },
-    '17': { class_type: 'RandomNoise', inputs: { noise_seed: seed } },
-    '18': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler } },
-    '19': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.firstPassSigmas } },
-    '20': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['17', 0], guider: ['16', 0], sampler: ['18', 0], sigmas: ['19', 0], latent_image: ['15', 0] } },
-    '21': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['20', 0] } },
-    '22': { class_type: 'LTXVCropGuides', inputs: { positive: ['13', 0], negative: ['13', 1], latent: ['21', 0] } },
-    '23': { class_type: 'LTXVLatentUpsampler', inputs: { samples: ['22', 2], upscale_model: ['7', 0], vae: ['5', 0] } },
-    '24': { class_type: 'LTXVAddGuide', inputs: { positive: ['10', 0], negative: ['10', 1], vae: ['5', 0], latent: ['23', 0], image: ['2', 0], frame_idx: 0, strength: 0.7 } },
-    '25': { class_type: 'LTXVAddGuide', inputs: { positive: ['24', 0], negative: ['24', 1], vae: ['5', 0], latent: ['24', 2], image: endFrameImage, frame_idx: -1, strength: 0.7 } },
-    '26': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['25', 2], audio_latent: ['21', 1] } },
-    '27': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['25', 0], negative: ['25', 1], video_cfg: 1, audio_cfg: 1 } },
-    '28': { class_type: 'RandomNoise', inputs: { noise_seed: nextSeed } },
-    '29': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler } },
-    '30': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.secondPassSigmas } },
-    '31': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['28', 0], guider: ['27', 0], sampler: ['29', 0], sigmas: ['30', 0], latent_image: ['26', 0] } },
-    '32': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['31', 0] } },
-    '33': { class_type: 'LTXVCropGuides', inputs: { positive: ['25', 0], negative: ['25', 1], latent: ['32', 0] } },
-    '34': { class_type: 'VAEDecodeTiled', inputs: { samples: ['33', 2], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
-    '35': {
-      class_type: 'SaveWEBM',
-      inputs: {
-        images: ['34', 0],
-        filename_prefix: generatedEndFrame ? 'mullet/portrait-motion-generated-flf' : 'mullet/portrait-motion-loop-flf',
-        codec: LTX25_PORTRAIT_VIDEO_TEMPLATE.codec,
-        fps,
-        crf: LTX25_PORTRAIT_VIDEO_TEMPLATE.crf
-      }
-    },
-    ...(generatedEndFrame ? {
-      '36': { class_type: 'LoadImage', inputs: { image: `${endFrameInput.subfolder}/${endFrameInput.name}` } },
-      '37': { class_type: 'LTXVPreprocess', inputs: { image: ['36', 0], img_compression: 18 } }
-    } : {})
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
+    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
+    '5': { class_type: 'LoadImage', inputs: { image: `${portraitInput.subfolder}/${portraitInput.name}` } },
+    '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
+      clip: ['2', 0],
+      vae: ['3', 0],
+      prompt: buildPortraitVideoPrompt(normalized),
+      width,
+      height,
+      length: frames,
+      first_frame: ['5', 0],
+      ...(lastFrame ? { last_frame: lastFrame } : {})
+    } },
+    '7': { class_type: 'BasicGuider', inputs: { model: ['16', 0], conditioning: ['6', 0] } },
+    '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '9': { class_type: 'BasicScheduler', inputs: { model: ['16', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
+    '10': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
+    '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
+    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
+    '13': { class_type: 'VAEDecodeAudio', inputs: { samples: ['11', 0], vae: ['4', 0] } },
+    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps, audio: ['13', 0], bit_depth: template.bitDepth } },
+    '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: filenamePrefix, format: template.format, codec: template.codec } },
+    '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
+    ...(normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && endFrameInput
+      ? { '17': { class_type: 'LoadImage', inputs: { image: `${endFrameInput.subfolder}/${endFrameInput.name}` } } }
+      : {})
   };
 }
 
 export function portraitVideoOutputNode(request: PortraitVideoRequest): string {
-  return LTX25_PORTRAIT_VIDEO_TEMPLATE.outputNodes[normalizePortraitVideoRequest(request).mode];
+  normalizePortraitVideoRequest(request);
+  return MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.outputNode;
 }
 
 export function normalizePortraitVideoCapabilities(value: unknown): PortraitVideoCapabilities {
@@ -568,7 +490,7 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   }
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
-    template: LTX25_PORTRAIT_VIDEO_TEMPLATE,
+    template: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
     endFrameTemplate: hasGeneratedEndFrame ? QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE : null,
     modes,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
