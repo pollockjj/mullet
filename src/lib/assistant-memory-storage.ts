@@ -142,6 +142,31 @@ export function createStoredAssistantMemoryPendingTurn(
   });
 }
 
+export function assistantMemoryPendingMatchesResult(
+  pending: StoredAssistantMemoryPendingTurn,
+  persistedResult: AssistantMemoryResult | null,
+  candidate: AssistantMemoryResult
+): boolean {
+  try {
+    const normalizedPending = normalizeStoredAssistantMemoryPendingTurn(pending);
+    const previous = persistedResult === null ? null : normalizeAssistantMemoryResult(persistedResult);
+    const result = normalizeAssistantMemoryResult(candidate);
+    if (
+      normalizedPending.memoryId !== result.memoryId
+      || (previous && previous.memoryId !== result.memoryId)
+    ) return false;
+    const request = buildAssistantMemoryRequestFromTurn(
+      result.memoryId,
+      normalizedPending.source,
+      normalizedPending.turns,
+      previous
+    );
+    return assistantMemoryResultMatchesRequest(result, request);
+  } catch {
+    return false;
+  }
+}
+
 export function assistantMemoryWriteBaseMatches(
   persistedResult: unknown | null,
   candidate: AssistantMemoryResult
@@ -394,13 +419,7 @@ export async function saveStoredAssistantMemory(
           if (!currentPending || currentPending.turnKey !== normalizedPending.turnKey) {
             throw new AssistantMemoryConflictError('The assistant-memory pending turn changed before this update committed.');
           }
-          const request = buildAssistantMemoryRequestFromTurn(
-            normalized.memoryId,
-            currentPending.source,
-            currentPending.turns,
-            unwrapped
-          );
-          if (!assistantMemoryResultMatchesRequest(normalized, request)) {
+          if (!assistantMemoryPendingMatchesResult(currentPending, unwrapped, normalized)) {
             throw new AssistantMemoryConflictError('The assistant-memory result does not match its persisted pending turn.');
           }
           store.put(envelope, ACTIVE_MEMORY_KEY);

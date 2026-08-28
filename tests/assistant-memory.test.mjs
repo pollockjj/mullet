@@ -38,19 +38,19 @@ function mutationResponse(overrides = {}) {
     facts: [{
       operation: 'create',
       key: 'atlas-project',
-      value: 'The user works on Atlas.',
+      value: 'I work on Atlas',
       evidence: { message_index: 0, text: 'I work on Atlas' }
     }],
     preferences: [{
       operation: 'create',
       key: 'status-report-style',
-      value: 'Concise status reports.',
+      value: 'I prefer concise status reports',
       evidence: { message_index: 0, text: 'I prefer concise status reports' }
     }],
     tasks: [{
       operation: 'create',
       key: 'submit-atlas-proposal',
-      text: 'Submit the Atlas proposal.',
+      text: 'I need to submit the Atlas proposal by Friday',
       due_text: 'Friday',
       evidence: { message_index: 0, text: 'I need to submit the Atlas proposal by Friday' }
     }],
@@ -128,7 +128,7 @@ test('keeps one global ledger across chat resets and preserves task lifecycle va
     tasks: [{
       operation: 'complete',
       key: 'submit-atlas-proposal',
-      text: 'Submit the Atlas proposal.',
+      text: 'I need to submit the Atlas proposal by Friday',
       due_text: 'Friday',
       evidence: { message_index: 0, text: 'I completed the Atlas proposal' }
     }]
@@ -148,7 +148,7 @@ test('keeps one global ledger across chat resets and preserves task lifecycle va
     tasks: [{
       operation: 'reopen',
       key: 'submit-atlas-proposal',
-      text: 'Submit the Atlas proposal.',
+      text: 'I need to submit the Atlas proposal by Friday',
       due_text: 'Friday',
       evidence: { message_index: 0, text: 'Reopen the Atlas proposal task' }
     }]
@@ -168,13 +168,13 @@ test('retains forgotten tombstones and excludes closed or forgotten records from
     facts: [{
       operation: 'replace',
       key: 'atlas-project',
-      value: 'The user works on Apollo.',
+      value: 'I now work on Apollo instead of Atlas',
       evidence: { message_index: 0, text: 'I now work on Apollo instead of Atlas' }
     }],
     preferences: [],
     tasks: []
   }), replaceRequest));
-  assert.equal(replaced.output.facts[0].value, 'The user works on Apollo.');
+  assert.equal(replaced.output.facts[0].value, 'I now work on Apollo instead of Atlas');
 
   const forgetRequest = buildAssistantMemoryRequest(memoryId, 'eff4b1cf-8642-4df4-b8c3-83a46b5b4d38', [
     { role: 'user', content: 'Forget that project fact.' },
@@ -184,7 +184,7 @@ test('retains forgotten tombstones and excludes closed or forgotten records from
     facts: [{
       operation: 'forget',
       key: 'atlas-project',
-      value: 'The user works on Apollo.',
+      value: 'I now work on Apollo instead of Atlas',
       evidence: { message_index: 0, text: 'Forget that project fact' }
     }],
     preferences: [],
@@ -202,7 +202,7 @@ test('retains forgotten tombstones and excludes closed or forgotten records from
     facts: [{
       operation: 'replace',
       key: 'atlas-project',
-      value: 'The user works on Horizon.',
+      value: 'I now work on Horizon',
       evidence: { message_index: 0, text: 'I now work on Horizon' }
     }],
     preferences: [],
@@ -236,6 +236,12 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
       evidence: { message_index: 0, text: 'I work on Atlas' }
     }]
   }), request), /due_text is not a verbatim excerpt/);
+  assert.throws(() => parseAssistantMemoryResponse(JSON.stringify({
+    facts: [{
+      operation: 'create', key: 'invented-home', value: 'Mars',
+      evidence: { message_index: 0, text: 'I work on Atlas' }
+    }], preferences: [], tasks: []
+  }), request), /value is not a verbatim excerpt/);
   const duplicate = {
     operation: 'create', key: 'same-key', value: 'x',
     evidence: { message_index: 0, text: 'I work on Atlas' }
@@ -244,12 +250,12 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
     facts: [duplicate, duplicate], preferences: [], tasks: []
   }), request), /duplicate operation keys/);
   const fact = (index) => ({
-    operation: 'create', key: `fact-${index}`, value: 'x',
+    operation: 'create', key: `fact-${index}`, value: 'I work on Atlas',
     evidence: { message_index: 0, text: 'I work on Atlas' }
   });
   const preference = (index) => ({ ...fact(index), key: `preference-${index}` });
   const task = (index) => ({
-    operation: 'create', key: `task-${index}`, text: 'x', due_text: '',
+    operation: 'create', key: `task-${index}`, text: 'I work on Atlas', due_text: '',
     evidence: { message_index: 0, text: 'I work on Atlas' }
   });
   assert.throws(() => parseAssistantMemoryResponse(JSON.stringify({
@@ -258,8 +264,8 @@ test('rejects ungrounded, duplicate, oversized, and non-exact sidecar output', (
     tasks: Array.from({ length: 9 }, (_unused, index) => task(index))
   }), request), /at most 24 operations/);
   const bounded = parseAssistantMemoryResponse(JSON.stringify({
-    facts: Array.from({ length: 16 }, (_unused, index) => ({ ...fact(index), value: 'x'.repeat(180) })),
-    preferences: Array.from({ length: 8 }, (_unused, index) => ({ ...preference(index), value: 'x'.repeat(180) })),
+    facts: Array.from({ length: 16 }, (_unused, index) => ({ ...fact(index), value: messages[0].content })),
+    preferences: Array.from({ length: 8 }, (_unused, index) => ({ ...preference(index), value: messages[0].content })),
     tasks: []
   }), request);
   assert.throws(() => createAssistantMemoryResult(request, 'gemma-4-ortenzya', bounded), /exceeds 3200 state characters/);
@@ -294,9 +300,8 @@ test('projects only active records into a strict generated assistant-memory lore
     && entry.preventRecursion
   )), true);
   const projection = book.entries.map((entry) => entry.content).join('\n');
-  assert.match(projection, /"Concise status reports\."/);
+  assert.match(projection, /"I prefer concise status reports"/);
   assert.match(projection, /"Friday"/);
-  assert.equal(projection.includes('I prefer concise status reports'), false);
 
   const tampered = structuredClone(book);
   tampered.raw.extensions.mullet.kind = 'fiction_lore';
@@ -307,4 +312,40 @@ test('projects only active records into a strict generated assistant-memory lore
     facts: [], preferences: [], tasks: []
   });
   assert.equal(assistantMemoryLorebook(emptyResult), null);
+});
+
+test('prunes old closed tasks so completed work never exhausts future capacity', () => {
+  let result = null;
+  for (let index = 0; index < 17; index += 1) {
+    const taskText = `Add durable task number ${index}`;
+    const createRequest = buildAssistantMemoryRequest(memoryId, crypto.randomUUID(), [
+      { role: 'user', content: taskText },
+      { role: 'assistant', content: `Tracking task ${index}.` }
+    ], result);
+    result = createAssistantMemoryResult(createRequest, 'gemma-4-ortenzya', parseAssistantMemoryResponse(JSON.stringify({
+      facts: [],
+      preferences: [],
+      tasks: [{
+        operation: 'create', key: `task-${index}`, text: taskText, due_text: '',
+        evidence: { message_index: 0, text: taskText }
+      }]
+    }), createRequest));
+    const completeText = `Complete durable task number ${index}`;
+    const completeRequest = buildAssistantMemoryRequest(memoryId, crypto.randomUUID(), [
+      { role: 'user', content: completeText },
+      { role: 'assistant', content: `Task ${index} is complete.` }
+    ], result);
+    result = createAssistantMemoryResult(completeRequest, 'gemma-4-ortenzya', parseAssistantMemoryResponse(JSON.stringify({
+      facts: [],
+      preferences: [],
+      tasks: [{
+        operation: 'complete', key: `task-${index}`, text: taskText, due_text: '',
+        evidence: { message_index: 0, text: completeText }
+      }]
+    }), completeRequest));
+  }
+  assert.equal(result.output.revision, 34);
+  assert.equal(result.output.tasks.length, 16);
+  assert.equal(result.output.tasks.some((task) => task.key === 'task-0'), false);
+  assert.equal(result.output.tasks.some((task) => task.key === 'task-16'), true);
 });
