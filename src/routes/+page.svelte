@@ -378,30 +378,38 @@
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: livingHistoryApplicable = Boolean(
-    livingHistoryResult
+    conversationMode === CONVERSATION_MODE_FICTION
+    && livingHistoryResult
     && livingHistoryResultAppliesToMessages(livingHistoryResult, conversationId, messages)
   );
   $: livingHistoryCurrent = Boolean(
-    livingHistoryResult
+    conversationMode === CONVERSATION_MODE_FICTION
+    && livingHistoryResult
     && livingHistoryResultMatchesMessages(livingHistoryResult, conversationId, messages)
   );
-  $: livingHistoryRequest = currentLivingHistoryRequest(
-    conversationId,
-    messages,
-    livingHistoryResult,
-    livingHistoryBoundaries
-  );
+  $: livingHistoryRequest = conversationMode === CONVERSATION_MODE_FICTION
+    ? currentLivingHistoryRequest(
+        conversationId,
+        messages,
+        livingHistoryResult,
+        livingHistoryBoundaries
+      )
+    : null;
   $: livingHistoryPendingMessages = livingHistoryRequest?.turns.length
     ?? pendingLivingHistoryMessageCount(livingHistoryBoundaries, livingHistoryResult);
-  $: livingHistoryBook = livingHistoryEnabled && livingHistoryResult && livingHistoryApplicable
+  $: livingHistoryBook = conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled && livingHistoryResult && livingHistoryApplicable
     ? livingHistoryLorebook(livingHistoryResult, conversationId, messages)
     : null;
-  $: activeLorebooks = [
-    ...combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard)),
-    ...(livingHistoryBook ? [livingHistoryBook] : [])
-  ];
+  $: activeLorebooks = conversationMode === CONVERSATION_MODE_FICTION
+    ? [
+        ...combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard)),
+        ...(livingHistoryBook ? [livingHistoryBook] : [])
+      ]
+    : [];
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
-  $: expressionSnapshot = currentExpressionSnapshot(conversationId, messages);
+  $: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION
+    ? currentExpressionSnapshot(conversationId, messages)
+    : null;
   $: expressionResult = sidecarState?.channels.expression ?? null;
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
   $: portraitRequest = currentPortraitRequest(
@@ -428,12 +436,14 @@
     && portraitVideoRequest
     && generatedPortraitVideo.requestKey === portraitVideoRequestKey(portraitVideoRequest)
   );
-  $: inlineSceneSidecarRequest = currentInlineSceneSidecarRequest(
-    conversationId,
-    messages,
-    finalizedInlineSceneSource
-  );
-  $: inlineSceneApplies = inlineSceneAppliesToTranscript(
+  $: inlineSceneSidecarRequest = conversationMode === CONVERSATION_MODE_FICTION
+    ? currentInlineSceneSidecarRequest(
+        conversationId,
+        messages,
+        finalizedInlineSceneSource
+      )
+    : null;
+  $: inlineSceneApplies = conversationMode === CONVERSATION_MODE_FICTION && inlineSceneAppliesToTranscript(
     generatedInlineScene,
     finalizedInlineSceneSource,
     inlineSceneEpoch,
@@ -462,7 +472,7 @@
     && !inlineSceneVideoError
   );
   $: scheduleExpressionReconciliation(
-    expressionsEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
     sidecarPersistenceReady,
     sidecarPersistenceAvailable,
     streaming,
@@ -471,7 +481,7 @@
     expressionCurrent
   );
   $: schedulePortraitReconciliation(
-    expressionsEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
     portraitCapabilities,
     portraitPersistenceReady,
     portraitPersistenceAvailable,
@@ -480,7 +490,7 @@
     portraitCurrent
   );
   $: schedulePortraitVideoReconciliation(
-    expressionsEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
     portraitMotionEnabled,
     portraitVideoCapabilities,
     portraitVideoPersistenceReady,
@@ -491,7 +501,7 @@
     portraitVideoCurrent
   );
   $: scheduleInlineSceneReconciliation(
-    inlineScenesEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
     inlineSceneCapabilities,
     inlineScenePersistenceReady,
     inlineScenePersistenceAvailable,
@@ -504,7 +514,7 @@
     inlineSceneLora
   );
   $: scheduleInlineSceneVideoReconciliation(
-    inlineScenesEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
     inlineSceneMotionEnabled,
     inlineSceneVideoCapabilities,
     inlineSceneVideoPersistenceReady,
@@ -518,7 +528,7 @@
     inlineSceneVideoCurrent
   );
   $: scheduleLivingHistoryReconciliation(
-    livingHistoryEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled,
     livingHistoryPersistenceReady,
     livingHistoryPersistenceAvailable,
     streaming,
@@ -527,13 +537,27 @@
     livingHistoryPendingMessages
   );
 
-  const starters = [
+  const fictionStarters = [
     'Write the opening beat of a tense science-fiction scene.',
     'Help me develop a character with a dangerous secret.',
     'Continue a conversation aboard a damaged starship.'
   ];
+  const assistantStarters = [
+    'Help me prioritize the three outcomes that matter today.',
+    'Turn these rough notes into a concrete plan.',
+    'Draft a concise message from the context I provide.'
+  ];
+  $: starters = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+    ? assistantStarters
+    : fictionStarters;
 
   onMount(() => {
+    try {
+      conversationMode = normalizeConversationMode(localStorage.getItem(conversationModeStorageKey));
+    } catch {
+      conversationMode = CONVERSATION_MODE_FICTION;
+      localStorage.removeItem(conversationModeStorageKey);
+    }
     const savedMessages = localStorage.getItem(messagesStorageKey);
     if (savedMessages) {
       try {
