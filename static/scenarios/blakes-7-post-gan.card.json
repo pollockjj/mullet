@@ -82,7 +82,7 @@
                   "subject": "Jan Chappell portraying Cally in the 1979 BBC television series Blake's 7, an Auron woman with an angular oval face, high cheekbones, deep-set brown eyes, and short layered ash-brown feathered hair",
                   "attire": "Cally's fitted rust-red and deep maroon Liberator tunic with a high metallic patterned collar and black underlayer",
                   "setting": "the Liberator flight deck with cream geometric walls, glowing colored control panels, and restrained 1970s BBC retrofuturist production design",
-                  "model_template": "qwen-image-edit-2511-reference-v1",
+                  "model_template": "mage-flow-edit-turbo-reference-v1",
                   "reference_image": {
                     "name": "cally-v1.jpg",
                     "subfolder": "mullet/identity",
