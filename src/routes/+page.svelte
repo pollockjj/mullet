@@ -706,12 +706,18 @@
         conversationMode = workspace.mode;
         conversationId = workspace.conversationId;
         messages = workspace.messages;
-        localStorage.setItem(conversationModeStorageKey, conversationMode);
-        localStorage.setItem(conversationIdStorageKey, conversationId);
-        localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
+        localStorage.removeItem(conversationModeStorageKey);
+        localStorage.removeItem(conversationIdStorageKey);
+        localStorage.removeItem(messagesStorageKey);
         return;
       } catch {
         localStorage.removeItem(workspaceStorageKey);
+        conversationMode = CONVERSATION_MODE_FICTION;
+        conversationId = crypto.randomUUID();
+        messages = [];
+        errorMessage = 'Stored workspace was invalid and was reset.';
+        persist();
+        return;
       }
     }
 
@@ -3042,9 +3048,9 @@
     if (!browser) return;
     const workspace = createStoredWorkspace(conversationMode, conversationId, messages);
     localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace));
-    localStorage.setItem(conversationModeStorageKey, conversationMode);
-    localStorage.setItem(conversationIdStorageKey, conversationId);
-    localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
+    localStorage.removeItem(conversationModeStorageKey);
+    localStorage.removeItem(conversationIdStorageKey);
+    localStorage.removeItem(messagesStorageKey);
   }
 
   function freshConversation(): Message[] {
