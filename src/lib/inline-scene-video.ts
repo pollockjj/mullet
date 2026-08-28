@@ -69,6 +69,21 @@ export type InlineSceneVideoCapabilities = {
   durations: readonly [typeof INLINE_SCENE_VIDEO_DURATION_SECONDS];
 };
 
+export type InlineSceneVideoReconciliationConditions = {
+  scenesEnabled: boolean;
+  motionEnabled: boolean;
+  capabilitiesReady: boolean;
+  persistenceReady: boolean;
+  persistenceAvailable: boolean;
+  restorationPending: boolean;
+  streaming: boolean;
+  sceneBusy: boolean;
+  videoBusy: boolean;
+  videoError: boolean;
+  requestReady: boolean;
+  current: boolean;
+};
+
 export type InlineSceneVideoInputScene = {
   conversationId: string;
   epoch: string;
@@ -213,6 +228,39 @@ export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): st
 
 export function inlineSceneVideoSourceRequestSha256(request: InlineSceneVideoRequest): string {
   return sha256Hex(normalizeInlineSceneVideoRequest(request).source.sceneRequestKey);
+}
+
+export function inlineSceneVideoReconciliationAllowed(
+  conditions: InlineSceneVideoReconciliationConditions
+): boolean {
+  return conditions.scenesEnabled
+    && conditions.motionEnabled
+    && conditions.capabilitiesReady
+    && conditions.persistenceReady
+    && conditions.persistenceAvailable
+    && !conditions.restorationPending
+    && !conditions.streaming
+    && !conditions.sceneBusy
+    && !conditions.videoBusy
+    && !conditions.videoError
+    && conditions.requestReady
+    && !conditions.current;
+}
+
+export function parseInlineSceneVideoIntegerHeader(
+  value: string | null,
+  name: string,
+  minimum: number,
+  maximum: number
+): number {
+  if (value === null || !/^(0|[1-9]\d*)$/.test(value)) {
+    throw new Error('Inline-scene motion response omitted ' + name + '.');
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error('Inline-scene motion response omitted ' + name + '.');
+  }
+  return parsed;
 }
 
 export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): string {

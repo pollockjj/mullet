@@ -65,9 +65,11 @@
   import {
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     buildInlineSceneVideoRequest,
+    inlineSceneVideoReconciliationAllowed,
     inlineSceneVideoRequestKey,
     inlineSceneVideoSourceRequestSha256,
     normalizeInlineSceneVideoCapabilities,
+    parseInlineSceneVideoIntegerHeader,
     type InlineSceneVideoCapabilities,
     type InlineSceneVideoRequest
   } from '$lib/inline-scene-video';
@@ -287,6 +289,8 @@
   let inlineSceneVideoPersistenceReady = false;
   let inlineSceneVideoPersistenceAvailable = true;
   let inlineSceneVideoPersistenceOperations = 0;
+  let inlineSceneVideoRestorationOperations = 0;
+  let inlineSceneVideoRestorationPending = false;
   let inlineSceneVideoBusy = false;
   let inlineSceneVideoError = '';
   let inlineSceneVideoRequest: InlineSceneVideoRequest | null = null;
@@ -479,6 +483,7 @@
     inlineSceneVideoCapabilities,
     inlineSceneVideoPersistenceReady,
     inlineSceneVideoPersistenceAvailable,
+    inlineSceneVideoRestorationPending,
     streaming,
     inlineSceneBusy,
     inlineSceneVideoBusy,
@@ -815,10 +820,12 @@
   }
 
   async function restoreInlineSceneAndMotion() {
-    await restoreGeneratedInlineScene();
-    await loadInlineSceneGenerator();
-    await tick();
-    await restoreGeneratedInlineSceneVideo();
+    await runInlineSceneVideoRestoration(async () => {
+      await restoreGeneratedInlineScene();
+      await loadInlineSceneGenerator();
+      await tick();
+      await restoreGeneratedInlineSceneVideo();
+    });
   }
 
   function currentInlineSceneVideoRequest(
@@ -843,6 +850,25 @@
     inlineSceneVideoPersistenceReady = inlineSceneVideoPersistenceOperations === 0;
   }
 
+  function beginInlineSceneVideoRestoration() {
+    inlineSceneVideoRestorationOperations += 1;
+    inlineSceneVideoRestorationPending = true;
+  }
+
+  function endInlineSceneVideoRestoration() {
+    inlineSceneVideoRestorationOperations = Math.max(0, inlineSceneVideoRestorationOperations - 1);
+    inlineSceneVideoRestorationPending = inlineSceneVideoRestorationOperations > 0;
+  }
+
+  async function runInlineSceneVideoRestoration(operation: () => Promise<void>) {
+    beginInlineSceneVideoRestoration();
+    try {
+      await operation();
+    } finally {
+      endInlineSceneVideoRestoration();
+    }
+  }
+
   function disableInlineSceneVideoPersistence(cause: unknown) {
     inlineSceneVideoGeneration += 1;
     inlineSceneVideoController?.abort();
@@ -851,6 +877,8 @@
     inlineSceneVideoPersistenceOperations = 0;
     inlineSceneVideoPersistenceAvailable = false;
     inlineSceneVideoPersistenceReady = true;
+    inlineSceneVideoRestorationOperations = 0;
+    inlineSceneVideoRestorationPending = false;
     inlineSceneMotionEnabled = false;
     localStorage.setItem(inlineSceneMotionEnabledStorageKey, 'false');
     removeInstalledInlineSceneVideo();
@@ -963,6 +991,7 @@
     capabilities: InlineSceneVideoCapabilities | null,
     persistenceReady: boolean,
     persistenceAvailable: boolean,
+    restorationPending: boolean,
     isStreaming: boolean,
     sceneBusy: boolean,
     videoBusy: boolean,
@@ -970,19 +999,20 @@
     request: InlineSceneVideoRequest | null,
     current: boolean
   ) {
-    if (
-      !scenesEnabled
-      || !motionEnabled
-      || !capabilities
-      || !persistenceReady
-      || !persistenceAvailable
-      || isStreaming
-      || sceneBusy
-      || videoBusy
-      || Boolean(videoError)
-      || !request
-      || current
-    ) return;
+    if (!inlineSceneVideoReconciliationAllowed({
+      scenesEnabled,
+      motionEnabled,
+      capabilitiesReady: Boolean(capabilities),
+      persistenceReady,
+      persistenceAvailable,
+      restorationPending,
+      streaming: isStreaming,
+      sceneBusy,
+      videoBusy,
+      videoError: Boolean(videoError),
+      requestReady: Boolean(request),
+      current
+    })) return;
     const key = inlineSceneVideoRequestKey(request);
     if (key === lastInlineSceneVideoAttemptKey) return;
     lastInlineSceneVideoAttemptKey = key;
@@ -1001,11 +1031,7 @@
     minimum: number,
     maximum: number
   ): number {
-    const value = Number(response.headers.get(name));
-    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
-      throw new Error('Inline-scene motion response omitted ' + name + '.');
-    }
-    return value;
+    return parseInlineSceneVideoIntegerHeader(response.headers.get(name), name, minimum, maximum);
   }
 
   async function generateInlineSceneVideo(
@@ -1144,6 +1170,8 @@
       inlineSceneVideoController?.abort();
       inlineSceneVideoController = null;
       inlineSceneVideoBusy = false;
+    } else {
+      void runInlineSceneVideoRestoration(restoreGeneratedInlineSceneVideo);
     }
   }
 
@@ -1166,6 +1194,7 @@
     if (inlineSceneCapabilitiesLoading) return;
     inlineSceneCapabilitiesLoading = true;
     inlineSceneError = '';
+    let restorationStarted = false;
     try {
       const response = await fetch(`${base}/api/scene`, { cache: 'no-store' });
       const payload = await response.json().catch(() => null);
@@ -1175,7 +1204,12 @@
           : `Inline-scene generator failed (${response.status}).`;
         throw new Error(detail);
       }
-      inlineSceneCapabilities = normalizeInlineSceneCapabilities(payload);
+      const capabilities = normalizeInlineSceneCapabilities(payload);
+      if (inlineSceneMotionEnabled && inlineSceneVideoPersistenceAvailable) {
+        beginInlineSceneVideoRestoration();
+        restorationStarted = true;
+      }
+      inlineSceneCapabilities = capabilities;
       if (inlineSceneLora && !inlineSceneCapabilities.loras.some((lora) => lora.path === inlineSceneLora)) {
         inlineSceneLora = '';
         localStorage.removeItem(inlineSceneLoraStorageKey);
@@ -1190,6 +1224,7 @@
       inlineSceneCapabilities = null;
       inlineSceneError = cause instanceof Error ? cause.message : 'Inline-scene generator is unavailable.';
     } finally {
+      if (restorationStarted) endInlineSceneVideoRestoration();
       inlineSceneCapabilitiesLoading = false;
     }
   }

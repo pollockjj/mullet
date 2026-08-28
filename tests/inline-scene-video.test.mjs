@@ -17,8 +17,10 @@ import {
   buildInlineSceneVideoRequest,
   buildLtx25InlineSceneVideoWorkflow,
   inlineSceneVideoDimensions,
+  inlineSceneVideoReconciliationAllowed,
   inlineSceneVideoRequestKey,
-  normalizeInlineSceneVideoRequest
+  normalizeInlineSceneVideoRequest,
+  parseInlineSceneVideoIntegerHeader
 } from '../src/lib/inline-scene-video.ts';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
@@ -105,6 +107,36 @@ test('uses the fixed live-tested landscape video envelope', () => {
     assert.equal(dimensions.height % LTX25_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
     assert.equal(dimensions.frames, 49);
     assert.equal(dimensions.fps, 24);
+  }
+});
+
+test('blocks replacement generation until persisted motion restoration finishes', () => {
+  const ready = {
+    scenesEnabled: true,
+    motionEnabled: true,
+    capabilitiesReady: true,
+    persistenceReady: true,
+    persistenceAvailable: true,
+    restorationPending: false,
+    streaming: false,
+    sceneBusy: false,
+    videoBusy: false,
+    videoError: false,
+    requestReady: true,
+    current: false
+  };
+  assert.equal(inlineSceneVideoReconciliationAllowed(ready), true);
+  assert.equal(inlineSceneVideoReconciliationAllowed({ ...ready, restorationPending: true }), false);
+});
+
+test('rejects missing, empty, and non-canonical integer provenance headers', () => {
+  assert.equal(parseInlineSceneVideoIntegerHeader('0', 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER), 0);
+  assert.equal(parseInlineSceneVideoIntegerHeader('42', 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER), 42);
+  for (const value of [null, '', ' 0', '00', '+1', '1.0', '9007199254740992']) {
+    assert.throws(
+      () => parseInlineSceneVideoIntegerHeader(value, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
+      /omitted x-mullet-seed/
+    );
   }
 });
 
