@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   EXPRESSION_CLASSIFIER_PROMPT,
+  SIDECAR_TIMEOUT_MS,
   cleanExpressionInput,
   createExpressionSidecarResult,
   normalizeExpressionSidecarRequest,
@@ -28,7 +29,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       systemPrompt: EXPRESSION_CLASSIFIER_PROMPT,
       input: cleanExpressionInput(sidecarRequest.text),
       maxTokens: 64,
-      signal: request.signal
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(SIDECAR_TIMEOUT_MS)])
     });
     const expression = parseExpressionResponse(completion);
     return json(createExpressionSidecarResult(sidecarRequest, runtime.modelId, expression), {

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   EXPRESSION_CLASSIFIER_PROMPT,
   EXPRESSION_LABELS,
+  SIDECAR_TIMEOUT_MS,
   ST_EXPRESSION_SOURCE_REVISION,
   buildExpressionSidecarRequest,
   cleanExpressionInput,
@@ -21,6 +22,7 @@ const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 
 test('pins the current SillyTavern staging expression vocabulary and prompt', () => {
   assert.equal(ST_EXPRESSION_SOURCE_REVISION, '30eaf26a438fd629e43492bfe82f05d976766208');
+  assert.equal(SIDECAR_TIMEOUT_MS, 30_000);
   assert.deepEqual(EXPRESSION_LABELS, [
     'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion', 'curiosity',
     'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment', 'excitement', 'fear',
@@ -104,4 +106,21 @@ test('sends only the fixed classifier prompt and target response to the sidecar 
     max_tokens: 64,
     temperature: 0
   });
+});
+
+test('forwards cancellation to a hung sidecar model request', async () => {
+  const controller = new AbortController();
+  const fetcher = async (_url, init) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+  });
+  const completion = runSidecarCompletion(fetcher, {
+    baseUrl: 'http://hammerhead:1234/v1',
+    model: 'gemma-4-ortenzya',
+    systemPrompt: EXPRESSION_CLASSIFIER_PROMPT,
+    input: 'A response that never completes.',
+    maxTokens: 64,
+    signal: controller.signal
+  });
+  controller.abort(new DOMException('cancelled', 'AbortError'));
+  await assert.rejects(completion, (cause) => cause instanceof DOMException && cause.name === 'AbortError');
 });

@@ -1,6 +1,7 @@
 export const SIDECAR_REQUEST_SPEC = 'mullet_sidecar_request_v1' as const;
 export const SIDECAR_RESULT_SPEC = 'mullet_sidecar_result_v1' as const;
 export const SIDECAR_STATE_SPEC = 'mullet_sidecar_state_v1' as const;
+export const SIDECAR_TIMEOUT_MS = 30_000 as const;
 
 export const ST_EXPRESSION_SOURCE_REVISION = '30eaf26a438fd629e43492bfe82f05d976766208' as const;
 

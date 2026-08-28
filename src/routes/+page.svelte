@@ -32,10 +32,12 @@
     buildExpressionSidecarRequest,
     emptySidecarState,
     expressionResultMatchesRequest,
+    expressionSourceFingerprint,
     isSidecarConversationId,
     normalizeExpressionSidecarResult,
     normalizeSidecarState,
     withExpressionSidecarResult,
+    SIDECAR_TIMEOUT_MS,
     type ExpressionSidecarRequest,
     type ExpressionSidecarResult,
     type SidecarState
@@ -91,6 +93,7 @@
   let sidecarPersistenceAvailable = true;
   let sidecarBusy = false;
   let sidecarError = '';
+  let lastExpressionAttemptKey = '';
   let sidecarController: AbortController | null = null;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
@@ -115,6 +118,15 @@
   $: expressionSnapshot = currentExpressionSnapshot(conversationId, messages);
   $: expressionResult = sidecarState?.channels.expression ?? null;
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
+  $: scheduleExpressionReconciliation(
+    expressionsEnabled,
+    sidecarPersistenceReady,
+    sidecarPersistenceAvailable,
+    streaming,
+    sidecarBusy,
+    expressionSnapshot,
+    expressionCurrent
+  );
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -192,7 +204,33 @@
     }
   }
 
+  function expressionSnapshotKey(snapshot: ExpressionSidecarRequest): string {
+    return [
+      snapshot.source.conversationId,
+      snapshot.source.messageCount,
+      snapshot.source.messageIndex,
+      expressionSourceFingerprint(snapshot.text)
+    ].join(':');
+  }
+
+  function scheduleExpressionReconciliation(
+    enabled: boolean,
+    persistenceReady: boolean,
+    persistenceAvailable: boolean,
+    isStreaming: boolean,
+    busy: boolean,
+    snapshot: ExpressionSidecarRequest | null,
+    current: boolean
+  ) {
+    if (!enabled || !persistenceReady || !persistenceAvailable || isStreaming || busy || !snapshot || current) return;
+    const key = expressionSnapshotKey(snapshot);
+    if (key === lastExpressionAttemptKey) return;
+    lastExpressionAttemptKey = key;
+    void determineExpression(snapshot);
+  }
+
   function disableSidecarPersistence(cause: unknown) {
+    sidecarController?.abort();
     sidecarPersistenceAvailable = false;
     expressionsEnabled = false;
     if (browser) localStorage.setItem(expressionsEnabledStorageKey, 'false');
@@ -218,6 +256,7 @@
 
   async function resetSidecarForConversation() {
     sidecarController?.abort();
+    lastExpressionAttemptKey = '';
     conversationId = crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
     sidecarState = emptySidecarState(conversationId);
@@ -234,21 +273,29 @@
     if (!sidecarPersistenceReady || !sidecarPersistenceAvailable) expressionsEnabled = false;
     localStorage.setItem(expressionsEnabledStorageKey, String(expressionsEnabled));
     sidecarError = '';
-    if (expressionsEnabled && expressionSnapshot) void determineExpression();
+    lastExpressionAttemptKey = '';
+    if (!expressionsEnabled) sidecarController?.abort();
   }
 
-  async function determineExpression() {
-    const snapshot = currentExpressionSnapshot(conversationId, messages);
+  async function determineExpression(selectedSnapshot: ExpressionSidecarRequest | null = null) {
+    const snapshot = selectedSnapshot ?? currentExpressionSnapshot(conversationId, messages);
     if (!snapshot || streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !sidecarState) return;
+    lastExpressionAttemptKey = expressionSnapshotKey(snapshot);
     sidecarBusy = true;
     sidecarError = '';
-    sidecarController = new AbortController();
+    const activeController = new AbortController();
+    sidecarController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, SIDECAR_TIMEOUT_MS);
     try {
       const response = await fetch(`${base}/api/sidecar`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(snapshot),
-        signal: sidecarController.signal
+        signal: activeController.signal
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
@@ -267,12 +314,17 @@
       }
       sidecarState = nextState;
     } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        if (timedOut) sidecarError = `Expression sidecar timed out after ${SIDECAR_TIMEOUT_MS / 1000} seconds.`;
+      } else {
         sidecarError = cause instanceof Error ? cause.message : 'Expression sidecar failed.';
       }
     } finally {
-      sidecarBusy = false;
-      sidecarController = null;
+      window.clearTimeout(timeoutId);
+      if (sidecarController === activeController) {
+        sidecarBusy = false;
+        sidecarController = null;
+      }
     }
   }
 
@@ -298,7 +350,7 @@
   }
 
   async function startSelectedScenario() {
-    if (!selectedScenario || streaming || sidecarBusy || scenarioLoading) return;
+    if (!selectedScenario || streaming || scenarioLoading) return;
     errorMessage = '';
     noticeMessage = '';
     scenarioLoading = true;
@@ -426,7 +478,7 @@
   }
 
   async function clearConversation() {
-    if (streaming || sidecarBusy) return;
+    if (streaming) return;
     messages = freshConversation();
     errorMessage = '';
     noticeMessage = '';
@@ -618,8 +670,9 @@
 
   async function send() {
     const content = draft.trim();
-    if (!content || streaming || sidecarBusy || !lorePersistenceReady) return;
+    if (!content || streaming || !lorePersistenceReady) return;
 
+    sidecarController?.abort();
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
@@ -717,7 +770,6 @@
       streaming = false;
       controller = null;
       await scrollToLatest();
-      if (completedResponse && expressionsEnabled) void determineExpression();
     }
   }
 
@@ -782,27 +834,27 @@
         type="file"
         accept=".json,.png,application/json,image/png"
         on:change={importCharacterCard}
-        disabled={streaming || sidecarBusy}
+        disabled={streaming}
         aria-label="Choose a character card"
       />
       <div class="card-actions">
-        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming || sidecarBusy}>
+        <button class="card-button primary" on:click={() => cardInput?.click()} disabled={streaming}>
           {activeCard ? 'Replace card' : 'Import card'}
         </button>
         {#if activeCard}
-          <button class="card-button" on:click={removeCharacterCard} disabled={streaming || sidecarBusy}>Remove</button>
+          <button class="card-button" on:click={removeCharacterCard} disabled={streaming}>Remove</button>
         {/if}
       </div>
       <section class="scenario-picker" aria-label="Bundled scenarios">
         <span class="eyebrow">Bundled scenarios</span>
         {#if scenarioCatalog}
-          <select bind:value={selectedScenarioId} disabled={streaming || sidecarBusy || scenarioLoading} aria-label="Select bundled scenario">
+          <select bind:value={selectedScenarioId} disabled={streaming || scenarioLoading} aria-label="Select bundled scenario">
             {#each scenarioCatalog.scenarios as scenario}
               <option value={scenario.id}>{scenario.title}</option>
             {/each}
           </select>
           {#if selectedScenario}<small>{selectedScenario.summary}</small>{/if}
-          <button on:click={() => void startSelectedScenario()} disabled={streaming || sidecarBusy || scenarioLoading || !selectedScenario}>
+          <button on:click={() => void startSelectedScenario()} disabled={streaming || scenarioLoading || !selectedScenario}>
             {scenarioLoading ? 'Loading…' : 'Start scenario'}
           </button>
         {:else}
@@ -820,7 +872,7 @@
               type="checkbox"
               bind:checked={expressionsEnabled}
               on:change={persistExpressionsEnabled}
-              disabled={streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable}
+              disabled={streaming || !sidecarPersistenceReady || !sidecarPersistenceAvailable}
             />
             <span>{expressionsEnabled ? 'On' : 'Off'}</span>
           </label>
@@ -939,7 +991,7 @@
           disabled={streaming}
         ></textarea>
       </label>
-      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || sidecarBusy || messages.length === 0}>Clear conversation</button>
+      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || messages.length === 0}>Clear conversation</button>
     </aside>
 
     <section class="chat" aria-label="Conversation">
@@ -974,13 +1026,13 @@
             on:keydown={composerKeydown}
             placeholder="Write the next turn…"
             rows="2"
-            disabled={streaming || sidecarBusy}
+            disabled={streaming}
             aria-label="Message"
           ></textarea>
           {#if streaming}
             <button class="stop" on:click={stop}>Stop</button>
           {:else}
-            <button class="send" on:click={send} disabled={!draft.trim() || !lorePersistenceReady || sidecarBusy}>Send</button>
+            <button class="send" on:click={send} disabled={!draft.trim() || !lorePersistenceReady}>Send</button>
           {/if}
         </div>
         <div class="composer-meta">
