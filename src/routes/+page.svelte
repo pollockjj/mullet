@@ -238,6 +238,7 @@
     type ScenarioPackage,
     type ScenarioPortraitProfile
   } from '$lib/scenario';
+  import { createStoredWorkspace, normalizeStoredWorkspace } from '$lib/workspace-state';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -397,6 +398,7 @@
 
   const messagesStorageKey = 'mullet.checkpoint-one.messages';
   const conversationModeStorageKey = 'mullet.conversation-mode';
+  const workspaceStorageKey = 'mullet.workspace.v1';
   const cardStorageKey = 'mullet.active-character-card';
   const portraitStorageKey = 'mullet.active-character-portrait';
   const cardSourceIdentifierStorageKey = 'mullet.active-character-source';
@@ -614,21 +616,7 @@
     : fictionStarters;
 
   onMount(() => {
-    try {
-      conversationMode = normalizeConversationMode(localStorage.getItem(conversationModeStorageKey));
-    } catch {
-      conversationMode = CONVERSATION_MODE_FICTION;
-      localStorage.removeItem(conversationModeStorageKey);
-    }
-    const savedMessages = localStorage.getItem(messagesStorageKey);
-    if (savedMessages) {
-      try {
-        const parsed = JSON.parse(savedMessages);
-        if (Array.isArray(parsed)) messages = parsed;
-      } catch {
-        localStorage.removeItem(messagesStorageKey);
-      }
-    }
+    restoreWorkspaceState();
 
     const savedCard = localStorage.getItem(cardStorageKey);
     if (savedCard) {
@@ -637,7 +625,10 @@
         cardSourceIdentifier = characterSourceIdentifier(localStorage.getItem(cardSourceIdentifierStorageKey) ?? '');
         portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
-        if (messages.length === 0 && conversationMode === CONVERSATION_MODE_FICTION) messages = freshConversation();
+        if (messages.length === 0 && conversationMode === CONVERSATION_MODE_FICTION) {
+          messages = freshConversation();
+          persist();
+        }
       } catch {
         localStorage.removeItem(cardStorageKey);
         localStorage.removeItem(portraitStorageKey);
@@ -671,9 +662,6 @@
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
-    const savedConversationId = localStorage.getItem(conversationIdStorageKey);
-    conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
-    localStorage.setItem(conversationIdStorageKey, conversationId);
     const savedAssistantMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
     assistantMemoryId = isSidecarConversationId(savedAssistantMemoryId) ? savedAssistantMemoryId : crypto.randomUUID();
     localStorage.setItem(assistantMemoryIdStorageKey, assistantMemoryId);
@@ -709,6 +697,53 @@
     void loadInlineSceneVideoGenerator();
     void loadScenarioCatalog();
   });
+
+  function restoreWorkspaceState() {
+    const stored = localStorage.getItem(workspaceStorageKey);
+    if (stored) {
+      try {
+        const workspace = normalizeStoredWorkspace(JSON.parse(stored));
+        conversationMode = workspace.mode;
+        conversationId = workspace.conversationId;
+        messages = workspace.messages;
+        localStorage.setItem(conversationModeStorageKey, conversationMode);
+        localStorage.setItem(conversationIdStorageKey, conversationId);
+        localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
+        return;
+      } catch {
+        localStorage.removeItem(workspaceStorageKey);
+      }
+    }
+
+    try {
+      conversationMode = normalizeConversationMode(localStorage.getItem(conversationModeStorageKey));
+    } catch {
+      conversationMode = CONVERSATION_MODE_FICTION;
+      localStorage.removeItem(conversationModeStorageKey);
+    }
+    const savedConversationId = localStorage.getItem(conversationIdStorageKey);
+    conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
+    let legacyMessages: unknown = [];
+    const savedMessages = localStorage.getItem(messagesStorageKey);
+    if (savedMessages) {
+      try {
+        legacyMessages = JSON.parse(savedMessages);
+      } catch {
+        localStorage.removeItem(messagesStorageKey);
+      }
+    }
+    try {
+      messages = createStoredWorkspace(
+        conversationMode,
+        conversationId,
+        Array.isArray(legacyMessages) ? legacyMessages as Message[] : []
+      ).messages;
+    } catch {
+      messages = [];
+      localStorage.removeItem(messagesStorageKey);
+    }
+    persist();
+  }
 
   onDestroy(() => {
     if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
@@ -2605,7 +2640,6 @@
     lastExpressionAttemptKey = '';
     lastLivingHistoryAttemptKey = '';
     conversationId = crypto.randomUUID();
-    localStorage.setItem(conversationIdStorageKey, conversationId);
     await resetInlineSceneForConversation();
     await resetPortraitForConversation();
     await clearLivingHistory();
@@ -2980,7 +3014,6 @@
       if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
 
       conversationMode = CONVERSATION_MODE_FICTION;
-      persistConversationMode();
       activeCard = packaged.card;
       cardSourceIdentifier = characterSourceIdentifier(selectedScenario.card);
       portraitDataUrl = '';
@@ -3006,7 +3039,12 @@
   }
 
   function persist() {
-    if (browser) localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
+    if (!browser) return;
+    const workspace = createStoredWorkspace(conversationMode, conversationId, messages);
+    localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace));
+    localStorage.setItem(conversationModeStorageKey, conversationMode);
+    localStorage.setItem(conversationIdStorageKey, conversationId);
+    localStorage.setItem(messagesStorageKey, JSON.stringify(messages));
   }
 
   function freshConversation(): Message[] {
@@ -3089,10 +3127,6 @@
     draft = text;
   }
 
-  function persistConversationMode() {
-    localStorage.setItem(conversationModeStorageKey, conversationMode);
-  }
-
   async function replaceConversationMode(nextMode: ConversationMode) {
     if (
       streaming
@@ -3103,7 +3137,6 @@
     ) return;
     if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
     conversationMode = nextMode;
-    persistConversationMode();
     messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
     errorMessage = '';
     noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
@@ -3185,7 +3218,6 @@
       const seedGreeting = switchingFromAssistant || messages.length === 0 || replaceOpeningGreeting;
 
       conversationMode = CONVERSATION_MODE_FICTION;
-      persistConversationMode();
       activeCard = imported;
       cardSourceIdentifier = characterSourceIdentifier(file.name);
       portraitDataUrl = nextPortrait;
