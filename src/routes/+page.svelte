@@ -2,7 +2,6 @@
   import { base } from '$app/paths';
   import { browser } from '$app/environment';
   import { onMount, tick } from 'svelte';
-  import { TOKEN_LIMIT_OPTIONS } from '$lib/token-limit';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -18,8 +17,6 @@
   let tokenLimit = data.defaultMaxTokens;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
-
-  $: tokenOptions = TOKEN_LIMIT_OPTIONS.filter((value) => value <= data.maxTokens);
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -37,7 +34,7 @@
       localStorage.removeItem('mullet.checkpoint-one.messages');
     }
     const savedTokenLimit = Number(localStorage.getItem('mullet.response-token-limit'));
-    if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 16 && savedTokenLimit <= data.maxTokens) {
+    if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
   });
@@ -225,9 +222,17 @@
         <div class="composer-meta">
           <label>
             Response limit
-            <select bind:value={tokenLimit} on:change={persistTokenLimit} disabled={streaming}>
-              {#each tokenOptions as option}<option value={option}>{option} tokens</option>{/each}
-            </select>
+            <input
+              type="number"
+              min="1"
+              max={data.maxTokens}
+              step="1"
+              bind:value={tokenLimit}
+              on:change={persistTokenLimit}
+              disabled={streaming}
+              aria-label="Maximum response tokens"
+            />
+            <span>tokens</span>
           </label>
           <small>Enter sends · Shift+Enter adds a line</small>
         </div>
@@ -287,7 +292,7 @@
   .stop { color: #f0ddd5; background: #7b4036; }
   .composer-meta { max-width: 840px; margin: 7px auto 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #686159; font-size: 10px; }
   .composer-meta label { display: flex; align-items: center; gap: 7px; }
-  .composer-meta select { padding: 4px 7px; border: 1px solid #3c3731; border-radius: 7px; color: #bdb4aa; background: #191613; font-size: 10px; }
+  .composer-meta input { width: 82px; padding: 4px 7px; border: 1px solid #3c3731; border-radius: 7px; color: #bdb4aa; background: #191613; font-size: 10px; }
   .error { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #7b4036; border-radius: 9px; color: #f0c8bd; background: #321d19; font-size: 12px; white-space: pre-wrap; }
   .notice { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #5f513d; border-radius: 9px; color: #e9c995; background: #2d251a; font-size: 12px; }
   @keyframes pulse { to { opacity: .35; } }

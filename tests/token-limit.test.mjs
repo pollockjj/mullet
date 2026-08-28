@@ -1,24 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DEFAULT_RESPONSE_TOKENS, resolveTokenLimit } from '../src/lib/token-limit.ts';
+import { DEFAULT_RESPONSE_TOKENS, MAX_RESPONSE_TOKENS, resolveTokenLimit } from '../src/lib/token-limit.ts';
 
-test('defaults every response to a finite 256-token budget', () => {
-  assert.equal(DEFAULT_RESPONSE_TOKENS, 256);
-  assert.equal(resolveTokenLimit(undefined, 2048), 256);
+test('matches the operator SillyTavern chat-completion value and range', () => {
+  assert.equal(DEFAULT_RESPONSE_TOKENS, 8096);
+  assert.equal(MAX_RESPONSE_TOKENS, 128000);
+  assert.equal(resolveTokenLimit(undefined, MAX_RESPONSE_TOKENS), 8096);
 });
 
 test('accepts a user-selected token budget within the server ceiling', () => {
-  assert.equal(resolveTokenLimit(64, 2048), 64);
-  assert.equal(resolveTokenLimit(2048, 2048), 2048);
+  assert.equal(resolveTokenLimit(1, 128000), 1);
+  assert.equal(resolveTokenLimit(8096, 128000), 8096);
+  assert.equal(resolveTokenLimit(128000, 128000), 128000);
 });
 
 test('rejects non-integers and budgets beyond the server ceiling', () => {
-  assert.throws(() => resolveTokenLimit(64.5, 2048), /integer between 16 and 2048/);
-  assert.throws(() => resolveTokenLimit(4096, 2048), /integer between 16 and 2048/);
-  assert.throws(() => resolveTokenLimit('256', 2048), /integer between 16 and 2048/);
+  assert.throws(() => resolveTokenLimit(0, 128000), /integer between 1 and 128000/);
+  assert.throws(() => resolveTokenLimit(64.5, 128000), /integer between 1 and 128000/);
+  assert.throws(() => resolveTokenLimit(128001, 128000), /integer between 1 and 128000/);
+  assert.throws(() => resolveTokenLimit('8096', 128000), /integer between 1 and 128000/);
 });
 
 test('rejects an invalid server default instead of silently changing it', () => {
-  assert.throws(() => resolveTokenLimit(undefined, 128, 256), /default token limit/);
+  assert.throws(() => resolveTokenLimit(undefined, 8095, 8096), /default token limit/);
 });

@@ -1,10 +1,10 @@
 import { env } from '$env/dynamic/private';
-import { DEFAULT_RESPONSE_TOKENS } from '$lib/token-limit';
+import { DEFAULT_RESPONSE_TOKENS, MAX_RESPONSE_TOKENS } from '$lib/token-limit';
 
-const parsedMaxTokens = Number.parseInt(env.MODEL_MAX_TOKENS ?? '2048', 10);
-const maxTokens = Number.isInteger(parsedMaxTokens) && parsedMaxTokens >= 16 ? parsedMaxTokens : 2048;
+const parsedMaxTokens = Number.parseInt(env.MODEL_MAX_TOKENS ?? String(MAX_RESPONSE_TOKENS), 10);
+const maxTokens = Number.isInteger(parsedMaxTokens) && parsedMaxTokens >= 1 ? parsedMaxTokens : MAX_RESPONSE_TOKENS;
 const parsedDefaultTokens = Number.parseInt(env.MODEL_DEFAULT_TOKENS ?? String(DEFAULT_RESPONSE_TOKENS), 10);
-const defaultMaxTokens = Number.isInteger(parsedDefaultTokens) && parsedDefaultTokens >= 16 && parsedDefaultTokens <= maxTokens
+const defaultMaxTokens = Number.isInteger(parsedDefaultTokens) && parsedDefaultTokens >= 1 && parsedDefaultTokens <= maxTokens
   ? parsedDefaultTokens
   : Math.min(DEFAULT_RESPONSE_TOKENS, maxTokens);
 const parsedTemperature = Number.parseFloat(env.MODEL_TEMPERATURE ?? '0.85');
