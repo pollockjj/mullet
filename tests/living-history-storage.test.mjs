@@ -3,12 +3,14 @@ import test from 'node:test';
 
 import {
   buildLivingHistoryRequest,
-  createLivingHistoryResult
+  createLivingHistoryResult,
+  normalizeLivingHistoryResult
 } from '../src/lib/living-history.ts';
 import {
   STORED_LIVING_HISTORY_SPEC,
   clearLivingHistoryAtEpoch,
   commitLivingHistoryResult,
+  migrateStoredLivingHistoryResult,
   restoreLivingHistoryResult,
   unwrapStoredLivingHistory
 } from '../src/lib/living-history-storage.ts';
@@ -61,6 +63,20 @@ test('loads writer envelopes while retaining legacy direct-result compatibility'
     () => unwrapStoredLivingHistory({ spec: STORED_LIVING_HISTORY_SPEC, writeId: '' }),
     /envelope is invalid/
   );
+});
+
+test('migrates only stored V1 results to a V2 result with an empty quote bank', () => {
+  const current = result();
+  const legacy = {
+    ...current,
+    spec: 'mullet_living_history_result_v1',
+    output: { revision: current.output.revision, summary: current.output.summary }
+  };
+  assert.throws(() => normalizeLivingHistoryResult(legacy), /invalid living-history result spec/);
+  assert.deepEqual(migrateStoredLivingHistoryResult(legacy), {
+    ...current,
+    output: { ...current.output, quotes: [] }
+  });
 });
 
 test('discards a history result when reset lands during its storage write', async () => {

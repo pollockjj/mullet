@@ -1,4 +1,5 @@
 import {
+  LIVING_HISTORY_RESULT_SPEC,
   normalizeLivingHistoryResult,
   type LivingHistoryResult
 } from './living-history.ts';
@@ -46,6 +47,21 @@ export type LivingHistoryRestoreOperations = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function migrateStoredLivingHistoryResult(value: unknown): LivingHistoryResult {
+  if (
+    isRecord(value)
+    && value.spec === 'mullet_living_history_result_v1'
+    && isRecord(value.output)
+  ) {
+    return normalizeLivingHistoryResult({
+      ...value,
+      spec: LIVING_HISTORY_RESULT_SPEC,
+      output: { ...value.output, quotes: [] }
+    });
+  }
+  return normalizeLivingHistoryResult(value);
 }
 
 function boundedStorageId(value: unknown, name: string): string {
@@ -120,7 +136,7 @@ export async function loadStoredLivingHistory(expectedEpoch: string, allowLegacy
           const raw = request.result ?? null;
           const unwrapped = unwrapStoredLivingHistory(raw, expectedEpoch, allowLegacy);
           if (unwrapped !== null) {
-            loaded = normalizeLivingHistoryResult(unwrapped);
+            loaded = migrateStoredLivingHistoryResult(unwrapped);
             const epochBound = isRecord(raw)
               && raw.spec === STORED_LIVING_HISTORY_SPEC
               && typeof raw.epoch === 'string';

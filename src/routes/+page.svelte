@@ -382,7 +382,7 @@
   $: livingHistoryPendingMessages = livingHistoryRequest?.turns.length
     ?? pendingLivingHistoryMessageCount(livingHistoryBoundaries, livingHistoryResult);
   $: livingHistoryBook = livingHistoryEnabled && livingHistoryResult && livingHistoryApplicable
-    ? livingHistoryLorebook(livingHistoryResult)
+    ? livingHistoryLorebook(livingHistoryResult, conversationId, messages)
     : null;
   $: activeLorebooks = [
     ...combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard)),

@@ -90,7 +90,7 @@ test('reserves one supplemental slot without mutating imported or generated raw 
     'gemma-4-ortenzya',
     'One completed pair.'
   );
-  const generated = livingHistoryLorebook(result);
+  const generated = livingHistoryLorebook(result, conversationId, messages);
   const imports = Array.from({ length: MAX_SUPPLEMENTAL_LOREBOOKS }, (_unused, index) => normalizeLorebook({
     name: `Book ${index}`,
     entries: { 0: { uid: 0, key: [], keysecondary: [], content: `Entry ${index}`, constant: true, disable: false } }
