@@ -180,7 +180,7 @@ test('compiles card context before history and post-history instructions after i
 });
 
 test('injects the character depth prompt at its configured depth and role', () => {
-  const source = structuredClone(v3);
+  const source = v3Card('Gem');
   source.data.extensions.depth_prompt = { prompt: 'Private note for {{char}} and {{user}}.', depth: 1, role: 'assistant' };
   const card = normalizeCharacterCard(source);
   assert.deepEqual(characterDepthPrompt(card, 'Avon'), {

@@ -7,6 +7,7 @@ import {
   compileUnboundLoreMessages,
   injectLoreContext,
   injectLoreDepth,
+  lorePromptContextTokens,
   normalizeLorebook,
   resolveLorebookSettings,
   scanLorebooks
@@ -72,6 +73,12 @@ test('matches the operator SillyTavern lore settings and UI ranges', async () =>
     useGroupScoring: false
   });
   assert.equal((await scanLorebooks([], [], DEFAULT_LOREBOOK_SETTINGS)).budgetTokens, 65_536);
+  const defaultPromptContext = lorePromptContextTokens(262_144, 8_096);
+  assert.equal(defaultPromptContext, 254_048);
+  assert.equal((await scanLorebooks([], [], resolveLorebookSettings({}, defaultPromptContext))).budgetTokens, 63_512);
+  const maximumReplyPromptContext = lorePromptContextTokens(262_144, 128_000);
+  assert.equal(maximumReplyPromptContext, 134_144);
+  assert.equal((await scanLorebooks([], [], resolveLorebookSettings({}, maximumReplyPromptContext))).budgetTokens, 33_536);
   assert.equal(resolveLorebookSettings({ scanDepth: 0 }).scanDepth, 0);
   assert.equal(resolveLorebookSettings({ scanDepth: 1000 }).scanDepth, 1000);
   assert.equal(resolveLorebookSettings({ minActivations: 100 }).minActivations, 100);

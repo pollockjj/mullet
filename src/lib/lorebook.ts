@@ -463,6 +463,16 @@ export function resolveLorebookSettings(
   };
 }
 
+export function lorePromptContextTokens(modelContextTokens: number, responseTokenLimit: number): number {
+  if (!Number.isInteger(modelContextTokens) || modelContextTokens < 1) {
+    throw new Error('modelContextTokens must be a positive integer');
+  }
+  if (!Number.isInteger(responseTokenLimit) || responseTokenLimit < 1) {
+    throw new Error('responseTokenLimit must be a positive integer');
+  }
+  return Math.max(1, modelContextTokens - responseTokenLimit);
+}
+
 function regexFromSlashNotation(value: string): { source: string; flags: string } | null {
   const match = value.match(/^\/([\w\W]+?)\/([gimsuy]*)$/);
   if (!match || match[1].match(/(^|[^\\])\//)) return null;

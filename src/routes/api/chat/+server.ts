@@ -14,6 +14,7 @@ import {
 import {
   compileUnboundLoreMessages,
   injectLoreContext,
+  lorePromptContextTokens,
   normalizeLorebook,
   resolveLorebookSettings,
   scanLorebooks,
@@ -71,6 +72,12 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (typeof personaDescription !== 'string' || personaDescription.length > 100_000) {
     throw error(400, 'personaDescription must be a string of at most 100000 characters');
   }
+  let tokenLimit: number;
+  try {
+    tokenLimit = resolveTokenLimit(body?.maxTokens, runtime.maxTokens, runtime.defaultMaxTokens);
+  } catch (cause) {
+    throw error(400, cause instanceof Error ? cause.message : 'invalid maxTokens');
+  }
 
   if (body?.characterCard !== undefined && body.characterCard !== null) {
     try {
@@ -109,7 +116,10 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       }
       if (books.length) {
         const modelContextTokens = await getModelContextTokens(fetch, runtime.modelBaseUrl, runtime.modelId, request.signal);
-        const loreSettings = resolveLorebookSettings(body.lorebookSettings, modelContextTokens);
+        const loreSettings = resolveLorebookSettings(
+          body.lorebookSettings,
+          lorePromptContextTokens(modelContextTokens, tokenLimit)
+        );
         const regexSandbox = new RegexSandbox();
         try {
           loreResult = await scanLorebooks(books, messages, loreSettings, {
@@ -142,13 +152,6 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } else if (loreResult) {
     upstreamMessages = compileUnboundLoreMessages(messages, loreResult);
   }
-  let tokenLimit: number;
-  try {
-    tokenLimit = resolveTokenLimit(body?.maxTokens, runtime.maxTokens, runtime.defaultMaxTokens);
-  } catch (cause) {
-    throw error(400, cause instanceof Error ? cause.message : 'invalid maxTokens');
-  }
-
   let upstream: Response;
   try {
     upstream = await fetch(`${runtime.modelBaseUrl}/chat/completions`, {
