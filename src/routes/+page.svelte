@@ -238,7 +238,12 @@
     type ScenarioPackage,
     type ScenarioPortraitProfile
   } from '$lib/scenario';
-  import { createStoredWorkspace, normalizeStoredWorkspace } from '$lib/workspace-state';
+  import {
+    WORKSPACE_MAX_MESSAGES,
+    createStoredWorkspace,
+    normalizeStoredWorkspace,
+    workspaceReadyForCompletedTurn
+  } from '$lib/workspace-state';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -2836,24 +2841,30 @@
   }
 
   async function persistCompletedAssistantMemoryTurn() {
-    const request = buildAssistantMemoryRequest(assistantMemoryId, conversationId, messages, assistantMemoryResult);
-    const pending = createStoredAssistantMemoryPendingTurn(
-      assistantMemoryId,
-      assistantMemoryEpoch,
-      request.source,
-      request.turns
-    );
-    await runStoredAssistantMemoryExclusive(async () => {
-      await saveStoredAssistantMemoryPendingTurn(pending);
-    });
-    assistantMemoryPending = pending;
+    let pending: StoredAssistantMemoryPendingTurn;
+    try {
+      const request = buildAssistantMemoryRequest(assistantMemoryId, conversationId, messages, assistantMemoryResult);
+      pending = createStoredAssistantMemoryPendingTurn(
+        assistantMemoryId,
+        assistantMemoryEpoch,
+        request.source,
+        request.turns
+      );
+      assistantMemoryPending = pending;
+      await runStoredAssistantMemoryExclusive(async () => {
+        await saveStoredAssistantMemoryPendingTurn(pending);
+      });
+    } catch (cause) {
+      disableAssistantMemoryPersistence(cause);
+      throw cause;
+    }
     const persistedRequest = currentAssistantMemoryRequest(assistantMemoryId, pending, assistantMemoryResult);
     if (!persistedRequest) throw new Error('The completed assistant turn could not be reconstructed from durable storage.');
     await updateAssistantMemory(persistedRequest, pending);
   }
 
   async function clearAssistantMemory() {
-    if (assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable) return;
+    if (assistantTurnBusy || streaming || assistantMemoryBusy) return;
     if ((assistantMemoryResult || assistantMemoryPending) && !window.confirm('Clear all persistent assistant memory and any pending update?')) return;
     assistantTurnBusy = true;
     try {
@@ -2872,6 +2883,7 @@
         assistantMemoryResult = null;
         assistantMemoryPending = null;
         assistantMemoryError = '';
+        assistantMemoryPersistenceAvailable = true;
         lastAssistantMemoryActive = null;
         assistantMemoryPersistenceReady = true;
       });
@@ -3378,6 +3390,10 @@
     const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
     if (browser && fictionMode) reconcileLivingHistoryEpochFromStorage();
     const content = draft.trim();
+    if (content && !workspaceReadyForCompletedTurn(messages.length)) {
+      errorMessage = `This conversation has reached ${WORKSPACE_MAX_MESSAGES} messages. Reset the chat before sending another turn.`;
+      return;
+    }
     if (
       !content
       || streaming
@@ -3713,7 +3729,7 @@
             {#if assistantMemoryPending && !assistantMemoryBusy}
               <button class="retry" on:click={() => void retryAssistantMemory()} disabled={assistantTurnBusy}>Retry update</button>
             {/if}
-            <button on:click={() => void clearAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy || !assistantMemoryPersistenceAvailable}>Clear memory</button>
+            <button on:click={() => void clearAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy}>Clear memory</button>
           </div>
           <small class:active={lastAssistantMemoryActive === true} class="assistant-memory-fired">
             {lastAssistantMemoryActive === null ? 'No assistant chat sent yet.' : lastAssistantMemoryActive ? 'Stored memory was injected into the last chat.' : 'The last chat preceded the first stored record.'}

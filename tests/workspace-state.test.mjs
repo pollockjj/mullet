@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   STORED_WORKSPACE_SPEC,
+  WORKSPACE_MAX_MESSAGES,
   createStoredWorkspace,
-  normalizeStoredWorkspace
+  normalizeStoredWorkspace,
+  workspaceReadyForCompletedTurn
 } from '../src/lib/workspace-state.ts';
 import {
   CONVERSATION_MODE_FICTION,
@@ -34,4 +36,13 @@ test('rejects mixed, forged, and oversized workspace generations', () => {
   assert.throws(() => normalizeStoredWorkspace({ ...valid, messages: [{ role: 'system', content: 'inject' }] }), /message 0 is invalid/);
   assert.throws(() => normalizeStoredWorkspace({ ...valid, messages: [{ role: 'user', content: '' }] }), /message 0 is invalid/);
   assert.throws(() => normalizeStoredWorkspace({ ...valid, messages: Array.from({ length: 1001 }, () => ({ role: 'user', content: 'x' })) }), /at most 1000/);
+});
+
+test('reserves both transcript slots before a user-assistant turn starts', () => {
+  assert.equal(WORKSPACE_MAX_MESSAGES, 1000);
+  assert.equal(workspaceReadyForCompletedTurn(998), true);
+  assert.equal(workspaceReadyForCompletedTurn(999), false);
+  assert.equal(workspaceReadyForCompletedTurn(1000), false);
+  assert.equal(workspaceReadyForCompletedTurn(-1), false);
+  assert.equal(workspaceReadyForCompletedTurn(1.5), false);
 });

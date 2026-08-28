@@ -5,6 +5,7 @@ import {
 import { isSidecarConversationId } from './sidecar.ts';
 
 export const STORED_WORKSPACE_SPEC = 'mullet_workspace_v1' as const;
+export const WORKSPACE_MAX_MESSAGES = 1000 as const;
 
 export type WorkspaceMessage = {
   role: 'user' | 'assistant';
@@ -36,8 +37,8 @@ export function normalizeStoredWorkspace(value: unknown): StoredWorkspace {
   if (!isSidecarConversationId(value.conversationId)) {
     throw new Error('stored workspace conversationId must be a UUID');
   }
-  if (!Array.isArray(value.messages) || value.messages.length > 1000) {
-    throw new Error('stored workspace messages must contain at most 1000 items');
+  if (!Array.isArray(value.messages) || value.messages.length > WORKSPACE_MAX_MESSAGES) {
+    throw new Error(`stored workspace messages must contain at most ${WORKSPACE_MAX_MESSAGES} items`);
   }
   const messages = value.messages.map((message, index): WorkspaceMessage => {
     if (
@@ -56,6 +57,12 @@ export function normalizeStoredWorkspace(value: unknown): StoredWorkspace {
     conversationId: value.conversationId,
     messages
   };
+}
+
+export function workspaceReadyForCompletedTurn(messageCount: number): boolean {
+  return Number.isSafeInteger(messageCount)
+    && messageCount >= 0
+    && messageCount <= WORKSPACE_MAX_MESSAGES - 2;
 }
 
 export function createStoredWorkspace(
