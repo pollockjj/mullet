@@ -2,9 +2,9 @@ import {
   PORTRAIT_ASPECT_RATIOS,
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
-  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
+  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildQwenReferencePortraitWorkflow,
+  buildMageFlowReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   type PortraitCapabilities,
   type PortraitRequest
@@ -58,12 +58,10 @@ export async function loadPortraitCapabilities(
     '/object_info/VAELoader',
     '/object_info/LoraLoader',
     '/object_info/LoadImage',
-    '/object_info/FluxKontextImageScale',
-    '/object_info/CFGNorm',
-    '/object_info/LoraLoaderModelOnly',
-    '/object_info/TextEncodeQwenImageEditPlus',
-    '/object_info/VAEEncode',
-    '/object_info/ImageScale'
+    '/object_info/TextEncodeMageFlowEdit',
+    '/object_info/KSampler',
+    '/object_info/VAEDecode',
+    '/object_info/SaveImage'
   ];
   const [unetInfo, clipInfo, vaeInfo, loraInfo, ...referenceNodeInfo] = await Promise.all(paths.map(async (path) => {
     const response = await fetcher(endpoint(baseUrl, path), { signal });
@@ -71,21 +69,22 @@ export async function loadPortraitCapabilities(
   }));
   const unets = optionList(unetInfo, 'UNETLoader', 'unet_name');
   const clips = optionList(clipInfo, 'CLIPLoader', 'clip_name');
+  const clipTypes = optionList(clipInfo, 'CLIPLoader', 'type');
   const vaes = optionList(vaeInfo, 'VAELoader', 'vae_name');
   const loras = optionList(loraInfo, 'LoraLoader', 'lora_name');
   if (!unets.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.unet)) throw new Error('ComfyUI is missing the Z-Image Turbo model');
   if (!clips.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.clip)) throw new Error('ComfyUI is missing the Z-Image text encoder');
   if (!vaes.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.vae)) throw new Error('ComfyUI is missing the Z-Image VAE');
-  const referenceNodes = ['LoadImage', 'FluxKontextImageScale', 'CFGNorm', 'LoraLoaderModelOnly', 'TextEncodeQwenImageEditPlus', 'VAEEncode', 'ImageScale'];
-  const referenceReady = unets.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet)
-    && clips.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip)
-    && vaes.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae)
-    && loras.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.lora)
+  const referenceNodes = ['LoadImage', 'TextEncodeMageFlowEdit', 'KSampler', 'VAEDecode', 'SaveImage'];
+  const referenceReady = unets.includes(MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet)
+    && clips.includes(MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.clip)
+    && clipTypes.includes('mage')
+    && vaes.includes(MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.vae)
     && referenceNodeInfo.every((info, index) => nodeAvailable(info, referenceNodes[index]));
   return {
     spec: 'mullet_portrait_capabilities_v2',
     template: Z_IMAGE_TURBO_TEMPLATE,
-    referenceTemplate: referenceReady ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE : null,
+    referenceTemplate: referenceReady ? MAGE_FLOW_EDIT_REFERENCE_TEMPLATE : null,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
     loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_TEMPLATE.loraPrefix)).sort()
@@ -118,7 +117,7 @@ function outputImage(entry: Record<string, unknown>, request: PortraitRequest): 
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
   const referenceConditioned = request.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID;
   const outputNode = referenceConditioned
-    ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.outputNode
+    ? MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.outputNode
     : Z_IMAGE_TURBO_TEMPLATE.outputNode;
   if (!isRecord(entry.outputs) || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI portrait history omitted the output node');
@@ -209,7 +208,7 @@ export async function runComfyPortrait(
 ): Promise<ComfyPortraitImage> {
   await assertIdentityReference(fetcher, baseUrl, request, signal);
   const workflow = request.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
-    ? buildQwenReferencePortraitWorkflow(request, seed)
+    ? buildMageFlowReferencePortraitWorkflow(request, seed)
     : buildZImageTurboWorkflow(request, seed);
   const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
     method: 'POST',
