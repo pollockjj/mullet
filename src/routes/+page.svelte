@@ -192,6 +192,12 @@
   import { serializeChatRequest } from '$lib/chat-request-size';
   import { assertFinalizedChatStream, parseChatStreamPayload } from '$lib/chat-stream';
   import {
+    CONVERSATION_MODE_FICTION,
+    CONVERSATION_MODE_PERSONAL_ASSISTANT,
+    normalizeConversationMode,
+    type ConversationMode
+  } from '$lib/personal-assistant';
+  import {
     isScenarioCard,
     normalizeScenarioCatalog,
     validateScenarioPackage,
@@ -211,6 +217,7 @@
   let errorMessage = '';
   let noticeMessage = '';
   let tokenLimit = data.defaultMaxTokens;
+  let conversationMode: ConversationMode = CONVERSATION_MODE_FICTION;
   let activeCard: ImportedCharacterCard | null = null;
   let cardSourceIdentifier = '';
   let portraitDataUrl = '';
@@ -340,6 +347,7 @@
   let loreInput: HTMLInputElement;
 
   const messagesStorageKey = 'mullet.checkpoint-one.messages';
+  const conversationModeStorageKey = 'mullet.conversation-mode';
   const cardStorageKey = 'mullet.active-character-card';
   const portraitStorageKey = 'mullet.active-character-portrait';
   const cardSourceIdentifierStorageKey = 'mullet.active-character-source';
