@@ -819,6 +819,339 @@
     await restoreGeneratedInlineSceneVideo();
   }
 
+  function currentInlineSceneVideoRequest(
+    scene: StoredInlineScene | null,
+    current: boolean
+  ): InlineSceneVideoRequest | null {
+    if (!scene || !current) return null;
+    try {
+      return buildInlineSceneVideoRequest(scene);
+    } catch {
+      return null;
+    }
+  }
+
+  function beginInlineSceneVideoPersistenceOperation() {
+    inlineSceneVideoPersistenceOperations += 1;
+    inlineSceneVideoPersistenceReady = false;
+  }
+
+  function endInlineSceneVideoPersistenceOperation() {
+    inlineSceneVideoPersistenceOperations = Math.max(0, inlineSceneVideoPersistenceOperations - 1);
+    inlineSceneVideoPersistenceReady = inlineSceneVideoPersistenceOperations === 0;
+  }
+
+  function disableInlineSceneVideoPersistence(cause: unknown) {
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
+    inlineSceneVideoController = null;
+    inlineSceneVideoBusy = false;
+    inlineSceneVideoPersistenceOperations = 0;
+    inlineSceneVideoPersistenceAvailable = false;
+    inlineSceneVideoPersistenceReady = true;
+    inlineSceneMotionEnabled = false;
+    localStorage.setItem(inlineSceneMotionEnabledStorageKey, 'false');
+    removeInstalledInlineSceneVideo();
+    inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline-scene motion persistence failed.';
+  }
+
+  function suspendInlineSceneVideoForStaticChange() {
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
+    inlineSceneVideoController = null;
+    inlineSceneVideoBusy = false;
+    inlineSceneVideoError = '';
+    lastInlineSceneVideoAttemptKey = '';
+  }
+
+  async function clearInlineSceneVideoAtGeneration(generation: number) {
+    beginInlineSceneVideoPersistenceOperation();
+    try {
+      await runStoredInlineSceneVideoExclusive(async () => {
+        if (generation !== inlineSceneVideoGeneration) return;
+        await clearStoredInlineSceneVideo();
+      });
+    } catch (cause) {
+      disableInlineSceneVideoPersistence(cause);
+    } finally {
+      endInlineSceneVideoPersistenceOperation();
+    }
+  }
+
+  function invalidateInlineSceneVideoForNewStaticScene() {
+    suspendInlineSceneVideoForStaticChange();
+    removeInstalledInlineSceneVideo();
+    if (inlineSceneVideoPersistenceAvailable) {
+      void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
+    }
+  }
+
+  function inlineSceneVideoSourceIsCurrent(
+    generation: number,
+    request: InlineSceneVideoRequest,
+    key: string,
+    signal?: AbortSignal
+  ): boolean {
+    if (
+      signal?.aborted
+      || generation !== inlineSceneVideoGeneration
+      || !inlineScenesEnabled
+      || !inlineSceneMotionEnabled
+      || !inlineSceneCurrent
+      || !inlineSceneStoredEpochIsCurrent(request.source.epoch)
+    ) return false;
+    const liveRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
+    return Boolean(liveRequest && inlineSceneVideoRequestKey(liveRequest) === key);
+  }
+
+  async function restoreGeneratedInlineSceneVideo() {
+    const selectedRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
+    if (!selectedRequest) {
+      inlineSceneVideoPersistenceReady = true;
+      return;
+    }
+    const generation = inlineSceneVideoGeneration;
+    const key = inlineSceneVideoRequestKey(selectedRequest);
+    beginInlineSceneVideoPersistenceOperation();
+    try {
+      await restoreStoredInlineSceneVideo({
+        exclusive: runStoredInlineSceneVideoExclusive,
+        load: loadStoredInlineSceneVideo,
+        discardInvalid: clearStoredInlineSceneVideo,
+        isCurrent: () => inlineSceneVideoSourceIsCurrent(generation, selectedRequest, key),
+        accepts: (video) => video.requestKey === key,
+        install: installGeneratedInlineSceneVideo
+      });
+    } catch (cause) {
+      if (cause instanceof StoredInlineSceneVideoIntegrityError) {
+        inlineSceneVideoError = cause.message;
+      } else {
+        disableInlineSceneVideoPersistence(cause);
+      }
+    } finally {
+      endInlineSceneVideoPersistenceOperation();
+    }
+  }
+
+  async function loadInlineSceneVideoGenerator() {
+    if (inlineSceneVideoCapabilitiesLoading) return;
+    inlineSceneVideoCapabilitiesLoading = true;
+    inlineSceneVideoError = '';
+    try {
+      const response = await fetch(base + '/api/scene/video', { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : 'Inline-scene motion generator failed (' + response.status + ').';
+        throw new Error(detail);
+      }
+      inlineSceneVideoCapabilities = normalizeInlineSceneVideoCapabilities(payload);
+    } catch (cause) {
+      inlineSceneVideoCapabilities = null;
+      inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline-scene motion generator is unavailable.';
+    } finally {
+      inlineSceneVideoCapabilitiesLoading = false;
+    }
+  }
+
+  function scheduleInlineSceneVideoReconciliation(
+    scenesEnabled: boolean,
+    motionEnabled: boolean,
+    capabilities: InlineSceneVideoCapabilities | null,
+    persistenceReady: boolean,
+    persistenceAvailable: boolean,
+    sceneBusy: boolean,
+    videoBusy: boolean,
+    request: InlineSceneVideoRequest | null,
+    current: boolean
+  ) {
+    if (
+      !scenesEnabled
+      || !motionEnabled
+      || !capabilities
+      || !persistenceReady
+      || !persistenceAvailable
+      || sceneBusy
+      || videoBusy
+      || !request
+      || current
+    ) return;
+    const key = inlineSceneVideoRequestKey(request);
+    if (key === lastInlineSceneVideoAttemptKey) return;
+    lastInlineSceneVideoAttemptKey = key;
+    void generateInlineSceneVideo(request);
+  }
+
+  function inlineSceneVideoHeaderSha256(response: Response, name: string): string {
+    const value = response.headers.get(name) ?? '';
+    if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('Inline-scene motion response omitted ' + name + '.');
+    return value;
+  }
+
+  function inlineSceneVideoHeaderInteger(
+    response: Response,
+    name: string,
+    minimum: number,
+    maximum: number
+  ): number {
+    const value = Number(response.headers.get(name));
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+      throw new Error('Inline-scene motion response omitted ' + name + '.');
+    }
+    return value;
+  }
+
+  async function generateInlineSceneVideo(
+    selectedRequest: InlineSceneVideoRequest | null = inlineSceneVideoRequest
+  ) {
+    const selectedScene = generatedInlineScene;
+    if (
+      !selectedRequest
+      || !selectedScene
+      || !inlineScenesEnabled
+      || !inlineSceneMotionEnabled
+      || !inlineSceneVideoCapabilities
+      || inlineSceneBusy
+      || inlineSceneVideoBusy
+      || !inlineSceneVideoPersistenceReady
+      || !inlineSceneVideoPersistenceAvailable
+    ) return;
+    const key = inlineSceneVideoRequestKey(selectedRequest);
+    const generation = inlineSceneVideoGeneration;
+    if (!inlineSceneVideoSourceIsCurrent(generation, selectedRequest, key)) return;
+    lastInlineSceneVideoAttemptKey = key;
+    inlineSceneVideoBusy = true;
+    inlineSceneVideoError = '';
+    const activeController = new AbortController();
+    inlineSceneVideoController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, INLINE_SCENE_VIDEO_TIMEOUT_MS + 5_000);
+    try {
+      const form = new FormData();
+      form.append('request', JSON.stringify(selectedRequest));
+      form.append('image', selectedScene.image, 'scene.png');
+      const response = await fetch(base + '/api/scene/video', {
+        method: 'POST',
+        body: form,
+        signal: activeController.signal
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : 'Inline scene motion failed (' + response.status + ').';
+        throw new Error(detail);
+      }
+      const video = await response.blob();
+      if (video.type !== 'video/webm' || video.size < 4) {
+        throw new Error('Inline-scene motion generator returned an invalid video.');
+      }
+      const signature = new Uint8Array(await video.slice(0, 4).arrayBuffer());
+      if (
+        signature[0] !== 0x1a
+        || signature[1] !== 0x45
+        || signature[2] !== 0xdf
+        || signature[3] !== 0xa3
+      ) throw new Error('Inline-scene motion generator returned an invalid WebM signature.');
+      const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
+      const mode = response.headers.get('x-mullet-video-mode') ?? '';
+      const sourcePromptId = response.headers.get('x-mullet-source-prompt-id') ?? '';
+      const sourceRequestSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-source-request-sha256');
+      const inputImageSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-input-sha256');
+      if (
+        modelTemplate !== selectedRequest.modelTemplate
+        || mode !== selectedRequest.mode
+        || sourcePromptId !== selectedRequest.source.scenePromptId
+        || sourceRequestSha256 !== inlineSceneVideoSourceRequestSha256(selectedRequest)
+        || inputImageSha256 !== selectedRequest.source.sceneImageSha256
+      ) throw new Error('Inline-scene motion response provenance does not match its static scene.');
+      const videoSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-video-sha256');
+      if (await blobSha256(video) !== videoSha256) {
+        throw new Error('Inline-scene motion response hash does not match its video.');
+      }
+      const stored = normalizeStoredInlineSceneVideo({
+        spec: STORED_INLINE_SCENE_VIDEO_SPEC,
+        conversationId: selectedRequest.source.conversationId,
+        epoch: selectedRequest.source.epoch,
+        requestKey: key,
+        request: selectedRequest,
+        modelTemplate,
+        mode,
+        promptId: response.headers.get('x-mullet-prompt-id') ?? '',
+        seed: inlineSceneVideoHeaderInteger(response, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER),
+        width: inlineSceneVideoHeaderInteger(response, 'x-mullet-width', 16, 8192),
+        height: inlineSceneVideoHeaderInteger(response, 'x-mullet-height', 16, 8192),
+        frames: inlineSceneVideoHeaderInteger(response, 'x-mullet-frames', 1, 10_000),
+        fps: inlineSceneVideoHeaderInteger(response, 'x-mullet-fps', 1, 1_000),
+        durationSeconds: inlineSceneVideoHeaderInteger(response, 'x-mullet-duration-seconds', 1, 3_600),
+        generatedAt: Date.now(),
+        inputImageSha256,
+        videoSha256,
+        video
+      });
+      await commitStoredInlineSceneVideo(stored, {
+        exclusive: runStoredInlineSceneVideoExclusive,
+        save: saveStoredInlineSceneVideo,
+        rollback: rollbackStoredInlineSceneVideoWrite,
+        isCurrent: () => inlineSceneVideoSourceIsCurrent(
+          generation,
+          selectedRequest,
+          key,
+          activeController.signal
+        ),
+        install: installGeneratedInlineSceneVideo
+      });
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        if (timedOut) {
+          inlineSceneVideoError = 'Inline scene motion timed out after '
+            + (INLINE_SCENE_VIDEO_TIMEOUT_MS + 5_000) / 1000
+            + ' seconds.';
+        }
+      } else {
+        inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline scene motion failed.';
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (inlineSceneVideoController === activeController) {
+        inlineSceneVideoBusy = false;
+        inlineSceneVideoController = null;
+      }
+    }
+  }
+
+  function persistInlineSceneMotionEnabled() {
+    if (!inlineSceneVideoPersistenceReady || !inlineSceneVideoPersistenceAvailable) {
+      inlineSceneMotionEnabled = false;
+    }
+    localStorage.setItem(inlineSceneMotionEnabledStorageKey, String(inlineSceneMotionEnabled));
+    inlineSceneVideoError = '';
+    lastInlineSceneVideoAttemptKey = '';
+    if (!inlineSceneMotionEnabled) {
+      inlineSceneVideoGeneration += 1;
+      inlineSceneVideoController?.abort();
+      inlineSceneVideoController = null;
+      inlineSceneVideoBusy = false;
+    }
+  }
+
+  function handleInlineSceneVideoDecodeError() {
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
+    inlineSceneVideoController = null;
+    inlineSceneVideoBusy = false;
+    inlineSceneVideoError = 'The generated scene motion could not be decoded; showing the static scene.';
+    lastInlineSceneVideoAttemptKey = '';
+    removeInstalledInlineSceneVideo();
+    if (inlineSceneVideoPersistenceAvailable) {
+      void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
+    }
+  }
+
   async function loadInlineSceneGenerator() {
     if (inlineSceneCapabilitiesLoading) return;
     inlineSceneCapabilitiesLoading = true;
@@ -936,6 +1269,7 @@
       || !inlineScenePersistenceReady
       || !inlineScenePersistenceAvailable
     ) return;
+    suspendInlineSceneVideoForStaticChange();
     const generation = inlineSceneGeneration;
     const epoch = inlineSceneEpoch;
     const selectedLoraDescriptor = inlineSceneLoraDescriptor(inlineSceneCapabilities, selectedLora);
@@ -1054,6 +1388,10 @@
       inlineSceneController?.abort();
       inlineSceneController = null;
       inlineSceneBusy = false;
+      inlineSceneVideoGeneration += 1;
+      inlineSceneVideoController?.abort();
+      inlineSceneVideoController = null;
+      inlineSceneVideoBusy = false;
     }
   }
 
@@ -1066,6 +1404,7 @@
     inlineSceneBusy = false;
     inlineSceneError = '';
     lastInlineSceneAttemptKey = '';
+    invalidateInlineSceneVideoForNewStaticScene();
     removeInstalledInlineScene();
     finalizedInlineSceneSource = source;
     inlineSceneEpoch = epoch;
@@ -1082,7 +1421,24 @@
     finalizedInlineSceneSource = null;
     inlineSceneEpoch = '';
     localStorage.removeItem(inlineSceneFinalizedStorageKey);
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
+    inlineSceneVideoController = null;
+    inlineSceneVideoBusy = false;
+    inlineSceneVideoError = '';
+    lastInlineSceneVideoAttemptKey = '';
+    removeInstalledInlineSceneVideo();
     removeInstalledInlineScene();
+    if (inlineSceneVideoPersistenceAvailable) {
+      beginInlineSceneVideoPersistenceOperation();
+      try {
+        await runStoredInlineSceneVideoExclusive(clearStoredInlineSceneVideo);
+      } catch (cause) {
+        disableInlineSceneVideoPersistence(cause);
+      } finally {
+        endInlineSceneVideoPersistenceOperation();
+      }
+    }
     if (!inlineScenePersistenceAvailable) return;
     beginInlineScenePersistenceOperation();
     try {
