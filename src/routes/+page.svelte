@@ -29,6 +29,31 @@
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
   import {
+    LIVING_HISTORY_INTERVAL_MESSAGES,
+    LIVING_HISTORY_TIMEOUT_MS,
+    buildLivingHistoryRequest,
+    livingHistoryLorebook,
+    livingHistoryRequestKey,
+    livingHistoryResultAppliesToMessages,
+    livingHistoryResultMatchesMessages,
+    livingHistoryResultMatchesRequest,
+    livingHistorySourceForMessages,
+    livingHistorySourceMatchesMessages,
+    livingHistorySourcesMatch,
+    normalizeLivingHistoryResult,
+    normalizeLivingHistorySource,
+    type LivingHistoryRequest,
+    type LivingHistoryResult,
+    type LivingHistorySource
+  } from '$lib/living-history';
+  import {
+    clearStoredLivingHistory,
+    clearStoredLivingHistoryIfResult,
+    commitLivingHistoryResult,
+    loadStoredLivingHistory,
+    saveStoredLivingHistory
+  } from '$lib/living-history-storage';
+  import {
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
     normalizePortraitCapabilities,
@@ -116,6 +141,20 @@
   let lorePersistenceBusy = false;
   let lorePersistenceAvailable = true;
   let loreTimedState: LoreTimedState = emptyLoreTimedState();
+  let livingHistoryEnabled = false;
+  let livingHistoryResult: LivingHistoryResult | null = null;
+  let livingHistoryBook: ImportedLorebook | null = null;
+  let livingHistoryApplicable = false;
+  let livingHistoryCurrent = false;
+  let livingHistoryRequest: LivingHistoryRequest | null = null;
+  let livingHistoryBoundaries: LivingHistorySource[] = [];
+  let livingHistoryPendingMessages = 0;
+  let livingHistoryPersistenceReady = false;
+  let livingHistoryPersistenceAvailable = true;
+  let livingHistoryBusy = false;
+  let livingHistoryError = '';
+  let lastLivingHistoryAttemptKey = '';
+  let livingHistoryController: AbortController | null = null;
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let selectedScenarioId = '';
@@ -147,6 +186,8 @@
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
   const personaDescriptionStorageKey = 'mullet.persona-description';
   const loreTimedStateStorageKey = 'mullet.lore-timed-state';
+  const livingHistoryEnabledStorageKey = 'mullet.living-history-enabled';
+  const livingHistoryBoundariesStorageKey = 'mullet.living-history-finalized-boundaries';
   const conversationIdStorageKey = 'mullet.conversation-id';
   const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
   const portraitSubjectStorageKey = 'mullet.portrait-subject';
@@ -157,7 +198,29 @@
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
-  $: activeLorebooks = combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard));
+  $: livingHistoryApplicable = Boolean(
+    livingHistoryResult
+    && livingHistoryResultAppliesToMessages(livingHistoryResult, conversationId, messages)
+  );
+  $: livingHistoryCurrent = Boolean(
+    livingHistoryResult
+    && livingHistoryResultMatchesMessages(livingHistoryResult, conversationId, messages)
+  );
+  $: livingHistoryRequest = currentLivingHistoryRequest(
+    conversationId,
+    messages,
+    livingHistoryResult,
+    livingHistoryBoundaries
+  );
+  $: livingHistoryPendingMessages = livingHistoryRequest?.turns.length
+    ?? livingHistoryBoundaries.filter((boundary) => boundary.messageCount > (livingHistoryResult?.source.messageCount ?? 0)).length * 2;
+  $: livingHistoryBook = livingHistoryEnabled && livingHistoryResult && livingHistoryApplicable
+    ? livingHistoryLorebook(livingHistoryResult)
+    : null;
+  $: activeLorebooks = [
+    ...combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard)),
+    ...(livingHistoryBook ? [livingHistoryBook] : [])
+  ];
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
   $: expressionSnapshot = currentExpressionSnapshot(conversationId, messages);
   $: expressionResult = sidecarState?.channels.expression ?? null;
@@ -181,6 +244,15 @@
     portraitBusy,
     portraitRequest,
     portraitCurrent
+  );
+  $: scheduleLivingHistoryReconciliation(
+    livingHistoryEnabled,
+    livingHistoryPersistenceReady,
+    livingHistoryPersistenceAvailable,
+    streaming,
+    livingHistoryBusy,
+    livingHistoryRequest,
+    livingHistoryPendingMessages
   );
 
   const starters = [
@@ -244,6 +316,9 @@
     const savedConversationId = localStorage.getItem(conversationIdStorageKey);
     conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
+    livingHistoryEnabled = localStorage.getItem(livingHistoryEnabledStorageKey) === 'true';
+    restoreLivingHistoryBoundaries();
+    void restoreLivingHistory();
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     restorePortraitSettings();
@@ -254,6 +329,7 @@
   });
 
   onDestroy(() => {
+    livingHistoryController?.abort();
     portraitController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
   });
@@ -462,6 +538,232 @@
     }
   }
 
+  function currentLivingHistoryRequest(
+    currentConversationId: string,
+    currentMessages: readonly Message[],
+    currentResult: LivingHistoryResult | null,
+    boundaries: readonly LivingHistorySource[]
+  ): LivingHistoryRequest | null {
+    if (!currentConversationId || boundaries.length === 0) return null;
+    const applicableResult = currentResult && livingHistoryResultAppliesToMessages(currentResult, currentConversationId, currentMessages)
+      ? currentResult
+      : null;
+    if (currentResult && !applicableResult) return null;
+    const previousCount = applicableResult?.source.messageCount ?? 0;
+    const pending = boundaries.filter((boundary) => boundary.messageCount > previousCount);
+    if (pending.length === 0) return null;
+    try {
+      return buildLivingHistoryRequest(currentConversationId, currentMessages, applicableResult, pending);
+    } catch {
+      return null;
+    }
+  }
+
+  function persistLivingHistoryBoundaries() {
+    if (!browser) return;
+    if (livingHistoryBoundaries.length) {
+      localStorage.setItem(livingHistoryBoundariesStorageKey, JSON.stringify(livingHistoryBoundaries));
+    } else {
+      localStorage.removeItem(livingHistoryBoundariesStorageKey);
+    }
+  }
+
+  function restoreLivingHistoryBoundaries() {
+    const saved = localStorage.getItem(livingHistoryBoundariesStorageKey);
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed) || parsed.length > 500) throw new Error('invalid finalized boundary list');
+      const normalized = parsed.map((boundary) => normalizeLivingHistorySource(boundary));
+      normalized.forEach((boundary, index) => {
+        if (
+          boundary.conversationId !== conversationId
+          || (index > 0 && boundary.messageCount <= normalized[index - 1].messageCount)
+          || !livingHistorySourceMatchesMessages(boundary, conversationId, messages)
+        ) throw new Error('finalized boundary does not match this conversation');
+      });
+      livingHistoryBoundaries = normalized;
+    } catch {
+      livingHistoryBoundaries = [];
+      localStorage.removeItem(livingHistoryBoundariesStorageKey);
+    }
+  }
+
+  function disableLivingHistoryPersistence(cause: unknown) {
+    livingHistoryController?.abort();
+    livingHistoryPersistenceAvailable = false;
+    livingHistoryEnabled = false;
+    if (browser) localStorage.setItem(livingHistoryEnabledStorageKey, 'false');
+    livingHistoryError = cause instanceof Error ? cause.message : 'Living-history persistence failed.';
+  }
+
+  async function restoreLivingHistory() {
+    try {
+      const stored = await loadStoredLivingHistory();
+      if (stored) {
+        const normalized = normalizeLivingHistoryResult(stored);
+        if (livingHistoryResultAppliesToMessages(normalized, conversationId, messages)) {
+          livingHistoryResult = normalized;
+          livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > normalized.source.messageCount);
+          persistLivingHistoryBoundaries();
+        } else {
+          await clearStoredLivingHistory();
+        }
+      }
+    } catch (cause) {
+      disableLivingHistoryPersistence(cause);
+    } finally {
+      livingHistoryPersistenceReady = true;
+    }
+  }
+
+  function recordFinalizedLivingHistoryBoundary() {
+    try {
+      const source = livingHistorySourceForMessages(conversationId, messages);
+      if (!livingHistoryBoundaries.some((boundary) => livingHistorySourcesMatch(boundary, source))) {
+        livingHistoryBoundaries = [...livingHistoryBoundaries, source].slice(-500);
+        persistLivingHistoryBoundaries();
+      }
+      lastLivingHistoryAttemptKey = '';
+    } catch {
+      // Only completed, non-empty user-assistant pairs reach this function.
+    }
+  }
+
+  function scheduleLivingHistoryReconciliation(
+    enabled: boolean,
+    persistenceReady: boolean,
+    persistenceAvailable: boolean,
+    isStreaming: boolean,
+    busy: boolean,
+    request: LivingHistoryRequest | null,
+    pendingMessages: number
+  ) {
+    if (
+      !enabled
+      || !persistenceReady
+      || !persistenceAvailable
+      || isStreaming
+      || busy
+      || !request
+      || pendingMessages < LIVING_HISTORY_INTERVAL_MESSAGES
+    ) return;
+    const key = livingHistoryRequestKey(request);
+    if (key === lastLivingHistoryAttemptKey) return;
+    lastLivingHistoryAttemptKey = key;
+    void updateLivingHistory(request);
+  }
+
+  function persistLivingHistoryEnabled() {
+    if (!livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable) livingHistoryEnabled = false;
+    if (livingHistoryEnabled && importedLorebooks.length >= 20) {
+      livingHistoryEnabled = false;
+      livingHistoryError = 'Living history reserves one supplemental lorebook slot; remove one of the 20 imported lorebooks first.';
+    } else {
+      livingHistoryError = '';
+    }
+    localStorage.setItem(livingHistoryEnabledStorageKey, String(livingHistoryEnabled));
+    lastLivingHistoryAttemptKey = '';
+    if (!livingHistoryEnabled) livingHistoryController?.abort();
+  }
+
+  async function updateLivingHistory(selectedRequest: LivingHistoryRequest | null = livingHistoryRequest) {
+    if (
+      !selectedRequest
+      || !livingHistoryEnabled
+      || streaming
+      || livingHistoryBusy
+      || !livingHistoryPersistenceReady
+      || !livingHistoryPersistenceAvailable
+    ) return;
+    lastLivingHistoryAttemptKey = livingHistoryRequestKey(selectedRequest);
+    livingHistoryBusy = true;
+    livingHistoryError = '';
+    const activeController = new AbortController();
+    livingHistoryController = activeController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      activeController.abort();
+    }, LIVING_HISTORY_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${base}/api/sidecar/history`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(selectedRequest),
+        signal: activeController.signal
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = payload && typeof payload.message === 'string'
+          ? payload.message
+          : `Living-history sidecar failed (${response.status}).`;
+        throw new Error(detail);
+      }
+      const result = normalizeLivingHistoryResult(payload);
+      if (!livingHistoryResultMatchesRequest(result, selectedRequest)) {
+        throw new Error('Living-history sidecar returned a mismatched source snapshot.');
+      }
+      const isCurrent = () => {
+        const liveRequest = currentLivingHistoryRequest(conversationId, messages, livingHistoryResult, livingHistoryBoundaries);
+        return livingHistoryEnabled
+          && Boolean(liveRequest && livingHistoryRequestKey(liveRequest) === livingHistoryRequestKey(selectedRequest));
+      };
+      try {
+        await commitLivingHistoryResult(result, {
+          save: saveStoredLivingHistory,
+          isCurrent,
+          discard: clearStoredLivingHistoryIfResult,
+          install: (current) => {
+            livingHistoryResult = current;
+            livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > current.source.messageCount);
+            persistLivingHistoryBoundaries();
+          }
+        });
+      } catch (cause) {
+        disableLivingHistoryPersistence(cause);
+      }
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        if (timedOut) livingHistoryError = `Living-history sidecar timed out after ${LIVING_HISTORY_TIMEOUT_MS / 1000} seconds.`;
+      } else {
+        livingHistoryError = cause instanceof Error ? cause.message : 'Living-history sidecar failed.';
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (livingHistoryController === activeController) {
+        livingHistoryBusy = false;
+        livingHistoryController = null;
+      }
+    }
+  }
+
+  async function clearLivingHistory() {
+    livingHistoryController?.abort();
+    livingHistoryResult = null;
+    livingHistoryBoundaries = [];
+    livingHistoryError = '';
+    lastLivingHistoryAttemptKey = '';
+    persistLivingHistoryBoundaries();
+    try {
+      await clearStoredLivingHistory();
+    } catch (cause) {
+      disableLivingHistoryPersistence(cause);
+    }
+  }
+
+  function livingHistoryStatusText(): string {
+    if (livingHistoryBusy) return 'Updating continuity…';
+    if (livingHistoryResult && !livingHistoryApplicable) return 'Stored history does not match this transcript.';
+    if (livingHistoryCurrent) return `Current · revision ${livingHistoryResult?.output.revision ?? 0}`;
+    if (livingHistoryPendingMessages >= LIVING_HISTORY_INTERVAL_MESSAGES) return `${livingHistoryPendingMessages} finalized messages ready to summarize.`;
+    if (livingHistoryPendingMessages > 0) {
+      return `${LIVING_HISTORY_INTERVAL_MESSAGES - livingHistoryPendingMessages} finalized messages until automatic update.`;
+    }
+    if (livingHistoryResult) return `Current through ${livingHistoryResult.source.messageCount} canonical messages.`;
+    return 'No finalized history yet.';
+  }
+
   function expressionSnapshotKey(snapshot: ExpressionSidecarRequest): string {
     return [
       snapshot.source.conversationId,
@@ -514,10 +816,13 @@
 
   async function resetSidecarForConversation() {
     sidecarController?.abort();
+    livingHistoryController?.abort();
     lastExpressionAttemptKey = '';
+    lastLivingHistoryAttemptKey = '';
     conversationId = crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
     await resetPortraitForConversation();
+    await clearLivingHistory();
     sidecarState = emptySidecarState(conversationId);
     sidecarError = '';
     if (!sidecarPersistenceAvailable) return;
@@ -843,7 +1148,12 @@
       const nextBooks = sameNameIndex >= 0
         ? importedLorebooks.map((book, index) => index === sameNameIndex ? imported : book)
         : [...importedLorebooks, imported];
-      if (nextBooks.length > 20) throw new Error('At most 20 imported lorebooks can be active.');
+      const maximumImported = livingHistoryEnabled ? 19 : 20;
+      if (nextBooks.length > maximumImported) {
+        throw new Error(livingHistoryEnabled
+          ? 'Living history reserves one slot; at most 19 imported lorebooks can be active while it is on.'
+          : 'At most 20 imported lorebooks can be active.');
+      }
       validateActiveLorebookSize(nextBooks);
       await saveStoredLorebooks(storedLorebooks(nextBooks));
       importedLorebooks = nextBooks;
@@ -934,22 +1244,19 @@
     const content = draft.trim();
     if (!content || streaming || !lorePersistenceReady) return;
 
-    sidecarController?.abort();
-    portraitController?.abort();
-    errorMessage = '';
-    noticeMessage = '';
-    lastLoreActivations = null;
-    lastLoreBudget = 0;
-    draft = '';
-    messages = [...messages, { role: 'user', content }, { role: 'assistant', content: '' }];
-    streaming = true;
-    controller = new AbortController();
-    let completedResponse = false;
-    await scrollToLatest();
-
+    const outboundMessages = [...messages, { role: 'user' as const, content }];
+    const supplementalLorebooks = [
+      ...importedLorebooks,
+      ...(livingHistoryBook ? [livingHistoryBook] : [])
+    ];
+    if (supplementalLorebooks.length > 20) {
+      errorMessage = 'At most 20 supplemental lorebooks can be active; turn off living history or remove an imported lorebook.';
+      return;
+    }
+    let requestBody: string;
     try {
-      const requestBody = serializeChatRequest({
-        messages: messages.slice(0, -1),
+      requestBody = serializeChatRequest({
+        messages: outboundMessages,
         maxTokens: tokenLimit,
         characterCard: activeCard?.raw ?? null,
         userName: 'You',
@@ -959,10 +1266,30 @@
         loreTimedState,
         loreEnabled,
         lorebooks: loreEnabled
-          ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
+          ? supplementalLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
           : [],
         lorebookSettings: loreSettings
       });
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Chat request could not be prepared.';
+      return;
+    }
+
+    sidecarController?.abort();
+    livingHistoryController?.abort();
+    portraitController?.abort();
+    errorMessage = '';
+    noticeMessage = '';
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
+    draft = '';
+    messages = [...outboundMessages, { role: 'assistant', content: '' }];
+    streaming = true;
+    controller = new AbortController();
+    let completedResponse = false;
+    await scrollToLatest();
+
+    try {
       const response = await fetch(`${base}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -987,6 +1314,7 @@
       const decoder = new TextDecoder();
       let buffer = '';
       let hitTokenLimit = false;
+      let terminalEventSeen = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -999,13 +1327,18 @@
           const line = rawLine.trim();
           if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
-          if (!payload || payload === '[DONE]') continue;
+          if (!payload) continue;
+          if (payload === '[DONE]') {
+            terminalEventSeen = true;
+            continue;
+          }
           const event = JSON.parse(payload);
           if (event?.mullet?.loreTimedState !== undefined) {
             loreTimedState = normalizeLoreTimedState(event.mullet.loreTimedState);
             persistLoreTimedState();
             continue;
           }
+          if (typeof event?.choices?.[0]?.finish_reason === 'string') terminalEventSeen = true;
           if (event?.choices?.[0]?.finish_reason === 'length') hitTokenLimit = true;
           const token = event?.choices?.[0]?.delta?.content;
           if (typeof token !== 'string' || token.length === 0) continue;
@@ -1018,6 +1351,8 @@
         }
       }
 
+      if (!terminalEventSeen) throw new Error('The local model stream ended without a terminal event.');
+      if (messages.at(-1)?.content.trim().length === 0) throw new Error('The local model returned an empty response.');
       persist();
       completedResponse = true;
       if (hitTokenLimit) noticeMessage = `Stopped at the ${tokenLimit}-token response limit.`;
@@ -1032,6 +1367,7 @@
     } finally {
       streaming = false;
       controller = null;
+      if (completedResponse) recordFinalizedLivingHistoryBoundary();
       await scrollToLatest();
     }
   }
@@ -1058,7 +1394,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || sidecarBusy || portraitBusy} class="dot"></span>
+      <span class:live={streaming || sidecarBusy || portraitBusy || livingHistoryBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
@@ -1229,6 +1565,45 @@
             <input type="checkbox" bind:checked={loreEnabled} on:change={persistLoreEnabled} disabled={streaming} />
             <span>{loreEnabled ? 'On' : 'Off'}</span>
           </label>
+        </div>
+
+        <div class="history-panel" aria-label="Living history">
+          <div class="history-heading">
+            <div>
+              <span class="eyebrow">Living history</span>
+              <strong>{livingHistoryResult ? `Revision ${livingHistoryResult.output.revision}` : 'Session continuity'}</strong>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                bind:checked={livingHistoryEnabled}
+                on:change={persistLivingHistoryEnabled}
+                disabled={streaming || !livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable}
+              />
+              <span>{livingHistoryEnabled ? 'On' : 'Off'}</span>
+            </label>
+          </div>
+          <small>{livingHistoryStatusText()}</small>
+          {#if livingHistoryResult}
+            <details>
+              <summary>Continuity preview</summary>
+              <p>{livingHistoryResult.output.summary}</p>
+            </details>
+          {/if}
+          {#if livingHistoryError}<div class="sidecar-error" role="alert">{livingHistoryError}</div>{/if}
+          <div class="history-actions">
+            <button
+              on:click={() => void updateLivingHistory()}
+              disabled={streaming || livingHistoryBusy || !livingHistoryEnabled || !livingHistoryRequest || !livingHistoryPersistenceAvailable}
+            >
+              {livingHistoryBusy ? 'Updating…' : 'Update now'}
+            </button>
+            <button
+              on:click={() => void clearLivingHistory()}
+              disabled={streaming || livingHistoryBusy || (!livingHistoryResult && livingHistoryBoundaries.length === 0)}
+            >Clear</button>
+          </div>
+          <small>200-word target · every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>
         </div>
 
         {#if activeLorebooks.length}
@@ -1463,6 +1838,18 @@
   .lore-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .lore-heading > div { display: grid; gap: 4px; }
   .lore-heading strong { color: #d7d0c7; font-size: 12px; }
+  .history-panel { display: grid; gap: 7px; padding: 10px; border: 1px solid #3b463b; border-radius: 9px; background: #171c18; }
+  .history-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .history-heading > div { min-width: 0; display: grid; gap: 3px; }
+  .history-heading strong { overflow: hidden; color: #c4d4c5; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .history-panel > small { color: #829184; font-size: 9px; line-height: 1.4; }
+  .history-panel details { color: #8f9d91; font-size: 9px; }
+  .history-panel summary { cursor: pointer; }
+  .history-panel p { max-height: 12em; overflow-y: auto; margin: 7px 0 0; color: #b9c4ba; line-height: 1.5; white-space: pre-wrap; }
+  .history-actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+  .history-actions button { padding: 7px 9px; border: 1px solid #49614d; border-radius: 7px; color: #b6d3ba; background: #19221b; font-size: 9px; font-weight: 700; cursor: pointer; }
+  .history-actions button:last-child { border-color: #4a4239; color: #a99f95; background: #1b1815; }
+  .history-actions button:disabled { opacity: .4; cursor: default; }
   .toggle { display: flex; align-items: center; gap: 5px; color: #91887e; font-size: 10px; cursor: pointer; }
   .toggle input, .check-row input { accent-color: #dca35f; }
   .lore-list { display: grid; gap: 6px; }
