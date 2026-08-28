@@ -1,0 +1,275 @@
+<script lang="ts">
+  import { base } from '$app/paths';
+  import { browser } from '$app/environment';
+  import { onMount, tick } from 'svelte';
+  import type { PageData } from './$types';
+
+  type Role = 'user' | 'assistant';
+  type Message = { role: Role; content: string };
+
+  export let data: PageData;
+
+  let messages: Message[] = [];
+  let draft = '';
+  let streaming = false;
+  let errorMessage = '';
+  let controller: AbortController | null = null;
+  let transcript: HTMLDivElement;
+
+  const starters = [
+    'Write the opening beat of a tense science-fiction scene.',
+    'Help me develop a character with a dangerous secret.',
+    'Continue a conversation aboard a damaged starship.'
+  ];
+
+  onMount(() => {
+    const saved = localStorage.getItem('mullet.checkpoint-one.messages');
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) messages = parsed;
+    } catch {
+      localStorage.removeItem('mullet.checkpoint-one.messages');
+    }
+  });
+
+  function persist() {
+    if (browser) localStorage.setItem('mullet.checkpoint-one.messages', JSON.stringify(messages));
+  }
+
+  async function scrollToLatest() {
+    await tick();
+    transcript?.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
+  }
+
+  function chooseStarter(text: string) {
+    draft = text;
+  }
+
+  function clearConversation() {
+    if (streaming) return;
+    messages = [];
+    errorMessage = '';
+    persist();
+  }
+
+  function stop() {
+    controller?.abort();
+  }
+
+  async function send() {
+    const content = draft.trim();
+    if (!content || streaming) return;
+
+    errorMessage = '';
+    draft = '';
+    messages = [...messages, { role: 'user', content }, { role: 'assistant', content: '' }];
+    streaming = true;
+    controller = new AbortController();
+    await scrollToLatest();
+
+    try {
+      const response = await fetch(`${base}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: messages.slice(0, -1) }),
+        signal: controller.signal
+      });
+
+      if (!response.ok || !response.body) {
+        const detail = await response.text();
+        throw new Error(detail || `Request failed (${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          const event = JSON.parse(payload);
+          const token = event?.choices?.[0]?.delta?.content;
+          if (typeof token !== 'string' || token.length === 0) continue;
+          const last = messages.at(-1);
+          if (last?.role === 'assistant') {
+            last.content += token;
+            messages = [...messages];
+            await scrollToLatest();
+          }
+        }
+      }
+
+      persist();
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') {
+        errorMessage = 'Generation stopped.';
+      } else {
+        errorMessage = cause instanceof Error ? cause.message : 'Generation failed.';
+      }
+      if (messages.at(-1)?.content === '') messages = messages.slice(0, -1);
+      persist();
+    } finally {
+      streaming = false;
+      controller = null;
+      await scrollToLatest();
+    }
+  }
+
+  function composerKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void send();
+    }
+  }
+</script>
+
+<svelte:head>
+  <title>MULLET · Local scenario workbench</title>
+</svelte:head>
+
+<div class="shell">
+  <header>
+    <div class="brand">
+      <span class="mark">M</span>
+      <div>
+        <h1>MULLET</h1>
+        <p>Multimodal Universe, Lore, LoRAs, Expressions &amp; Timeline</p>
+      </div>
+    </div>
+    <div class="runtime" aria-label="Active runtime">
+      <span class:live={streaming} class="dot"></span>
+      <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="portrait"><span>Portrait sidecar<br />arrives later</span></div>
+      <div class="scenario">
+        <span class="eyebrow">Active scenario</span>
+        <strong>Open conversation</strong>
+        <p>Checkpoint one connects directly to the selected local model. Character cards and lore follow next.</p>
+      </div>
+      <button class="clear" on:click={clearConversation} disabled={streaming || messages.length === 0}>Clear conversation</button>
+    </aside>
+
+    <section class="chat" aria-label="Conversation">
+      <div class="transcript" bind:this={transcript} aria-live="polite">
+        {#if messages.length === 0}
+          <div class="empty">
+            <span class="eyebrow">Real local model · clean channel</span>
+            <h2>Start the story.</h2>
+            <p>This first playable build sends an ordinary role-based conversation through the model server’s native chat template.</p>
+            <div class="starters">
+              {#each starters as starter}
+                <button on:click={() => chooseStarter(starter)}>{starter}</button>
+              {/each}
+            </div>
+          </div>
+        {:else}
+          {#each messages as message}
+            <article class:assistant={message.role === 'assistant'}>
+              <span class="speaker">{message.role === 'user' ? 'You' : data.model}</span>
+              <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
+            </article>
+          {/each}
+        {/if}
+      </div>
+
+      <div class="composer-wrap">
+        {#if errorMessage}<div class="error" role="alert">{errorMessage}</div>{/if}
+        <div class="composer">
+          <textarea
+            bind:value={draft}
+            on:keydown={composerKeydown}
+            placeholder="Write the next turn…"
+            rows="2"
+            disabled={streaming}
+            aria-label="Message"
+          ></textarea>
+          {#if streaming}
+            <button class="stop" on:click={stop}>Stop</button>
+          {:else}
+            <button class="send" on:click={send} disabled={!draft.trim()}>Send</button>
+          {/if}
+        </div>
+        <small>Enter sends · Shift+Enter adds a line</small>
+      </div>
+    </section>
+  </main>
+</div>
+
+<style>
+  :global(*) { box-sizing: border-box; }
+  :global(html) { background: #11100f; color: #eee9df; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  :global(body) { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 70% -20%, #3a3026 0, transparent 38%), #11100f; }
+  :global(button), :global(textarea) { font: inherit; }
+  .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+  header { height: 74px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid #39342e; background: rgba(17,16,15,.9); backdrop-filter: blur(14px); }
+  .brand { display: flex; align-items: center; gap: 13px; }
+  .mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #19130d; background: #e7aa61; font: 800 21px/1 Georgia, serif; box-shadow: 0 0 32px rgba(231,170,97,.18); }
+  h1 { font: 700 18px/1.05 Georgia, serif; letter-spacing: .18em; margin: 0; }
+  .brand p { margin: 5px 0 0; color: #8f877d; font-size: 11px; }
+  .runtime { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border: 1px solid #3a352f; border-radius: 10px; background: #181614; }
+  .runtime div { display: grid; }
+  .runtime strong { font-size: 12px; font-weight: 650; }
+  .runtime small { color: #817a72; font-family: ui-monospace, monospace; font-size: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #6ebc84; box-shadow: 0 0 10px rgba(110,188,132,.55); }
+  .dot.live { background: #e7aa61; animation: pulse 1s infinite alternate; }
+  main { min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
+  aside { min-height: 0; padding: 22px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid #302c28; background: rgba(15,14,13,.55); }
+  .portrait { aspect-ratio: 3 / 4; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
+  .scenario { padding: 2px 3px; }
+  .scenario strong { display: block; margin: 7px 0; font-family: Georgia, serif; font-size: 17px; }
+  .scenario p { margin: 0; color: #968e84; font-size: 12px; line-height: 1.55; }
+  .eyebrow { color: #d69d5a; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .clear { margin-top: auto; padding: 10px; border: 1px solid #3c3731; border-radius: 9px; color: #a9a097; background: transparent; cursor: pointer; }
+  .clear:hover:not(:disabled) { border-color: #6a5f53; color: #e8e0d7; }
+  .clear:disabled { opacity: .35; cursor: default; }
+  .chat { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; }
+  .transcript { overflow-y: auto; padding: 32px clamp(24px, 7vw, 110px); }
+  .empty { max-width: 720px; margin: 12vh auto 0; }
+  .empty h2 { margin: 12px 0 8px; font: 500 clamp(34px, 5vw, 64px)/1 Georgia, serif; letter-spacing: -.025em; }
+  .empty > p { max-width: 600px; color: #9a9187; line-height: 1.65; }
+  .starters { display: grid; gap: 9px; margin-top: 28px; }
+  .starters button { padding: 13px 16px; border: 1px solid #3c3731; border-radius: 10px; color: #c8c0b6; background: rgba(28,25,22,.7); text-align: left; cursor: pointer; }
+  .starters button:hover { border-color: #a1784c; color: #fff4e6; transform: translateX(2px); }
+  article { max-width: 840px; margin: 0 auto 30px; }
+  .speaker { display: block; margin-bottom: 8px; color: #c98e4f; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+  article.assistant .speaker { color: #7db68d; }
+  .content { color: #e8e2d9; font: 16px/1.72 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cursor { color: #e7aa61; animation: pulse .55s infinite alternate; }
+  .composer-wrap { padding: 12px clamp(24px, 7vw, 110px) 20px; background: linear-gradient(transparent, #11100f 18%); }
+  .composer { max-width: 840px; margin: 0 auto; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 12px; padding: 12px; border: 1px solid #484139; border-radius: 15px; background: #1b1815; box-shadow: 0 16px 50px rgba(0,0,0,.32); }
+  textarea { width: 100%; min-height: 50px; max-height: 180px; resize: vertical; border: 0; outline: 0; padding: 10px; color: #f0e9e0; background: transparent; line-height: 1.45; }
+  textarea::placeholder { color: #70685f; }
+  .send, .stop { min-width: 74px; height: 42px; border: 0; border-radius: 10px; font-weight: 750; cursor: pointer; }
+  .send { color: #1b130b; background: #e7aa61; }
+  .send:hover:not(:disabled) { background: #f1b976; }
+  .send:disabled { opacity: .35; cursor: default; }
+  .stop { color: #f0ddd5; background: #7b4036; }
+  .composer-wrap > small { display: block; max-width: 840px; margin: 7px auto 0; color: #686159; text-align: right; font-size: 10px; }
+  .error { max-width: 840px; margin: 0 auto 8px; padding: 9px 12px; border: 1px solid #7b4036; border-radius: 9px; color: #f0c8bd; background: #321d19; font-size: 12px; white-space: pre-wrap; }
+  @keyframes pulse { to { opacity: .35; } }
+  @media (max-width: 760px) {
+    header { height: 66px; padding: 0 14px; }
+    .brand p { display: none; }
+    .runtime strong { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+    main { grid-template-columns: 1fr; }
+    aside { display: none; }
+    .transcript { padding: 24px 18px; }
+    .composer-wrap { padding: 10px 12px 14px; }
+    .empty { margin-top: 8vh; }
+  }
+</style>
+
