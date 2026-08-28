@@ -9,7 +9,7 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v2' as const;
+export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v3' as const;
 
 export type StoredPortrait = {
   spec: typeof STORED_PORTRAIT_SPEC;
@@ -117,7 +117,10 @@ export async function loadStoredPortrait(): Promise<unknown | null> {
       const request = transaction.objectStore(STORE_NAME).get(ACTIVE_PORTRAIT_KEY);
       request.onsuccess = () => {
         const value = request.result ?? null;
-        resolve(isRecord(value) && value.spec === 'mullet_stored_portrait_v1' ? null : value);
+        resolve(isRecord(value) && (
+          value.spec === 'mullet_stored_portrait_v1'
+          || value.spec === 'mullet_stored_portrait_v2'
+        ) ? null : value);
       };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait read aborted'));

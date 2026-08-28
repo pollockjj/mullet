@@ -63,45 +63,48 @@ test('rejects a stored portrait whose PNG IHDR contradicts its fixed-square meta
   );
 });
 
-test('ignores the legacy stored portrait v1 instead of rendering its old portrait geometry', async () => {
-  const legacyPortrait = stored({
-    spec: 'mullet_stored_portrait_v1',
-    width: 768,
-    height: 1152
-  });
+test('ignores legacy v1 geometry and Mage-era v2 portraits instead of disabling persistence', async () => {
   const originalIndexedDb = globalThis.indexedDB;
-  let closed = false;
-  globalThis.indexedDB = {
-    open: () => {
-      const openRequest = {};
-      queueMicrotask(() => {
-        openRequest.result = {
-          objectStoreNames: { contains: () => true },
-          transaction: () => {
-            const transaction = {};
-            transaction.objectStore = () => ({
-              get: () => {
-                const readRequest = {};
-                queueMicrotask(() => {
-                  readRequest.result = legacyPortrait;
-                  readRequest.onsuccess();
-                });
-                return readRequest;
-              }
-            });
-            return transaction;
-          },
-          close: () => { closed = true; }
-        };
-        openRequest.onsuccess();
-      });
-      return openRequest;
-    }
-  };
   try {
-    assert.equal(await loadStoredPortrait(), null);
-    assert.equal(closed, true);
-    assert.throws(() => normalizeStoredPortrait(legacyPortrait), /invalid stored portrait/);
+    for (const spec of ['mullet_stored_portrait_v1', 'mullet_stored_portrait_v2']) {
+      const legacyPortrait = stored({
+        spec,
+        ...(spec.endsWith('_v1') ? { width: 768, height: 1152 } : {
+          modelTemplate: 'mage-flow-edit-turbo-reference-v1'
+        })
+      });
+      let closed = false;
+      globalThis.indexedDB = {
+        open: () => {
+          const openRequest = {};
+          queueMicrotask(() => {
+            openRequest.result = {
+              objectStoreNames: { contains: () => true },
+              transaction: () => {
+                const transaction = {};
+                transaction.objectStore = () => ({
+                  get: () => {
+                    const readRequest = {};
+                    queueMicrotask(() => {
+                      readRequest.result = legacyPortrait;
+                      readRequest.onsuccess();
+                    });
+                    return readRequest;
+                  }
+                });
+                return transaction;
+              },
+              close: () => { closed = true; }
+            };
+            openRequest.onsuccess();
+          });
+          return openRequest;
+        }
+      };
+      assert.equal(await loadStoredPortrait(), null);
+      assert.equal(closed, true);
+      assert.throws(() => normalizeStoredPortrait(legacyPortrait), /invalid stored portrait/);
+    }
   } finally {
     if (originalIndexedDb === undefined) delete globalThis.indexedDB;
     else globalThis.indexedDB = originalIndexedDb;
