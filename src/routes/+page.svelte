@@ -2803,6 +2803,11 @@
     inlineSceneController = null;
     inlineSceneBusy = false;
     lastInlineSceneAttemptKey = '';
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
+    inlineSceneVideoController = null;
+    inlineSceneVideoBusy = false;
+    lastInlineSceneVideoAttemptKey = '';
     errorMessage = '';
     noticeMessage = '';
     lastLoreActivations = null;
@@ -2919,7 +2924,7 @@
       </div>
     </div>
     <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || livingHistoryBusy} class="dot"></span>
+      <span class:live={streaming || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
       <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
     </div>
   </header>
@@ -3181,6 +3186,47 @@
           </button>
           {#if !inlineScenesEnabled}<small>Turn on Inline scene to direct and render each finalized response.</small>{/if}
           {#if inlineScenesEnabled && !inlineSceneSidecarRequest}<small>Finish one user-and-assistant turn before scene generation starts.</small>{/if}
+          <div class="scene-motion-controls">
+            <div class="portrait-heading">
+              <div>
+                <span class="eyebrow">Scene motion</span>
+                <strong>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoError ? 'Static fallback' : inlineSceneVideoCurrent ? 'Current loop' : generatedInlineSceneVideo ? 'Stale' : 'No loop yet'}</strong>
+              </div>
+              <label class="toggle">
+                <input
+                  type="checkbox"
+                  bind:checked={inlineSceneMotionEnabled}
+                  on:change={persistInlineSceneMotionEnabled}
+                  disabled={!inlineSceneVideoPersistenceReady || !inlineSceneVideoPersistenceAvailable}
+                />
+                <span>{inlineSceneMotionEnabled ? 'On' : 'Off'}</span>
+              </label>
+            </div>
+            {#if inlineSceneVideoCapabilities}
+              <label>
+                <span>Video model</span>
+                <select value={inlineSceneVideoCapabilities.template.id} disabled={inlineSceneVideoBusy} aria-label="Inline scene video model">
+                  <option value={inlineSceneVideoCapabilities.template.id}>{inlineSceneVideoCapabilities.template.label}</option>
+                </select>
+              </label>
+              <small>Replay loop · I2V · 49 frames @ 24 FPS · 2 seconds · VP9 WebM</small>
+              {#if generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.frames} frames</small>{/if}
+              {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
+              <button
+                on:click={() => void generateInlineSceneVideo()}
+                disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable}
+              >
+                {inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
+              </button>
+              {#if !inlineSceneMotionEnabled}<small>Turn on Scene motion to animate each current static landscape.</small>{/if}
+              {#if inlineSceneMotionEnabled && !generatedInlineScene}<small>A current static scene is required before motion starts.</small>{/if}
+            {:else}
+              {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
+              <button on:click={() => void loadInlineSceneVideoGenerator()} disabled={inlineSceneVideoCapabilitiesLoading}>
+                {inlineSceneVideoCapabilitiesLoading ? 'Connecting…' : 'Retry scene motion'}
+              </button>
+            {/if}
+          </div>
         {:else}
           {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
           <button on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
@@ -3545,7 +3591,8 @@
   .content { color: #e8e2d9; font: 16px/1.72 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
   .scene-card { position: relative; overflow: hidden; margin: 18px 0 0; border: 1px solid #435344; border-radius: 13px; background: #171b18; box-shadow: 0 18px 42px rgba(0,0,0,.24); }
   .scene-card.stale { border-color: #6d573d; }
-  .scene-card img, .scene-placeholder { display: block; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
+  .scene-card img, .scene-card video, .scene-placeholder { display: block; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
+  .scene-motion-controls { display: grid; gap: 7px; margin-top: 4px; padding-top: 10px; border-top: 1px solid #3c3731; }
   .scene-placeholder { min-height: 180px; display: grid; place-items: center; color: #8ea491; font: 700 10px/1.4 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
   .scene-placeholder:not(.error-state) { background: linear-gradient(110deg, #171918 25%, #263028 45%, #171918 65%); background-size: 240% 100%; animation: scene-shimmer 1.8s linear infinite; }
   .scene-placeholder.error-state { color: #d4a99e; background: #251918; }
