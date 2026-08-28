@@ -1,5 +1,7 @@
 import {
+  LIVING_HISTORY_EMPTY_STATE_FINGERPRINT,
   LIVING_HISTORY_RESULT_SPEC,
+  livingHistoryStateFingerprint,
   normalizeLivingHistoryResult,
   type LivingHistoryResult
 } from './living-history.ts';
@@ -7,7 +9,15 @@ import {
 const DATABASE_NAME = 'mullet-living-history';
 const STORE_NAME = 'state';
 const ACTIVE_HISTORY_KEY = 'active-history';
+export const LIVING_HISTORY_DATABASE_VERSION = 2 as const;
 export const STORED_LIVING_HISTORY_SPEC = 'mullet_stored_living_history_v1' as const;
+
+export class LivingHistoryConflictError extends Error {
+  constructor(message = 'Another tab updated living history from the same prior revision.') {
+    super(message);
+    this.name = 'LivingHistoryConflictError';
+  }
+}
 
 type StoredLivingHistoryEnvelope = {
   spec: typeof STORED_LIVING_HISTORY_SPEC;
@@ -52,13 +62,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function migrateStoredLivingHistoryResult(value: unknown): LivingHistoryResult {
   if (
     isRecord(value)
-    && value.spec === 'mullet_living_history_result_v1'
+    && (value.spec === 'mullet_living_history_result_v1' || value.spec === 'mullet_living_history_result_v2')
     && isRecord(value.output)
   ) {
     return normalizeLivingHistoryResult({
       ...value,
       spec: LIVING_HISTORY_RESULT_SPEC,
-      output: { ...value.output, quotes: [] }
+      parentFingerprint: LIVING_HISTORY_EMPTY_STATE_FINGERPRINT,
+      output: {
+        ...value.output,
+        quotes: value.spec === 'mullet_living_history_result_v1' ? [] : value.output.quotes,
+        characters: []
+      }
     });
   }
   return normalizeLivingHistoryResult(value);
@@ -109,7 +124,7 @@ export async function clearLivingHistoryAtEpoch(
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE_NAME, 1);
+    const request = indexedDB.open(DATABASE_NAME, LIVING_HISTORY_DATABASE_VERSION);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME);
     };
@@ -140,7 +155,12 @@ export async function loadStoredLivingHistory(expectedEpoch: string, allowLegacy
             const epochBound = isRecord(raw)
               && raw.spec === STORED_LIVING_HISTORY_SPEC
               && typeof raw.epoch === 'string';
-            if (!epochBound) {
+            const currentPayload = isRecord(unwrapped)
+              && unwrapped.spec === LIVING_HISTORY_RESULT_SPEC
+              && typeof unwrapped.parentFingerprint === 'string'
+              && isRecord(unwrapped.output)
+              && Array.isArray(unwrapped.output.characters);
+            if (!epochBound || !currentPayload) {
               store.put({
                 spec: STORED_LIVING_HISTORY_SPEC,
                 writeId: globalThis.crypto.randomUUID(),
@@ -185,14 +205,28 @@ export async function saveStoredLivingHistory(
       const transaction = database.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.get(ACTIVE_HISTORY_KEY);
+      let failure: unknown = null;
       request.onsuccess = () => {
-        previousRaw = request.result ?? null;
-        store.put(envelope, ACTIVE_HISTORY_KEY);
+        try {
+          previousRaw = request.result ?? null;
+          const unwrapped = unwrapStoredLivingHistory(previousRaw, normalizedEpoch, true);
+          if (previousRaw !== null && unwrapped === null) {
+            throw new LivingHistoryConflictError('The persisted living-history epoch changed before this update committed.');
+          }
+          const persistedFingerprint = unwrapped === null
+            ? LIVING_HISTORY_EMPTY_STATE_FINGERPRINT
+            : livingHistoryStateFingerprint(migrateStoredLivingHistoryResult(unwrapped));
+          if (persistedFingerprint !== normalized.parentFingerprint) throw new LivingHistoryConflictError();
+          store.put(envelope, ACTIVE_HISTORY_KEY);
+        } catch (cause) {
+          failure = cause;
+          transaction.abort();
+        }
       };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB living-history previous-state read failed'));
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB living-history write failed'));
-      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB living-history write aborted'));
+      transaction.onabort = () => reject(failure ?? transaction.error ?? new Error('IndexedDB living-history write aborted'));
     });
     return { writeId, previousRaw };
   } finally {
