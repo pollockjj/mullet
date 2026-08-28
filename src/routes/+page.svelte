@@ -112,7 +112,7 @@
 
   $: activeLorebooks = combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard));
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
-  $: expressionSnapshot = currentExpressionSnapshot();
+  $: expressionSnapshot = currentExpressionSnapshot(conversationId, messages);
   $: expressionResult = sidecarState?.channels.expression ?? null;
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
 
@@ -183,10 +183,10 @@
     void loadScenarioCatalog();
   });
 
-  function currentExpressionSnapshot(): ExpressionSidecarRequest | null {
-    if (!conversationId) return null;
+  function currentExpressionSnapshot(currentConversationId: string, currentMessages: readonly Message[]): ExpressionSidecarRequest | null {
+    if (!currentConversationId) return null;
     try {
-      return buildExpressionSidecarRequest(conversationId, messages);
+      return buildExpressionSidecarRequest(currentConversationId, currentMessages);
     } catch {
       return null;
     }
@@ -238,7 +238,7 @@
   }
 
   async function determineExpression() {
-    const snapshot = currentExpressionSnapshot();
+    const snapshot = currentExpressionSnapshot(conversationId, messages);
     if (!snapshot || streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !sidecarState) return;
     sidecarBusy = true;
     sidecarError = '';
