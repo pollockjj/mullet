@@ -2849,17 +2849,31 @@
     }
   }
 
-  function assistantMemoryStatusText(): string {
-    if (!assistantMemoryPersistenceAvailable) return 'Durable memory is unavailable.';
-    if (!assistantMemoryPersistenceReady) return 'Restoring the durable ledger…';
-    if (assistantMemoryBusy) return 'Updating structured memory for the completed turn…';
-    if (assistantMemoryPending) return 'A completed turn is waiting to be committed.';
-    if (!assistantMemoryResult) return 'No completed assistant turns have been recorded.';
-    const recordCount = assistantMemoryResult.output.facts.length
-      + assistantMemoryResult.output.preferences.length
-      + assistantMemoryResult.output.tasks.length;
-    return `Revision ${assistantMemoryResult.output.revision} · ${recordCount} structured records · ready for the next turn.`;
+  function assistantMemoryStatusText(
+    persistenceAvailable: boolean,
+    persistenceReady: boolean,
+    busy: boolean,
+    pending: StoredAssistantMemoryPendingTurn | null,
+    result: AssistantMemoryResult | null
+  ): string {
+    if (!persistenceAvailable) return 'Durable memory is unavailable.';
+    if (!persistenceReady) return 'Restoring the durable ledger…';
+    if (busy) return 'Updating structured memory for the completed turn…';
+    if (pending) return 'A completed turn is waiting to be committed.';
+    if (!result) return 'No completed assistant turns have been recorded.';
+    const recordCount = result.output.facts.length
+      + result.output.preferences.length
+      + result.output.tasks.length;
+    return `Revision ${result.output.revision} · ${recordCount} structured records · ready for the next turn.`;
   }
+
+  $: assistantMemoryStatus = assistantMemoryStatusText(
+    assistantMemoryPersistenceAvailable,
+    assistantMemoryPersistenceReady,
+    assistantMemoryBusy,
+    assistantMemoryPending,
+    assistantMemoryResult
+  );
 
   function persistExpressionsEnabled() {
     if (!sidecarPersistenceReady || !sidecarPersistenceAvailable) expressionsEnabled = false;
@@ -3658,7 +3672,7 @@
             </div>
             <small>rev {assistantMemoryResult?.output.revision ?? 0}</small>
           </div>
-          <p>{assistantMemoryStatusText()}</p>
+          <p>{assistantMemoryStatus}</p>
           <div class="assistant-memory-counts">
             <span>{assistantMemoryResult?.output.facts.filter((record) => record.status === 'active').length ?? 0} facts</span>
             <span>{assistantMemoryResult?.output.preferences.filter((record) => record.status === 'active').length ?? 0} preferences</span>
