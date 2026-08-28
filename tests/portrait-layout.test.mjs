@@ -25,3 +25,11 @@ test('generated expression stage is fixed 1:1 at the 0.5 MP default with no aspe
   assert.doesNotMatch(pageSource, /portraitMegapixelsStorageKey = 'mullet\.portrait-megapixels';/);
   assert.match(pageSource, /aria-label="Inline scene aspect ratio"/);
 });
+
+test('a scenario never falls back to Z-Image when its FLUX reference capability is unavailable', () => {
+  assert.match(pageSource, /if \(!profile \|\| !referenceTemplateAvailable\) return null;/);
+  assert.match(pageSource, /portraitModelTemplateAvailable\(portraitCapabilities, selectedRequest\.modelTemplate\)/);
+  assert.match(pageSource, /FLUX\.2 Klein 9B Distilled · unavailable/);
+  assert.match(pageSource, /FLUX\.2 Klein 9B reference editing is unavailable\. No scenario expression portrait will be generated\./);
+  assert.doesNotMatch(pageSource, /portraitRequest\?\.modelTemplate \?\? portraitCapabilities\.template\.id/);
+});

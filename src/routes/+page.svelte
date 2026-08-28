@@ -135,6 +135,7 @@
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
     normalizePortraitCapabilities,
+    portraitModelTemplateAvailable,
     portraitRequestKey,
     type PortraitAspectRatio,
     type PortraitCapabilities,
@@ -385,6 +386,7 @@
   let selectedScenarioId = '';
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
+  let scenarioPortraitReferenceAvailable = false;
   let scenarioLoading = false;
   let conversationId = '';
   let expressionsEnabled = false;
@@ -488,6 +490,10 @@
   $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
     ? defaultScenarioPortraitProfile(activeCard)
     : null;
+  $: scenarioPortraitReferenceAvailable = Boolean(
+    scenarioPortraitProfile
+    && portraitModelTemplateAvailable(portraitCapabilities, scenarioPortraitProfile.modelTemplate)
+  );
   $: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION
     ? currentExpressionSnapshot(conversationId, messages)
     : null;
@@ -498,6 +504,7 @@
     expressionCurrent,
     activeCard,
     scenarioPortraitProfile,
+    scenarioPortraitReferenceAvailable,
     portraitSubject,
     portraitSetting,
     portraitAttire,
@@ -2195,6 +2202,7 @@
     current: boolean,
     card: ImportedCharacterCard | null,
     profile: ScenarioPortraitProfile | null,
+    referenceTemplateAvailable: boolean,
     subject: string,
     setting: string,
     attire: string,
@@ -2205,7 +2213,7 @@
     if (!result || !current) return null;
     try {
       if (isScenarioCard(card)) {
-        if (!profile) return null;
+        if (!profile || !referenceTemplateAvailable) return null;
         return buildPortraitRequest(result, {
           modelTemplate: profile.modelTemplate,
           subject: profile.subject,
@@ -2266,6 +2274,7 @@
 
   async function generatePortrait(selectedRequest: PortraitRequest | null = portraitRequest) {
     if (!selectedRequest || !portraitCapabilities || portraitBusy || !portraitPersistenceReady || !portraitPersistenceAvailable) return;
+    if (!portraitModelTemplateAvailable(portraitCapabilities, selectedRequest.modelTemplate)) return;
     suspendPortraitVideoForStaticGeneration();
     const key = portraitRequestKey(selectedRequest);
     lastPortraitAttemptKey = key;
@@ -2312,6 +2321,7 @@
           expressionCurrent,
           activeCard,
           scenarioPortraitProfile,
+          scenarioPortraitReferenceAvailable,
           portraitSubject,
           portraitSetting,
           portraitAttire,
@@ -4016,13 +4026,19 @@
         {#if portraitCapabilities}
           <label>
             <span>Image model</span>
-            <select value={portraitRequest?.modelTemplate ?? portraitCapabilities.template.id} disabled aria-label="Portrait image model">
-              {#if portraitRequest?.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID && portraitCapabilities.referenceTemplate}
-                <option value={portraitCapabilities.referenceTemplate.id}>{portraitCapabilities.referenceTemplate.label}</option>
-              {:else}
+            {#if scenarioPortraitProfile}
+              <select value={scenarioPortraitProfile.modelTemplate} disabled aria-label="Portrait image model">
+                {#if scenarioPortraitReferenceAvailable && portraitCapabilities.referenceTemplate}
+                  <option value={portraitCapabilities.referenceTemplate.id}>{portraitCapabilities.referenceTemplate.label}</option>
+                {:else}
+                  <option value={scenarioPortraitProfile.modelTemplate}>FLUX.2 Klein 9B Distilled · unavailable</option>
+                {/if}
+              </select>
+            {:else}
+              <select value={portraitCapabilities.template.id} disabled aria-label="Portrait image model">
                 <option value={portraitCapabilities.template.id}>{portraitCapabilities.template.label}</option>
-              {/if}
-            </select>
+              </select>
+            {/if}
           </label>
           {#if scenarioPortraitProfile}
             <label>
@@ -4072,9 +4088,13 @@
               </select>
             </label>
           </div>
-          <small class="prompt-guide">{scenarioPortraitProfile && portraitCapabilities.referenceTemplate
-            ? portraitCapabilities.referenceTemplate.promptGuide
-            : portraitCapabilities.template.promptGuide}</small>
+          {#if scenarioPortraitProfile && !scenarioPortraitReferenceAvailable}
+            <div class="sidecar-error" role="alert">FLUX.2 Klein 9B reference editing is unavailable. No scenario expression portrait will be generated.</div>
+          {:else}
+            <small class="prompt-guide">{scenarioPortraitProfile && portraitCapabilities.referenceTemplate
+              ? portraitCapabilities.referenceTemplate.promptGuide
+              : portraitCapabilities.template.promptGuide}</small>
+          {/if}
           {#if isScenarioCard(activeCard) && !scenarioPortraitProfile}
             <div class="sidecar-error" role="alert">This scenario has no validated portrait identity. No portrait will be generated.</div>
           {/if}

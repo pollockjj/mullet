@@ -13,6 +13,7 @@ import {
   buildZImageTurboWorkflow,
   normalizePortraitRequest,
   portraitDimensions,
+  portraitModelTemplateAvailable,
   portraitRequestKey
 } from '../src/lib/portrait.ts';
 
@@ -70,6 +71,21 @@ test('fixes every expression portrait to 1:1 at the native 0.5 MP default', () =
   assert.equal(dimensions.width % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
   assert.equal(dimensions.height % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
   assert.throws(() => portraitDimensions('2:3', 0.5), /unsupported portrait aspect ratio/);
+});
+
+test('requires the advertised FLUX reference capability for reference-conditioned portraits', () => {
+  const capabilities = {
+    spec: 'mullet_portrait_capabilities_v3',
+    template: Z_IMAGE_TURBO_TEMPLATE,
+    referenceTemplate: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
+    aspectRatios: [{ id: '1:1', width: 1, height: 1, label: '1:1 fixed expression' }],
+    megapixels: [0.5, 0.75, 0.9, 1, 1.5, 2],
+    loras: []
+  };
+  assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_REFERENCE_TEMPLATE_ID), true);
+  assert.equal(portraitModelTemplateAvailable({ ...capabilities, referenceTemplate: null }, PORTRAIT_REFERENCE_TEMPLATE_ID), false);
+  assert.equal(portraitModelTemplateAvailable(null, PORTRAIT_REFERENCE_TEMPLATE_ID), false);
+  assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_TEMPLATE_ID), true);
 });
 
 test('binds a portrait request only to an expression result fingerprint', () => {

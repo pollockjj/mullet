@@ -135,6 +135,16 @@ export type PortraitCapabilities = {
   loras: string[];
 };
 
+export function portraitModelTemplateAvailable(
+  capabilities: PortraitCapabilities | null,
+  modelTemplate: PortraitModelTemplate
+): boolean {
+  if (!capabilities) return false;
+  return modelTemplate === PORTRAIT_TEMPLATE_ID
+    ? capabilities.template.id === PORTRAIT_TEMPLATE_ID
+    : capabilities.referenceTemplate?.id === PORTRAIT_REFERENCE_TEMPLATE_ID;
+}
+
 const FINGERPRINT_PATTERN = /^\d+:[0-9a-f]{8}$/;
 const PROFILE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PROFILE_FINGERPRINT_PATTERN = /^[0-9a-f]{8}$/;
