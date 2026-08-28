@@ -63,6 +63,28 @@
     type InlineSceneResult
   } from '$lib/inline-scene';
   import {
+    INLINE_SCENE_VIDEO_TIMEOUT_MS,
+    buildInlineSceneVideoRequest,
+    inlineSceneVideoRequestKey,
+    inlineSceneVideoSourceRequestSha256,
+    normalizeInlineSceneVideoCapabilities,
+    type InlineSceneVideoCapabilities,
+    type InlineSceneVideoRequest
+  } from '$lib/inline-scene-video';
+  import {
+    STORED_INLINE_SCENE_VIDEO_SPEC,
+    StoredInlineSceneVideoIntegrityError,
+    clearStoredInlineSceneVideo,
+    commitStoredInlineSceneVideo,
+    loadStoredInlineSceneVideo,
+    normalizeStoredInlineSceneVideo,
+    restoreStoredInlineSceneVideo,
+    rollbackStoredInlineSceneVideoWrite,
+    runStoredInlineSceneVideoExclusive,
+    saveStoredInlineSceneVideo,
+    type StoredInlineSceneVideo
+  } from '$lib/inline-scene-video-storage';
+  import {
     STORED_INLINE_SCENE_SPEC,
     StoredInlineSceneIntegrityError,
     clearStoredInlineScene,
@@ -259,6 +281,22 @@
   let inlineSceneGeneration = 0;
   let inlineSceneController: AbortController | null = null;
   let lastInlineSceneAttemptKey = '';
+  let inlineSceneMotionEnabled = false;
+  let inlineSceneVideoCapabilities: InlineSceneVideoCapabilities | null = null;
+  let inlineSceneVideoCapabilitiesLoading = false;
+  let inlineSceneVideoPersistenceReady = false;
+  let inlineSceneVideoPersistenceAvailable = true;
+  let inlineSceneVideoPersistenceOperations = 0;
+  let inlineSceneVideoBusy = false;
+  let inlineSceneVideoError = '';
+  let inlineSceneVideoRequest: InlineSceneVideoRequest | null = null;
+  let generatedInlineSceneVideo: StoredInlineSceneVideo | null = null;
+  let generatedInlineSceneVideoUrl = '';
+  let inlineSceneVideoCurrent = false;
+  let inlineSceneVideoVisible = false;
+  let inlineSceneVideoGeneration = 0;
+  let inlineSceneVideoController: AbortController | null = null;
+  let lastInlineSceneVideoAttemptKey = '';
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let selectedScenarioId = '';
@@ -307,6 +345,7 @@
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
   const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
   const inlineSceneLoraStorageKey = 'mullet.inline-scene-lora';
+  const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: livingHistoryApplicable = Boolean(
@@ -378,6 +417,20 @@
     inlineSceneLora,
     inlineSceneCapabilities
   );
+  $: inlineSceneVideoRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
+  $: inlineSceneVideoCurrent = Boolean(
+    generatedInlineSceneVideo
+    && inlineSceneVideoRequest
+    && generatedInlineSceneVideo.requestKey === inlineSceneVideoRequestKey(inlineSceneVideoRequest)
+  );
+  $: inlineSceneVideoVisible = Boolean(
+    inlineSceneMotionEnabled
+    && generatedInlineSceneVideoUrl
+    && inlineSceneVideoCurrent
+    && !inlineSceneBusy
+    && !inlineSceneVideoBusy
+    && !inlineSceneVideoError
+  );
   $: scheduleExpressionReconciliation(
     expressionsEnabled,
     sidecarPersistenceReady,
@@ -419,6 +472,17 @@
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
     inlineSceneLora
+  );
+  $: scheduleInlineSceneVideoReconciliation(
+    inlineScenesEnabled,
+    inlineSceneMotionEnabled,
+    inlineSceneVideoCapabilities,
+    inlineSceneVideoPersistenceReady,
+    inlineSceneVideoPersistenceAvailable,
+    inlineSceneBusy,
+    inlineSceneVideoBusy,
+    inlineSceneVideoRequest,
+    inlineSceneVideoCurrent
   );
   $: scheduleLivingHistoryReconciliation(
     livingHistoryEnabled,
@@ -503,14 +567,16 @@
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
+    inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
     restorePortraitSettings();
     restoreInlineSceneSettings();
     restoreInlineSceneFinalizedSource();
     void restoreExpressionAndGeneratedMedia();
-    void restoreGeneratedInlineScene();
+    void restoreInlineSceneAndMotion();
     void loadPortraitGenerator();
     void loadPortraitVideoGenerator();
     void loadInlineSceneGenerator();
+    void loadInlineSceneVideoGenerator();
     void loadScenarioCatalog();
   });
 
@@ -522,9 +588,12 @@
     portraitVideoController?.abort();
     inlineSceneGeneration += 1;
     inlineSceneController?.abort();
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
     if (generatedInlineSceneUrl) URL.revokeObjectURL(generatedInlineSceneUrl);
+    if (generatedInlineSceneVideoUrl) URL.revokeObjectURL(generatedInlineSceneVideoUrl);
   });
 
   function restorePortraitSettings() {
@@ -580,6 +649,7 @@
     inlineSceneBusy = false;
     inlineSceneError = '';
     lastInlineSceneAttemptKey = '';
+    suspendInlineSceneVideoForStaticChange();
   }
 
   function inlineSceneStoredEpochIsCurrent(epoch: string): boolean {
@@ -672,10 +742,23 @@
     generatedInlineScene = null;
   }
 
-  function installGeneratedInlineScene(scene: StoredInlineScene) {
+  function removeInstalledInlineSceneVideo() {
+    if (generatedInlineSceneVideoUrl) URL.revokeObjectURL(generatedInlineSceneVideoUrl);
+    generatedInlineSceneVideoUrl = '';
+    generatedInlineSceneVideo = null;
+  }
+
+  function installGeneratedInlineSceneVideo(video: StoredInlineSceneVideo) {
+    removeInstalledInlineSceneVideo();
+    generatedInlineSceneVideo = video;
+    generatedInlineSceneVideoUrl = URL.createObjectURL(video.video);
+  }
+
+  function installGeneratedInlineScene(scene: StoredInlineScene, preserveStoredMotion = false) {
     removeInstalledInlineScene();
     generatedInlineScene = scene;
     generatedInlineSceneUrl = URL.createObjectURL(scene.image);
+    if (!preserveStoredMotion) invalidateInlineSceneVideoForNewStaticScene();
   }
 
   function beginInlineScenePersistenceOperation() {
@@ -719,7 +802,7 @@
           && scene.conversationId === conversationId
           && Boolean(source && livingHistorySourcesMatch(scene.request.source, source))
           && livingHistorySourceMatchesMessages(scene.request.source, conversationId, messages),
-        install: installGeneratedInlineScene
+        install: (scene) => installGeneratedInlineScene(scene, true)
       });
     } catch (cause) {
       if (cause instanceof StoredInlineSceneIntegrityError) {
@@ -728,6 +811,12 @@
     } finally {
       endInlineScenePersistenceOperation();
     }
+  }
+
+  async function restoreInlineSceneAndMotion() {
+    await restoreGeneratedInlineScene();
+    await tick();
+    await restoreGeneratedInlineSceneVideo();
   }
 
   async function loadInlineSceneGenerator() {
