@@ -59,7 +59,6 @@ export async function loadPortraitCapabilities(
     '/object_info/CLIPLoader',
     '/object_info/VAELoader',
     '/object_info/LoraLoader',
-    '/object_info/LoadImage',
     ...referenceNodes.map((nodeName) => `/object_info/${nodeName}`)
   ];
   const [unetInfo, clipInfo, vaeInfo, loraInfo, ...referenceNodeInfo] = await Promise.all(paths.map(async (path) => {
