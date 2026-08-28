@@ -37,6 +37,14 @@ export type ImportedCharacterCard = {
   raw: JsonObject;
 };
 
+export type CharacterPromptInjections = {
+  beforeCharacter?: string[];
+  afterCharacter?: string[];
+  examplesBefore?: string[];
+  examplesAfter?: string[];
+  outlets?: Record<string, string[]>;
+};
+
 export const DEFAULT_MAIN_PROMPT = "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}.";
 
 function isRecord(value: unknown): value is JsonObject {
@@ -199,20 +207,28 @@ export function splitMessageExamples(value: string): string[] {
 export function compileCharacterMessages(
   card: ImportedCharacterCard,
   history: ChatMessage[],
-  userName = 'You'
+  userName = 'You',
+  injections: CharacterPromptInjections = {}
 ): ChatMessage[] {
   const characterName = card.data.nickname || card.data.name;
-  const substitute = (value: string) => substituteCardMacros(value, characterName, userName);
+  const substitute = (value: string) => substituteCardMacros(value, characterName, userName)
+    .replace(/{{outlet::(.+?)}}/gi, (_match, key: string) => injections.outlets?.[key.trim()]?.join('\n') ?? '');
   const mainPrompt = substitute(card.data.systemPrompt.trim() || DEFAULT_MAIN_PROMPT);
   const context = [mainPrompt];
 
+  context.push(...(injections.beforeCharacter ?? []).filter((value) => value.trim()));
   if (card.data.description.trim()) context.push(`[Character description]\n${substitute(card.data.description)}`);
   if (card.data.personality.trim()) context.push(`[Character personality]\n${substitute(card.data.personality)}`);
   if (card.data.scenario.trim()) context.push(`[Scenario]\n${substitute(card.data.scenario)}`);
-  const exampleMessages = splitMessageExamples(substitute(card.data.mesExample)).map((example) => ({
-    role: 'system' as const,
-    content: `[Example dialogue]\n${example}`
-  }));
+  context.push(...(injections.afterCharacter ?? []).filter((value) => value.trim()));
+  const exampleMessages: ChatMessage[] = [
+    ...(injections.examplesBefore ?? []).filter((value) => value.trim()).map((content) => ({ role: 'system' as const, content })),
+    ...splitMessageExamples(substitute(card.data.mesExample)).map((example) => ({
+      role: 'system' as const,
+      content: `[Example dialogue]\n${example}`
+    })),
+    ...(injections.examplesAfter ?? []).filter((value) => value.trim()).map((content) => ({ role: 'system' as const, content }))
+  ];
   const compiled: ChatMessage[] = [
     { role: 'system', content: context.join('\n\n') },
     ...exampleMessages,

@@ -9,7 +9,17 @@
     parseCharacterCardJson,
     type ImportedCharacterCard
   } from '$lib/character-card';
+  import {
+    DEFAULT_LOREBOOK_SETTINGS,
+    normalizeLorebook,
+    parseLorebookJson,
+    resolveLorebookSettings,
+    type ImportedLorebook,
+    type LoreActivation,
+    type LorebookSettings
+  } from '$lib/lorebook';
   import { extractPngCharacterCard, MAX_CHARACTER_CARD_PNG_BYTES } from '$lib/png-character-card';
+  import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -25,13 +35,29 @@
   let tokenLimit = data.defaultMaxTokens;
   let activeCard: ImportedCharacterCard | null = null;
   let portraitDataUrl = '';
+  let embeddedLorebook: ImportedLorebook | null = null;
+  let importedLorebooks: ImportedLorebook[] = [];
+  let loreEnabled = true;
+  let loreSettings: LorebookSettings = { ...DEFAULT_LOREBOOK_SETTINGS };
+  let lastLoreActivations: LoreActivation[] | null = null;
+  let lastLoreActivationCount = 0;
+  let lastLoreBudget = 0;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
+  let loreInput: HTMLInputElement;
 
   const messagesStorageKey = 'mullet.checkpoint-one.messages';
   const cardStorageKey = 'mullet.active-character-card';
   const portraitStorageKey = 'mullet.active-character-portrait';
+  const lorebookStorageKey = 'mullet.active-lorebook';
+  const loreEnabledStorageKey = 'mullet.lorebook-enabled';
+  const loreSettingsStorageKey = 'mullet.lorebook-settings';
+
+  $: activeLorebooks = [
+    ...(embeddedLorebook && !importedLorebooks.some((book) => book.name === embeddedLorebook?.name) ? [embeddedLorebook] : []),
+    ...importedLorebooks
+  ];
 
   const starters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -55,10 +81,31 @@
       try {
         activeCard = normalizeCharacterCard(JSON.parse(savedCard));
         portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
+        embeddedLorebook = embeddedLoreFromCard(activeCard);
         if (messages.length === 0) messages = freshConversation();
       } catch {
         localStorage.removeItem(cardStorageKey);
         localStorage.removeItem(portraitStorageKey);
+      }
+    }
+
+    const savedLorebook = localStorage.getItem(lorebookStorageKey);
+    if (savedLorebook) {
+      try {
+        const stored = JSON.parse(savedLorebook);
+        const storedBooks = Array.isArray(stored) ? stored : [stored];
+        importedLorebooks = storedBooks.slice(0, 20).map((book) => normalizeLorebook(book.raw, book.name, 'imported'));
+      } catch {
+        localStorage.removeItem(lorebookStorageKey);
+      }
+    }
+    loreEnabled = localStorage.getItem(loreEnabledStorageKey) !== 'false';
+    const savedLoreSettings = localStorage.getItem(loreSettingsStorageKey);
+    if (savedLoreSettings) {
+      try {
+        loreSettings = resolveLorebookSettings(JSON.parse(savedLoreSettings));
+      } catch {
+        localStorage.removeItem(loreSettingsStorageKey);
       }
     }
 
@@ -76,6 +123,15 @@
     if (!activeCard) return [];
     const greeting = firstCharacterMessage(activeCard);
     return greeting.trim() ? [{ role: 'assistant', content: greeting }] : [];
+  }
+
+  function embeddedLoreFromCard(card: ImportedCharacterCard | null): ImportedLorebook | null {
+    if (!card?.data.characterBook) return null;
+    try {
+      return normalizeLorebook(card.data.characterBook, `${card.data.name} lore`, 'embedded');
+    } catch {
+      return null;
+    }
   }
 
   function containsOnlyOpeningGreeting(card: ImportedCharacterCard): boolean {
@@ -104,6 +160,8 @@
     messages = freshConversation();
     errorMessage = '';
     noticeMessage = '';
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
     persist();
   }
 
@@ -145,6 +203,9 @@
 
       activeCard = imported;
       portraitDataUrl = nextPortrait;
+      embeddedLorebook = embeddedLoreFromCard(imported);
+      lastLoreActivations = null;
+      lastLoreBudget = 0;
       persistCard();
       if (seedGreeting) {
         messages = freshConversation();
@@ -164,9 +225,86 @@
     const removedName = activeCard?.data.name;
     activeCard = null;
     portraitDataUrl = '';
+    embeddedLorebook = null;
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
     localStorage.removeItem(cardStorageKey);
     localStorage.removeItem(portraitStorageKey);
     noticeMessage = removedName ? `${removedName} removed; conversation retained.` : '';
+  }
+
+  async function importLorebook(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    errorMessage = '';
+    noticeMessage = '';
+    try {
+      if (file.size > MAX_LOREBOOK_PNG_BYTES) throw new Error('Lorebook exceeds 25 MB.');
+      const fallbackName = file.name.replace(/\.(?:json|lorebook|png)$/i, '') || 'Imported lorebook';
+      const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
+      const imported = isPng
+        ? extractPngLorebook(await file.arrayBuffer(), fallbackName, 'imported')
+        : parseLorebookJson(await file.text(), fallbackName, 'imported');
+      const sameNameIndex = importedLorebooks.findIndex((book) => book.name === imported.name);
+      const nextBooks = sameNameIndex >= 0
+        ? importedLorebooks.map((book, index) => index === sameNameIndex ? imported : book)
+        : [...importedLorebooks, imported];
+      if (nextBooks.length > 20) throw new Error('At most 20 imported lorebooks can be active.');
+      localStorage.setItem(lorebookStorageKey, JSON.stringify(nextBooks.map((book) => ({ name: book.name, raw: book.raw }))));
+      importedLorebooks = nextBooks;
+      loreEnabled = true;
+      persistLoreEnabled();
+      lastLoreActivations = null;
+      lastLoreBudget = 0;
+      noticeMessage = `${imported.name} loaded with ${imported.entries.length} lore entries.`;
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Lorebook import failed.';
+    } finally {
+      input.value = '';
+    }
+  }
+
+  function removeImportedLorebook(bookIndex: number) {
+    if (streaming || !importedLorebooks[bookIndex]) return;
+    const removedName = importedLorebooks[bookIndex].name;
+    importedLorebooks = importedLorebooks.filter((_book, index) => index !== bookIndex);
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
+    if (importedLorebooks.length) {
+      localStorage.setItem(lorebookStorageKey, JSON.stringify(importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))));
+    } else {
+      localStorage.removeItem(lorebookStorageKey);
+    }
+    noticeMessage = `${removedName} removed.`;
+  }
+
+  function persistLoreEnabled() {
+    if (browser) localStorage.setItem(loreEnabledStorageKey, String(loreEnabled));
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
+  }
+
+  function persistLoreSettings() {
+    try {
+      loreSettings = resolveLorebookSettings(loreSettings);
+      if (browser) localStorage.setItem(loreSettingsStorageKey, JSON.stringify(loreSettings));
+      lastLoreActivations = null;
+      lastLoreBudget = 0;
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Invalid lorebook settings.';
+    }
+  }
+
+  function readLoreActivations(value: string | null): LoreActivation[] | null {
+    if (value === null) return null;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(value));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   }
 
   function persistTokenLimit() {
@@ -183,6 +321,8 @@
 
     errorMessage = '';
     noticeMessage = '';
+    lastLoreActivations = null;
+    lastLoreBudget = 0;
     draft = '';
     messages = [...messages, { role: 'user', content }, { role: 'assistant', content: '' }];
     streaming = true;
@@ -197,7 +337,12 @@
           messages: messages.slice(0, -1),
           maxTokens: tokenLimit,
           characterCard: activeCard?.raw ?? null,
-          userName: 'You'
+          userName: 'You',
+          loreEnabled,
+          lorebooks: loreEnabled
+            ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
+            : [],
+          lorebookSettings: loreSettings
         }),
         signal: controller.signal
       });
@@ -206,6 +351,14 @@
         const detail = await response.text();
         throw new Error(detail || `Request failed (${response.status})`);
       }
+
+      lastLoreActivations = readLoreActivations(response.headers.get('x-mullet-lore-entries'));
+      const loreCount = Number(response.headers.get('x-mullet-lore-active'));
+      lastLoreActivationCount = Number.isInteger(loreCount) && loreCount >= 0
+        ? loreCount
+        : lastLoreActivations?.length ?? 0;
+      const loreBudget = Number(response.headers.get('x-mullet-lore-budget'));
+      lastLoreBudget = Number.isInteger(loreBudget) && loreBudget > 0 ? loreBudget : 0;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -326,6 +479,75 @@
           <button class="card-button" on:click={removeCharacterCard} disabled={streaming}>Remove</button>
         {/if}
       </div>
+      <section class="lore-panel" aria-label="Active lorebooks">
+        <div class="lore-heading">
+          <div>
+            <span class="eyebrow">Lorebooks</span>
+            <strong>{activeLorebooks.length} active</strong>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" bind:checked={loreEnabled} on:change={persistLoreEnabled} disabled={streaming} />
+            <span>{loreEnabled ? 'On' : 'Off'}</span>
+          </label>
+        </div>
+
+        {#if activeLorebooks.length}
+          <div class="lore-list">
+            {#each activeLorebooks as book}
+              <div class="lore-row">
+                <div>
+                  <strong>{book.name}</strong>
+                  <small>{book.origin} · {book.entries.length} entries</small>
+                </div>
+                {#if book.origin === 'imported'}
+                  <button on:click={() => removeImportedLorebook(importedLorebooks.indexOf(book))} disabled={streaming} aria-label={`Remove ${book.name}`}>×</button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="lore-empty">No embedded or imported lorebook.</p>
+        {/if}
+
+        {#if lastLoreActivations !== null}
+          <div class:active={lastLoreActivationCount > 0} class="lore-fired">
+            <strong>{lastLoreActivationCount} fired last turn</strong>
+            {#if lastLoreActivations.length}
+              <span>{lastLoreActivations.map((entry) => entry.name).join(', ')}</span>
+            {/if}
+          </div>
+        {/if}
+
+        <input
+          class="file-input"
+          bind:this={loreInput}
+          type="file"
+          accept=".json,.lorebook,.png,application/json,image/png"
+          on:change={importLorebook}
+          disabled={streaming}
+          aria-label="Choose a lorebook"
+        />
+        <button class="lore-import" on:click={() => loreInput?.click()} disabled={streaming}>
+          Import lorebook
+        </button>
+
+        <details class="lore-settings">
+          <summary>Scan settings</summary>
+          <div class="lore-setting-grid">
+            <label>
+              <span>Depth</span>
+              <input type="number" min="0" max="1000" step="1" bind:value={loreSettings.scanDepth} on:change={persistLoreSettings} disabled={streaming} />
+            </label>
+            <label>
+              <span>Context %</span>
+              <input type="number" min="1" max="100" step="1" bind:value={loreSettings.budgetPercent} on:change={persistLoreSettings} disabled={streaming} />
+            </label>
+          </div>
+          <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={persistLoreSettings} disabled={streaming} /> Recursive scanning</label>
+          <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={persistLoreSettings} disabled={streaming} /> Whole-word matching</label>
+          <small>{lastLoreBudget || Math.round(loreSettings.budgetPercent * loreSettings.maxContextTokens / 100)}-token budget · server tokenizer</small>
+        </details>
+      </section>
       <button class="clear" on:click={clearConversation} disabled={streaming || messages.length === 0}>Clear conversation</button>
     </aside>
 
@@ -428,6 +650,31 @@
   .card-button:hover:not(:disabled) { border-color: #98714a; color: #fff0df; }
   .card-button.primary:hover:not(:disabled) { color: #21170d; background: #e8b06e; }
   .card-button:disabled { opacity: .35; cursor: default; }
+  .lore-panel { display: grid; gap: 10px; padding-top: 17px; border-top: 1px solid #34302b; }
+  .lore-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .lore-heading > div { display: grid; gap: 4px; }
+  .lore-heading strong { color: #d7d0c7; font-size: 12px; }
+  .toggle { display: flex; align-items: center; gap: 5px; color: #91887e; font-size: 10px; cursor: pointer; }
+  .toggle input, .check-row input { accent-color: #dca35f; }
+  .lore-list { display: grid; gap: 6px; }
+  .lore-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid #39342e; border-radius: 8px; background: #181614; }
+  .lore-row > div { min-width: 0; display: grid; gap: 2px; }
+  .lore-row strong { overflow: hidden; color: #c9c1b7; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .lore-row small { color: #746d65; font-size: 9px; }
+  .lore-row button { width: 24px; height: 24px; border: 0; border-radius: 6px; color: #9e8e82; background: #29231f; cursor: pointer; }
+  .lore-empty { margin: 0; color: #746d65; font-size: 10px; }
+  .lore-fired { display: grid; gap: 3px; padding: 8px 9px; border: 1px solid #453b32; border-radius: 8px; color: #92887d; background: #201c18; font-size: 9px; }
+  .lore-fired.active { border-color: #49614d; color: #a9c8ad; background: #19221b; }
+  .lore-fired span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lore-import { padding: 8px; border: 1px solid #4a4239; border-radius: 8px; color: #b7aea4; background: transparent; font-size: 10px; cursor: pointer; }
+  .lore-import:hover:not(:disabled) { border-color: #98714a; color: #f4e7d7; }
+  .lore-settings { color: #887f75; font-size: 10px; }
+  .lore-settings summary { cursor: pointer; }
+  .lore-setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 9px 0 7px; }
+  .lore-setting-grid label { display: grid; gap: 4px; }
+  .lore-setting-grid input { width: 100%; padding: 5px 6px; border: 1px solid #3c3731; border-radius: 6px; color: #c1b8ae; background: #181512; font-size: 10px; }
+  .check-row { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
+  .lore-settings > small { display: block; margin-top: 7px; color: #665f58; }
   .clear { margin-top: auto; padding: 10px; border: 1px solid #3c3731; border-radius: 9px; color: #a9a097; background: transparent; cursor: pointer; }
   .clear:hover:not(:disabled) { border-color: #6a5f53; color: #e8e0d7; }
   .clear:disabled { opacity: .35; cursor: default; }

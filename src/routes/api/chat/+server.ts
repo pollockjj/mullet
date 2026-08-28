@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runtime } from '$lib/server/runtime';
+import { countModelTokens, getModelContextTokens } from '$lib/server/model-tokenizer';
 import { resolveTokenLimit } from '$lib/token-limit';
 import {
   compileCharacterMessages,
@@ -8,14 +9,27 @@ import {
   type ChatMessage,
   type ImportedCharacterCard
 } from '$lib/character-card';
+import {
+  compileUnboundLoreMessages,
+  injectLoreContext,
+  normalizeLorebook,
+  resolveLorebookSettings,
+  scanLorebooks,
+  type ImportedLorebook,
+  type LoreScanResult
+} from '$lib/lorebook';
 
 type Role = 'system' | 'user' | 'assistant';
 
 const roles = new Set<Role>(['system', 'user', 'assistant']);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function validateMessages(value: unknown): ChatMessage[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 200) {
-    throw error(400, 'messages must contain between 1 and 200 items');
+  if (!Array.isArray(value) || value.length === 0 || value.length > 1000) {
+    throw error(400, 'messages must contain between 1 and 1000 items');
   }
 
   return value.map((candidate, index) => {
@@ -46,6 +60,11 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const messages = validateMessages(body?.messages);
   let characterCard: ImportedCharacterCard | null = null;
   let upstreamMessages = messages;
+  let loreResult: LoreScanResult | null = null;
+  const userName = body?.userName === undefined ? 'You' : body.userName;
+  if (typeof userName !== 'string' || userName.trim().length === 0 || userName.length > 100) {
+    throw error(400, 'userName must be a non-empty string of at most 100 characters');
+  }
 
   if (body?.characterCard !== undefined && body.characterCard !== null) {
     try {
@@ -54,11 +73,59 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       throw error(400, cause instanceof Error ? cause.message : 'invalid character card');
     }
 
-    const userName = body?.userName === undefined ? 'You' : body.userName;
-    if (typeof userName !== 'string' || userName.trim().length === 0 || userName.length > 100) {
-      throw error(400, 'userName must be a non-empty string of at most 100 characters');
+  }
+
+  const loreEnabled = body?.loreEnabled === undefined ? true : body.loreEnabled;
+  if (typeof loreEnabled !== 'boolean') throw error(400, 'loreEnabled must be boolean');
+  if (loreEnabled) {
+    const requestedLorebooks = body?.lorebooks ?? [];
+    if (!Array.isArray(requestedLorebooks) || requestedLorebooks.length > 20) {
+      throw error(400, 'lorebooks must be an array containing at most 20 books');
     }
-    upstreamMessages = compileCharacterMessages(characterCard, messages, userName.trim());
+    const importedBooks: ImportedLorebook[] = [];
+    try {
+      requestedLorebooks.forEach((candidate: unknown, index: number) => {
+        if (!isRecord(candidate)) throw new Error(`invalid lorebook at index ${index}`);
+        const name = typeof candidate.name === 'string' ? candidate.name : `Lorebook ${index + 1}`;
+        importedBooks.push(normalizeLorebook(candidate.raw ?? candidate, name, 'imported'));
+      });
+      const uniqueImportedBooks = [...new Map(importedBooks.map((book) => [book.name, book])).values()];
+      const importedNames = new Set(uniqueImportedBooks.map((book) => book.name));
+      const embeddedBook = characterCard?.data.characterBook
+        ? normalizeLorebook(characterCard.data.characterBook, `${characterCard.data.name} lore`, 'embedded')
+        : null;
+      const books = [
+        ...(embeddedBook && !importedNames.has(embeddedBook.name) ? [embeddedBook] : []),
+        ...uniqueImportedBooks
+      ];
+      if (books.reduce((total, book) => total + book.entries.length, 0) > 20_000) {
+        throw new Error('active lorebooks may contain at most 20000 entries');
+      }
+      if (books.length) {
+        const modelContextTokens = await getModelContextTokens(fetch, runtime.modelBaseUrl, runtime.modelId, request.signal);
+        const loreSettings = resolveLorebookSettings(body.lorebookSettings, modelContextTokens);
+        loreResult = await scanLorebooks(books, messages, loreSettings, {
+          card: characterCard,
+          userName: userName.trim(),
+          assistantName: runtime.modelId,
+          tokenCount: (content) => countModelTokens(fetch, runtime.modelBaseUrl, content, request.signal)
+        });
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'invalid lorebooks';
+      if (/model (?:metadata|tokenizer)/.test(message)) {
+        console.error('model tokenization failed', cause);
+        throw error(502, 'The local model tokenizer is unavailable.');
+      }
+      throw error(400, message);
+    }
+  }
+
+  if (characterCard) {
+    const history = loreResult ? injectLoreContext(messages, loreResult) : messages;
+    upstreamMessages = compileCharacterMessages(characterCard, history, userName.trim(), loreResult ?? {});
+  } else if (loreResult) {
+    upstreamMessages = compileUnboundLoreMessages(messages, loreResult);
   }
   let tokenLimit: number;
   try {
@@ -102,6 +169,18 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (characterCard) {
     headers['x-mullet-character'] = encodeURIComponent(characterCard.data.name);
     headers['x-mullet-card-spec'] = `${characterCard.spec}@${characterCard.specVersion}`;
+  }
+  if (loreResult) {
+    const headerEntries = loreResult.activated.slice(0, 10).map((entry) => ({
+      book: entry.book.slice(0, 80),
+      entryId: entry.entryId.slice(0, 40),
+      name: entry.name.slice(0, 80)
+    }));
+    headers['x-mullet-lore-active'] = String(loreResult.activated.length);
+    headers['x-mullet-lore-skipped'] = String(loreResult.skipped.length);
+    headers['x-mullet-lore-budget'] = String(loreResult.budgetTokens);
+    headers['x-mullet-lore-tokens'] = String(loreResult.usedTokens);
+    headers['x-mullet-lore-entries'] = encodeURIComponent(JSON.stringify(headerEntries));
   }
 
   return new Response(upstream.body, {
