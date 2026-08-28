@@ -2964,7 +2964,14 @@
   }
 
   async function startSelectedScenario() {
-    if (!selectedScenario || streaming || scenarioLoading) return;
+    if (
+      !selectedScenario
+      || streaming
+      || scenarioLoading
+      || assistantTurnBusy
+      || assistantMemoryBusy
+      || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
+    ) return;
     errorMessage = '';
     noticeMessage = '';
     scenarioLoading = true;
@@ -3087,7 +3094,13 @@
   }
 
   async function replaceConversationMode(nextMode: ConversationMode) {
-    if (streaming || nextMode === conversationMode) return;
+    if (
+      streaming
+      || assistantTurnBusy
+      || assistantMemoryBusy
+      || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
+      || nextMode === conversationMode
+    ) return;
     if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
     conversationMode = nextMode;
     persistConversationMode();
@@ -3116,7 +3129,12 @@
   }
 
   async function clearConversation() {
-    if (streaming) return;
+    if (
+      streaming
+      || assistantTurnBusy
+      || assistantMemoryBusy
+      || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
+    ) return;
     messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
     errorMessage = '';
     noticeMessage = '';
@@ -3329,7 +3347,51 @@
       || !livingHistoryReadyForChat(fictionMode && livingHistoryEnabled, livingHistoryPersistenceReady)
     ) return;
 
+    if (selectedConversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) {
+      if (!assistantMemoryReadyForSend(
+        selectedConversationMode,
+        assistantMemoryPersistenceReady,
+        assistantMemoryPersistenceAvailable,
+        streaming || assistantTurnBusy,
+        assistantMemoryBusy,
+        assistantMemoryPending
+      )) return;
+      assistantTurnBusy = true;
+      try {
+        await runPersonalAssistantTurnExclusive(async () => {
+          await restoreAssistantMemory(false);
+          if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
+            throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
+          }
+          if (assistantMemoryPending) await reconcileAssistantMemoryPending();
+          if (!assistantMemoryReadyForSend(
+            selectedConversationMode,
+            assistantMemoryPersistenceReady,
+            assistantMemoryPersistenceAvailable,
+            false,
+            assistantMemoryBusy,
+            assistantMemoryPending
+          )) throw new Error('The previous assistant-memory update has not committed.');
+          assistantMemoryError = '';
+          const completed = await sendChatTurn(selectedConversationMode, content);
+          if (completed) await persistCompletedAssistantMemoryTurn();
+        });
+      } catch (cause) {
+        assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory turn failed.';
+        errorMessage = assistantMemoryError;
+      } finally {
+        assistantTurnBusy = false;
+      }
+      return;
+    }
+    await sendChatTurn(selectedConversationMode, content);
+  }
+
+  async function sendChatTurn(selectedConversationMode: ConversationMode, content: string): Promise<boolean> {
+    const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
+
     const outboundMessages = [...messages, { role: 'user' as const, content }];
+    const selectedAssistantMemoryBook = fictionMode ? null : assistantMemoryBook;
     let supplementalLorebooks: ImportedLorebook[];
     if (fictionMode) {
       try {
@@ -3357,6 +3419,9 @@
         lorebooks: fictionMode && loreEnabled
           ? supplementalLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
           : [],
+        assistantMemory: selectedAssistantMemoryBook
+          ? { name: selectedAssistantMemoryBook.name, raw: selectedAssistantMemoryBook.raw }
+          : null,
         lorebookSettings: loreSettings
       });
     } catch (cause) {
@@ -3407,6 +3472,15 @@
       }
       if (response.headers.get('x-mullet-mode') !== selectedConversationMode) {
         throw new Error('Server response mode does not match this conversation.');
+      }
+      if (!fictionMode) {
+        const memoryActive = parseAssistantMemoryActiveHeader(response.headers.get('x-mullet-assistant-memory-active'));
+        if (memoryActive === null || memoryActive !== Boolean(selectedAssistantMemoryBook)) {
+          throw new Error('Server response did not confirm the selected assistant-memory projection.');
+        }
+        lastAssistantMemoryActive = memoryActive;
+      } else {
+        lastAssistantMemoryActive = null;
       }
 
       lastLoreActivations = readLoreActivations(response.headers.get('x-mullet-lore-entries'));
@@ -3478,6 +3552,7 @@
       }
       await scrollToLatest();
     }
+    return completedResponse;
   }
 
   function composerKeydown(event: KeyboardEvent) {
