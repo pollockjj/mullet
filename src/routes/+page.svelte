@@ -131,6 +131,7 @@
     , LivingHistoryConflictError
   } from '$lib/living-history-storage';
   import {
+    PORTRAIT_REFERENCE_TEMPLATE_ID,
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
     normalizePortraitCapabilities,
@@ -198,11 +199,14 @@
     type ConversationMode
   } from '$lib/personal-assistant';
   import {
+    defaultScenarioPortraitProfile,
     isScenarioCard,
     normalizeScenarioCatalog,
     validateScenarioPackage,
     type ScenarioCatalog,
-    type ScenarioCatalogEntry
+    type ScenarioCatalogEntry,
+    type ScenarioPackage,
+    type ScenarioPortraitProfile
   } from '$lib/scenario';
   import type { PageData } from './$types';
 
@@ -229,7 +233,7 @@
   let portraitPersistenceAvailable = true;
   let portraitBusy = false;
   let portraitError = '';
-  let portraitSubject = 'the central character in the current scene';
+  let portraitSubject = '';
   let portraitSetting = '';
   let portraitAttire = '';
   let portraitLora = '';
@@ -328,6 +332,7 @@
   let scenarioCatalog: ScenarioCatalog | null = null;
   let selectedScenarioId = '';
   let selectedScenario: ScenarioCatalogEntry | null = null;
+  let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
   let scenarioLoading = false;
   let conversationId = '';
   let expressionsEnabled = false;
@@ -407,6 +412,9 @@
       ]
     : [];
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
+  $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
+    ? defaultScenarioPortraitProfile(activeCard)
+    : null;
   $: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION
     ? currentExpressionSnapshot(conversationId, messages)
     : null;
@@ -415,6 +423,8 @@
   $: portraitRequest = currentPortraitRequest(
     expressionResult,
     expressionCurrent,
+    activeCard,
+    scenarioPortraitProfile,
     portraitSubject,
     portraitSetting,
     portraitAttire,
@@ -658,7 +668,7 @@
 
   function restorePortraitSettings() {
     portraitSubject = localStorage.getItem(portraitSubjectStorageKey)?.trim()
-      || (activeCard && !isScenarioCard(activeCard) ? activeCard.data.name : 'the central character in the current scene');
+      || (activeCard && !isScenarioCard(activeCard) ? activeCard.data.name : '');
     portraitSetting = localStorage.getItem(portraitSettingStorageKey) ?? '';
     portraitAttire = localStorage.getItem(portraitAttireStorageKey) ?? '';
     portraitLora = localStorage.getItem(portraitLoraStorageKey) ?? '';
@@ -2043,6 +2053,8 @@
   function currentPortraitRequest(
     result: ExpressionSidecarResult | null,
     current: boolean,
+    card: ImportedCharacterCard | null,
+    profile: ScenarioPortraitProfile | null,
     subject: string,
     setting: string,
     attire: string,
@@ -2052,6 +2064,21 @@
   ): PortraitRequest | null {
     if (!result || !current) return null;
     try {
+      if (isScenarioCard(card)) {
+        if (!profile) return null;
+        return buildPortraitRequest(result, {
+          modelTemplate: profile.modelTemplate,
+          subject: profile.subject,
+          setting: profile.setting,
+          attire: profile.attire,
+          lora: null,
+          referenceImage: profile.referenceImage,
+          characterId: profile.id,
+          profileFingerprint: profile.fingerprint,
+          aspectRatio,
+          megapixels
+        });
+      }
       return buildPortraitRequest(result, {
         subject,
         setting,
@@ -2603,9 +2630,31 @@
       selectedScenarioId = scenarioCatalog.scenarios.some((scenario) => scenario.id === activeScenarioId)
         ? activeScenarioId
         : scenarioCatalog.scenarios[0].id;
+      const activeScenario = scenarioCatalog.scenarios.find((scenario) => scenario.id === activeScenarioId);
+      const activeVersion = activeCard?.data.extensions.mullet && typeof activeCard.data.extensions.mullet === 'object'
+        ? String((activeCard.data.extensions.mullet as Record<string, unknown>).scenario_version ?? '')
+        : '';
+      if (activeScenario && (activeVersion !== activeScenario.version || !defaultScenarioPortraitProfile(activeCard))) {
+        const packaged = await loadScenarioPackage(activeScenario);
+        activeCard = packaged.card;
+        cardSourceIdentifier = characterSourceIdentifier(activeScenario.card);
+        embeddedLorebook = embeddedLoreFromCard(activeCard);
+        persistCard();
+      }
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario catalog failed to load.';
     }
+  }
+
+  async function loadScenarioPackage(entry: ScenarioCatalogEntry): Promise<ScenarioPackage> {
+    const [cardResponse, lorebookResponse] = await Promise.all([
+      fetch(`${base}/scenarios/${entry.card}`, { cache: 'no-store' }),
+      fetch(`${base}/scenarios/${entry.lorebook}`, { cache: 'no-store' })
+    ]);
+    if (!cardResponse.ok || !lorebookResponse.ok) {
+      throw new Error(`Bundled scenario package failed to load (${cardResponse.status}/${lorebookResponse.status}).`);
+    }
+    return validateScenarioPackage(entry, await cardResponse.json(), await lorebookResponse.json());
   }
 
   function hasRealTranscript(): boolean {
@@ -2619,18 +2668,7 @@
     noticeMessage = '';
     scenarioLoading = true;
     try {
-      const [cardResponse, lorebookResponse] = await Promise.all([
-        fetch(`${base}/scenarios/${selectedScenario.card}`, { cache: 'no-store' }),
-        fetch(`${base}/scenarios/${selectedScenario.lorebook}`, { cache: 'no-store' })
-      ]);
-      if (!cardResponse.ok || !lorebookResponse.ok) {
-        throw new Error(`Bundled scenario package failed to load (${cardResponse.status}/${lorebookResponse.status}).`);
-      }
-      const packaged = validateScenarioPackage(
-        selectedScenario,
-        await cardResponse.json(),
-        await lorebookResponse.json()
-      );
+      const packaged = await loadScenarioPackage(selectedScenario);
       if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
 
       conversationMode = CONVERSATION_MODE_FICTION;
@@ -3299,31 +3337,54 @@
         {#if portraitCapabilities}
           <label>
             <span>Image model</span>
-            <select value={portraitCapabilities.template.id} disabled={portraitBusy} aria-label="Portrait image model">
-              <option value={portraitCapabilities.template.id}>{portraitCapabilities.template.label}</option>
+            <select value={portraitRequest?.modelTemplate ?? portraitCapabilities.template.id} disabled aria-label="Portrait image model">
+              {#if portraitRequest?.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID && portraitCapabilities.referenceTemplate}
+                <option value={portraitCapabilities.referenceTemplate.id}>{portraitCapabilities.referenceTemplate.label}</option>
+              {:else}
+                <option value={portraitCapabilities.template.id}>{portraitCapabilities.template.label}</option>
+              {/if}
             </select>
           </label>
-          <label>
-            <span>Subject</span>
-            <input bind:value={portraitSubject} on:change={persistPortraitSettings} maxlength="500" disabled={portraitBusy} aria-label="Portrait subject" />
-          </label>
-          <label>
-            <span>Subject LoRA</span>
-            <select bind:value={portraitLora} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait subject LoRA">
-              <option value="">None</option>
-              {#each portraitCapabilities.loras as lora}
-                <option value={lora}>{lora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>Attire</span>
-            <input bind:value={portraitAttire} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait attire" />
-          </label>
-          <label>
-            <span>Setting</span>
-            <input bind:value={portraitSetting} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait setting" />
-          </label>
+          {#if scenarioPortraitProfile}
+            <label>
+              <span>Character</span>
+              <input value={scenarioPortraitProfile.displayName} disabled aria-label="Portrait character" />
+            </label>
+            <label>
+              <span>Identity</span>
+              <input value="Canonical reference locked" disabled aria-label="Portrait identity source" />
+            </label>
+            <label>
+              <span>Attire</span>
+              <input value={scenarioPortraitProfile.attire} disabled aria-label="Portrait attire" />
+            </label>
+            <label>
+              <span>Setting</span>
+              <input value={scenarioPortraitProfile.setting} disabled aria-label="Portrait setting" />
+            </label>
+          {:else}
+            <label>
+              <span>Subject</span>
+              <input bind:value={portraitSubject} on:change={persistPortraitSettings} maxlength="500" disabled={portraitBusy} aria-label="Portrait subject" />
+            </label>
+            <label>
+              <span>Subject LoRA</span>
+              <select bind:value={portraitLora} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait subject LoRA">
+                <option value="">None</option>
+                {#each portraitCapabilities.loras as lora}
+                  <option value={lora}>{lora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span>Attire</span>
+              <input bind:value={portraitAttire} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait attire" />
+            </label>
+            <label>
+              <span>Setting</span>
+              <input bind:value={portraitSetting} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait setting" />
+            </label>
+          {/if}
           <div class="portrait-grid">
             <label>
               <span>Aspect</span>
@@ -3338,7 +3399,12 @@
               </select>
             </label>
           </div>
-          <small class="prompt-guide">{portraitCapabilities.template.promptGuide}</small>
+          <small class="prompt-guide">{scenarioPortraitProfile && portraitCapabilities.referenceTemplate
+            ? portraitCapabilities.referenceTemplate.promptGuide
+            : portraitCapabilities.template.promptGuide}</small>
+          {#if isScenarioCard(activeCard) && !scenarioPortraitProfile}
+            <div class="sidecar-error" role="alert">This scenario has no validated portrait identity. No portrait will be generated.</div>
+          {/if}
           {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
           <button on:click={() => void generatePortrait()} disabled={portraitBusy || !portraitRequest || !expressionsEnabled || !portraitPersistenceAvailable}>
             {portraitBusy ? 'Generating…' : portraitCurrent ? 'Regenerate portrait' : 'Generate portrait'}
