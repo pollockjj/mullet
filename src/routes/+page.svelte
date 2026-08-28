@@ -732,11 +732,11 @@
           <div class="lore-setting-grid">
             <label>
               <span>Depth</span>
-              <input type="number" min="0" max="1000" step="1" bind:value={loreSettings.scanDepth} on:change={persistLoreSettings} disabled={streaming} />
+              <input type="number" min="0" max="1000" step="1" bind:value={loreSettings.scanDepth} on:change={() => persistLoreSettings()} disabled={streaming} />
             </label>
             <label>
               <span>Context %</span>
-              <input type="number" min="1" max="100" step="1" bind:value={loreSettings.budgetPercent} on:change={persistLoreSettings} disabled={streaming} />
+              <input type="number" min="1" max="100" step="1" bind:value={loreSettings.budgetPercent} on:change={() => persistLoreSettings()} disabled={streaming} />
             </label>
             <label>
               <span>Minimum fired</span>
@@ -744,7 +744,7 @@
             </label>
             <label>
               <span>Maximum depth</span>
-              <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivationsDepthMax} on:change={persistLoreSettings} disabled={streaming} />
+              <input type="number" min="0" max="100" step="1" bind:value={loreSettings.minActivationsDepthMax} on:change={() => persistLoreSettings()} disabled={streaming} />
             </label>
             <label>
               <span>Recursion cap</span>
@@ -752,15 +752,15 @@
             </label>
             <label>
               <span>Insertion strategy</span>
-              <select bind:value={loreSettings.characterStrategy} on:change={persistLoreSettings} disabled={streaming}>
+              <select bind:value={loreSettings.characterStrategy} on:change={() => persistLoreSettings()} disabled={streaming}>
                 <option value={0}>Sorted Evenly</option>
                 <option value={1}>Character Lore First</option>
                 <option value={2}>Global Lore First</option>
               </select>
             </label>
           </div>
-          <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={persistLoreSettings} disabled={streaming} /> Recursive scanning</label>
-          <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={persistLoreSettings} disabled={streaming} /> Whole-word matching</label>
+          <label class="check-row"><input type="checkbox" bind:checked={loreSettings.recursive} on:change={() => persistLoreSettings()} disabled={streaming} /> Recursive scanning</label>
+          <label class="check-row"><input type="checkbox" bind:checked={loreSettings.matchWholeWords} on:change={() => persistLoreSettings()} disabled={streaming} /> Whole-word matching</label>
           <small>Minimum fired and recursion cap are mutually exclusive; the last nonzero edit wins.</small>
           <small>{lastLoreBudget || Math.round(loreSettings.budgetPercent * Math.max(1, loreSettings.maxContextTokens - tokenLimit) / 100)}-token budget · server tokenizer</small>
         </details>
