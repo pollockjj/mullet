@@ -46,6 +46,7 @@
     MAX_SUPPLEMENTAL_LOREBOOKS,
     appendLivingHistoryBoundary,
     assembleSupplementalLorebooks,
+    authoritativeLivingHistoryEpoch,
     currentLivingHistoryRequest,
     livingHistoryAutomaticUpdateDue,
     livingHistoryReadyForChat,
@@ -329,12 +330,13 @@
     conversationId = isSidecarConversationId(savedConversationId) ? savedConversationId : crypto.randomUUID();
     localStorage.setItem(conversationIdStorageKey, conversationId);
     const savedLivingHistoryEpoch = localStorage.getItem(livingHistoryEpochStorageKey);
-    livingHistoryEpoch = isSidecarConversationId(savedLivingHistoryEpoch) ? savedLivingHistoryEpoch : crypto.randomUUID();
+    const allowLegacyLivingHistory = !isSidecarConversationId(savedLivingHistoryEpoch);
+    livingHistoryEpoch = allowLegacyLivingHistory ? crypto.randomUUID() : savedLivingHistoryEpoch;
     localStorage.setItem(livingHistoryEpochStorageKey, livingHistoryEpoch);
     window.addEventListener('storage', handleLivingHistoryEpochChange);
     livingHistoryEnabled = localStorage.getItem(livingHistoryEnabledStorageKey) === 'true';
     restoreLivingHistoryBoundaries();
-    void restoreLivingHistory();
+    void restoreLivingHistory(allowLegacyLivingHistory);
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     restorePortraitSettings();
@@ -597,12 +599,13 @@
   }
 
   function handleLivingHistoryEpochChange(event: StorageEvent) {
-    if (
-      event.key !== livingHistoryEpochStorageKey
-      || !isSidecarConversationId(event.newValue)
-      || event.newValue === livingHistoryEpoch
-    ) return;
-    livingHistoryEpoch = event.newValue;
+    if (event.key !== livingHistoryEpochStorageKey) return;
+    const authoritativeEpoch = authoritativeLivingHistoryEpoch(
+      livingHistoryEpoch,
+      localStorage.getItem(livingHistoryEpochStorageKey)
+    );
+    if (authoritativeEpoch === livingHistoryEpoch) return;
+    livingHistoryEpoch = authoritativeEpoch;
     livingHistoryGeneration += 1;
     livingHistoryController?.abort();
     livingHistoryResult = null;
@@ -612,25 +615,26 @@
     livingHistoryPersistenceReady = true;
   }
 
-  async function restoreLivingHistory() {
+  async function restoreLivingHistory(allowLegacy = false) {
     const restoreGeneration = livingHistoryGeneration;
     const restoreConversationId = conversationId;
     const restoreEpoch = livingHistoryEpoch;
     try {
       const restored = await restoreLivingHistoryResult({
-        load: loadStoredLivingHistory,
+        load: () => loadStoredLivingHistory(restoreEpoch, allowLegacy),
         isCurrent: () => restoreGeneration === livingHistoryGeneration
           && restoreConversationId === conversationId
           && restoreEpoch === livingHistoryEpoch
           && localStorage.getItem(livingHistoryEpochStorageKey) === restoreEpoch,
         accepts: (result) => livingHistoryResultAppliesToMessages(result, restoreConversationId, messages),
+        install: (current) => {
+          livingHistoryResult = current;
+          livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > current.source.messageCount);
+          persistLivingHistoryBoundaries();
+        },
         exclusive: runStoredLivingHistoryExclusive
       });
-      if (restored) {
-        livingHistoryResult = restored;
-        livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > restored.source.messageCount);
-        persistLivingHistoryBoundaries();
-      }
+      void restored;
     } catch (cause) {
       disableLivingHistoryPersistence(cause);
     } finally {
@@ -742,7 +746,7 @@
       };
       try {
         await commitLivingHistoryResult(result, {
-          save: saveStoredLivingHistory,
+          save: (current) => saveStoredLivingHistory(current, selectedEpoch),
           isCurrent,
           discard: rollbackStoredLivingHistoryWrite,
           install: (current) => {

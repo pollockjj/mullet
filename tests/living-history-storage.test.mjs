@@ -33,12 +33,29 @@ test('persists only the bounded derived result rather than raw sidecar turns', (
 
 test('loads writer envelopes while retaining legacy direct-result compatibility', () => {
   const legacy = result();
+  const epochA = '11111111-1111-4111-8111-111111111111';
+  const epochB = '22222222-2222-4222-8222-222222222222';
   assert.deepEqual(unwrapStoredLivingHistory(legacy), legacy);
   assert.deepEqual(unwrapStoredLivingHistory({
     spec: STORED_LIVING_HISTORY_SPEC,
     writeId: 'writer-a',
+    epoch: epochA,
     result: legacy
   }), legacy);
+  assert.deepEqual(unwrapStoredLivingHistory(legacy, epochA, true), legacy);
+  assert.equal(unwrapStoredLivingHistory(legacy, epochA, false), null);
+  assert.deepEqual(unwrapStoredLivingHistory({
+    spec: STORED_LIVING_HISTORY_SPEC,
+    writeId: 'writer-a',
+    epoch: epochA,
+    result: legacy
+  }, epochA, false), legacy);
+  assert.equal(unwrapStoredLivingHistory({
+    spec: STORED_LIVING_HISTORY_SPEC,
+    writeId: 'writer-a',
+    epoch: epochA,
+    result: legacy
+  }, epochB, false), null);
   assert.throws(
     () => unwrapStoredLivingHistory({ spec: STORED_LIVING_HISTORY_SPEC, writeId: '' }),
     /envelope is invalid/
@@ -160,13 +177,37 @@ test('does not resurrect history when clear lands during a delayed restore', asy
   const delayedLoad = new Promise((resolve) => { resolveLoad = resolve; });
   let current = true;
   let accepted = false;
+  let installed = false;
   const restoring = restoreLivingHistoryResult({
     load: async () => delayedLoad,
     isCurrent: () => current,
-    accepts: () => { accepted = true; return true; }
+    accepts: () => { accepted = true; return true; },
+    install: () => { installed = true; }
   });
   current = false;
   resolveLoad(result());
   assert.equal(await restoring, null);
   assert.equal(accepted, false);
+  assert.equal(installed, false);
+});
+
+test('installs a restored result before releasing the storage lock', async () => {
+  let lockHeld = false;
+  let installedWhileLocked = false;
+  const restored = await restoreLivingHistoryResult({
+    load: async () => result(),
+    isCurrent: () => true,
+    accepts: () => true,
+    install: () => { installedWhileLocked = lockHeld; },
+    exclusive: async (operation) => {
+      lockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        lockHeld = false;
+      }
+    }
+  });
+  assert.equal(restored?.output.revision, 1);
+  assert.equal(installedWhileLocked, true);
 });

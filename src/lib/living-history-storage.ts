@@ -11,6 +11,7 @@ export const STORED_LIVING_HISTORY_SPEC = 'mullet_stored_living_history_v1' as c
 type StoredLivingHistoryEnvelope = {
   spec: typeof STORED_LIVING_HISTORY_SPEC;
   writeId: string;
+  epoch: string;
   result: LivingHistoryResult;
 };
 
@@ -25,7 +26,7 @@ export type LivingHistoryCommitOperations = {
   save: (result: LivingHistoryResult) => Promise<LivingHistoryWriteReceipt>;
   isCurrent: () => boolean;
   discard: (receipt: LivingHistoryWriteReceipt) => Promise<void>;
-  install: (result: LivingHistoryResult) => void;
+  install: (result: LivingHistoryResult, receipt: LivingHistoryWriteReceipt) => void;
   exclusive?: LivingHistoryExclusiveRunner;
 };
 
@@ -33,6 +34,7 @@ export type LivingHistoryRestoreOperations = {
   load: () => Promise<unknown | null>;
   isCurrent: () => boolean;
   accepts: (result: LivingHistoryResult) => boolean;
+  install: (result: LivingHistoryResult) => void;
   exclusive?: LivingHistoryExclusiveRunner;
 };
 
@@ -40,11 +42,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function unwrapStoredLivingHistory(value: unknown): unknown | null {
-  if (value === null || !isRecord(value) || value.spec !== STORED_LIVING_HISTORY_SPEC) return value;
+function boundedStorageId(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 200) {
+    throw new Error(`${name} is invalid`);
+  }
+  return value;
+}
+
+export function unwrapStoredLivingHistory(
+  value: unknown,
+  expectedEpoch: string | null = null,
+  allowLegacy = true
+): unknown | null {
+  if (expectedEpoch !== null) boundedStorageId(expectedEpoch, 'living-history epoch');
+  if (value === null) return null;
+  if (!isRecord(value) || value.spec !== STORED_LIVING_HISTORY_SPEC) {
+    return expectedEpoch !== null && !allowLegacy ? null : value;
+  }
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('result' in value)) {
     throw new Error('stored living-history envelope is invalid');
   }
+  if (value.epoch === undefined) return expectedEpoch !== null && !allowLegacy ? null : value.result;
+  const storedEpoch = boundedStorageId(value.epoch, 'stored living-history epoch');
+  if (expectedEpoch !== null && storedEpoch !== expectedEpoch) return null;
   return value.result;
 }
 
@@ -69,33 +89,60 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function loadStoredLivingHistory(): Promise<unknown | null> {
+export async function loadStoredLivingHistory(expectedEpoch: string, allowLegacy = false): Promise<unknown | null> {
+  boundedStorageId(expectedEpoch, 'living-history epoch');
   const database = await openDatabase();
+  let loaded: LivingHistoryResult | null = null;
   try {
-    return await new Promise((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readonly');
-      const request = transaction.objectStore(STORE_NAME).get(ACTIVE_HISTORY_KEY);
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(ACTIVE_HISTORY_KEY);
       request.onsuccess = () => {
         try {
-          resolve(unwrapStoredLivingHistory(request.result ?? null));
+          const raw = request.result ?? null;
+          const unwrapped = unwrapStoredLivingHistory(raw, expectedEpoch, allowLegacy);
+          if (unwrapped !== null) {
+            loaded = normalizeLivingHistoryResult(unwrapped);
+            const epochBound = isRecord(raw)
+              && raw.spec === STORED_LIVING_HISTORY_SPEC
+              && typeof raw.epoch === 'string';
+            if (!epochBound) {
+              store.put({
+                spec: STORED_LIVING_HISTORY_SPEC,
+                writeId: globalThis.crypto.randomUUID(),
+                epoch: expectedEpoch,
+                result: loaded
+              } satisfies StoredLivingHistoryEnvelope, ACTIVE_HISTORY_KEY);
+            }
+          }
         } catch (cause) {
           reject(cause);
+          transaction.abort();
         }
       };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB living-history read failed'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB living-history read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB living-history read aborted'));
     });
+    return loaded;
   } finally {
     database.close();
   }
 }
 
-export async function saveStoredLivingHistory(result: LivingHistoryResult): Promise<LivingHistoryWriteReceipt> {
+export async function saveStoredLivingHistory(
+  result: LivingHistoryResult,
+  epoch: string
+): Promise<LivingHistoryWriteReceipt> {
   const normalized = normalizeLivingHistoryResult(result);
+  const normalizedEpoch = boundedStorageId(epoch, 'living-history epoch');
   const writeId = globalThis.crypto.randomUUID();
   const envelope: StoredLivingHistoryEnvelope = {
     spec: STORED_LIVING_HISTORY_SPEC,
     writeId,
+    epoch: normalizedEpoch,
     result: normalized
   };
   const database = await openDatabase();
@@ -176,7 +223,7 @@ export async function commitLivingHistoryResult(
       await operations.discard(receipt);
       return false;
     }
-    operations.install(normalized);
+    operations.install(normalized, receipt);
     return true;
   };
   return operations.exclusive ? operations.exclusive(execute) : execute();
@@ -190,6 +237,7 @@ export async function restoreLivingHistoryResult(
     if (!operations.isCurrent() || stored === null) return null;
     const normalized = normalizeLivingHistoryResult(stored);
     if (!operations.accepts(normalized) || !operations.isCurrent()) return null;
+    operations.install(normalized);
     return normalized;
   };
   return operations.exclusive ? operations.exclusive(execute) : execute();

@@ -1,4 +1,5 @@
 import type { ImportedLorebook } from './lorebook.ts';
+import { isSidecarConversationId } from './sidecar.ts';
 import {
   LIVING_HISTORY_INTERVAL_MESSAGES,
   buildLivingHistoryRequest,
@@ -68,6 +69,10 @@ export function livingHistoryAutomaticUpdateDue(pendingMessages: number): boolea
 
 export function livingHistoryReadyForChat(enabled: boolean, persistenceReady: boolean): boolean {
   return !enabled || persistenceReady;
+}
+
+export function authoritativeLivingHistoryEpoch(currentEpoch: string, storedEpoch: unknown): string {
+  return isSidecarConversationId(storedEpoch) ? storedEpoch : currentEpoch;
 }
 
 export function currentLivingHistoryRequest(

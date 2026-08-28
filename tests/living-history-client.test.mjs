@@ -5,6 +5,7 @@ import {
   MAX_SUPPLEMENTAL_LOREBOOKS,
   appendLivingHistoryBoundary,
   assembleSupplementalLorebooks,
+  authoritativeLivingHistoryEpoch,
   currentLivingHistoryRequest,
   livingHistoryAutomaticUpdateDue,
   livingHistoryReadyForChat,
@@ -56,6 +57,15 @@ test('blocks the first chat until enabled history finishes restoring', () => {
   assert.equal(livingHistoryReadyForChat(true, false), false);
   assert.equal(livingHistoryReadyForChat(true, true), true);
   assert.equal(livingHistoryReadyForChat(false, false), true);
+});
+
+test('uses the authoritative stored epoch instead of a stale event payload', () => {
+  const epochA = '11111111-1111-4111-8111-111111111111';
+  const epochB = '22222222-2222-4222-8222-222222222222';
+  const staleEventPayload = epochA;
+  assert.notEqual(staleEventPayload, epochB);
+  assert.equal(authoritativeLivingHistoryEpoch(epochB, epochB), epochB);
+  assert.equal(authoritativeLivingHistoryEpoch(epochA, epochB), epochB);
 });
 
 test('appends one finalized boundary idempotently and preserves later pending work', () => {
