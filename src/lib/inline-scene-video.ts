@@ -5,38 +5,63 @@ import {
   type InlineSceneAspectRatio,
   type InlineSceneImageRequest
 } from './inline-scene.ts';
-import { LTX25_PORTRAIT_VIDEO_TEMPLATE } from './portrait-video.ts';
 import { sha256Hex } from './sha256.ts';
 
-export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v1' as const;
-export const INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-scene-i2v-distilled-v1' as const;
+export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v2' as const;
+export const INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-i2v-turbo-v1' as const;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
-export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 2 as const;
+export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 5 as const;
 export const INLINE_SCENE_VIDEO_FPS = 24 as const;
-export const INLINE_SCENE_VIDEO_FRAMES = 49 as const;
+export const INLINE_SCENE_VIDEO_FRAMES = 124 as const;
 export const INLINE_SCENE_VIDEO_MODE = 'i2v' as const;
 
 export const INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '3:2', width: 576, height: 384 },
-  { aspectRatio: '4:3', width: 512, height: 384 },
-  { aspectRatio: '5:4', width: 640, height: 512 },
-  { aspectRatio: '16:9', width: 1024, height: 576 }
+  { aspectRatio: '3:2', width: 1152, height: 768 },
+  { aspectRatio: '4:3', width: 1024, height: 768 },
+  { aspectRatio: '5:4', width: 960, height: 768 },
+  { aspectRatio: '16:9', width: 1344, height: 768 }
 ] as const);
 
-export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
+export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   id: INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  label: 'LTX 2.5 Distilled I2V',
-  modelFamily: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFamily,
-  modelFiles: LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles,
-  requiredNodes: LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-  outputNode: '31',
-  multiple: 64,
-  sampler: LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler,
-  firstPassSigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.firstPassSigmas,
-  secondPassSigmas: LTX25_PORTRAIT_VIDEO_TEMPLATE.secondPassSigmas,
-  codec: LTX25_PORTRAIT_VIDEO_TEMPLATE.codec,
-  crf: LTX25_PORTRAIT_VIDEO_TEMPLATE.crf,
-  promptGuide: 'locked landscape camera, restrained natural motion, preserve every visible subject and object, no cuts'
+  label: 'MiniMax H3 FL2VA Turbo',
+  modelFamily: 'minimax-h3-fl2va',
+  modelFiles: {
+    unet: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
+    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
+    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
+    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
+    turboLora: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'MiniMaxH3ImageToVideo',
+    'BasicGuider',
+    'KSamplerSelect',
+    'BasicScheduler',
+    'RandomNoise',
+    'SamplerCustomAdvanced',
+    'VAEDecode',
+    'VAEDecodeAudio',
+    'CreateVideo',
+    'SaveVideo',
+    'LoraLoaderModelOnly'
+  ],
+  outputNode: '15',
+  multiple: 32,
+  shortEdge: 768,
+  maxPixels: 768 * 1344,
+  sampler: 'res_multistep',
+  scheduler: 'simple',
+  steps: 4,
+  denoise: 1,
+  format: 'auto',
+  codec: 'auto',
+  bitDepth: 8,
+  promptGuide: 'one continuous shot from the supplied first frame, coherent physical motion, native synchronized stereo ambience, no cuts'
 } as const);
 
 export type InlineSceneVideoSource = {
@@ -62,8 +87,8 @@ export type InlineSceneVideoRequest = {
 };
 
 export type InlineSceneVideoCapabilities = {
-  spec: 'mullet_inline_scene_video_capabilities_v1';
-  template: typeof LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
+  spec: 'mullet_inline_scene_video_capabilities_v2';
+  template: typeof MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
   modes: readonly [typeof INLINE_SCENE_VIDEO_MODE];
   aspectRatios: typeof INLINE_SCENE_VIDEO_DIMENSIONS;
   durations: readonly [typeof INLINE_SCENE_VIDEO_DURATION_SECONDS];
@@ -108,7 +133,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const INPUT_IMAGE_PATTERN = /^scene-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
 const dimensionMap = new Map(INLINE_SCENE_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
-const NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, new subjects, new objects, camera cuts, camera shake, black frames';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -267,15 +291,15 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
   const normalized = normalizeInlineSceneVideoRequest(request);
   return [
     normalized.source.sceneRequest.prompt,
-    'Animate only the supplied still while preserving every visible subject, identity, attire, object, and spatial position.',
-    'The camera remains locked in the same landscape composition.',
-    'Continue restrained natural motion already implied by the still; do not introduce new action.',
-    'The final pose returns close to the first pose for replay looping.',
-    'No camera movement, no cuts, no speech, no new subjects, no new objects, no text, no black frames.'
+    'The video opens exactly on the supplied first frame.',
+    'Preserve every visible subject, identity, attire, object, and spatial relationship while continuing only restrained physical motion implied by the scene.',
+    'Use one continuous landscape shot with no cuts, no new subjects, no new objects, no text, and no black frames.',
+    'End in a composition close to the opening frame for clean replay.',
+    'Audio: generate synchronized diegetic room tone, environmental ambience, and quiet physical sounds implied by visible movement; no dialogue, narration, or music.'
   ].join(' ');
 }
 
-export function buildLtx25InlineSceneVideoWorkflow(
+export function buildMiniMaxH3InlineSceneVideoWorkflow(
   request: InlineSceneVideoRequest,
   sceneInput: InlineSceneVideoInputReference,
   seed: number
@@ -289,60 +313,45 @@ export function buildLtx25InlineSceneVideoWorkflow(
   ) throw new Error('inline-scene video input reference is invalid');
   const validatedSeed = integer(seed, 'inline-scene video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = inlineSceneVideoDimensions(normalized.aspectRatio);
+  const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
   return {
-    '1': { class_type: 'LoadImage', inputs: { image: sceneInput.subfolder + '/' + sceneInput.name } },
-    '2': { class_type: 'LTXVPreprocess', inputs: { image: ['1', 0], img_compression: 18 } },
-    '3': { class_type: 'UNETLoader', inputs: { unet_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
-    '4': { class_type: 'CLIPLoader', inputs: { clip_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.clip, type: 'ltxv', device: 'default' } },
-    '5': { class_type: 'VAELoader', inputs: { vae_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.videoVae } },
-    '6': { class_type: 'VAELoader', inputs: { vae_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.audioVae } },
-    '7': { class_type: 'LatentUpscaleModelLoader', inputs: { model_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.latentUpscaler } },
-    '8': { class_type: 'CLIPTextEncode', inputs: { text: buildInlineSceneVideoPrompt(normalized), clip: ['4', 0] } },
-    '9': { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE_PROMPT, clip: ['4', 0] } },
-    '10': { class_type: 'LTXVConditioning', inputs: { positive: ['8', 0], negative: ['9', 0], frame_rate: fps } },
-    '11': { class_type: 'EmptyLTXVLatentVideo', inputs: { width: width / 2, height: height / 2, length: frames, batch_size: 1 } },
-    '12': { class_type: 'LTXVImgToVideoInplace', inputs: { vae: ['5', 0], image: ['2', 0], latent: ['11', 0], strength: 0.7, bypass: false } },
-    '13': { class_type: 'LTXVEmptyLatentAudio', inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ['6', 0] } },
-    '14': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['12', 0], audio_latent: ['13', 0] } },
-    '15': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['10', 0], negative: ['10', 1], video_cfg: 1, audio_cfg: 1 } },
-    '16': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '17': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.sampler } },
-    '18': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.firstPassSigmas } },
-    '19': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['16', 0], guider: ['15', 0], sampler: ['17', 0], sigmas: ['18', 0], latent_image: ['14', 0] } },
-    '20': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['19', 0] } },
-    '21': { class_type: 'LTXVLatentUpsampler', inputs: { samples: ['20', 0], upscale_model: ['7', 0], vae: ['5', 0] } },
-    '22': { class_type: 'LTXVImgToVideoInplace', inputs: { vae: ['5', 0], image: ['2', 0], latent: ['21', 0], strength: 1, bypass: false } },
-    '23': { class_type: 'LTXVConcatAVLatent', inputs: { video_latent: ['22', 0], audio_latent: ['20', 1] } },
-    '24': { class_type: 'LTXVDualCFGGuider', inputs: { model: ['3', 0], positive: ['10', 0], negative: ['10', 1], video_cfg: 1, audio_cfg: 1 } },
-    '25': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed + 42 <= Number.MAX_SAFE_INTEGER ? validatedSeed + 42 : validatedSeed - 42 } },
-    '26': { class_type: 'KSamplerSelect', inputs: { sampler_name: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.sampler } },
-    '27': { class_type: 'ManualSigmas', inputs: { sigmas: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.secondPassSigmas } },
-    '28': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['25', 0], guider: ['24', 0], sampler: ['26', 0], sigmas: ['27', 0], latent_image: ['23', 0] } },
-    '29': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['28', 0] } },
-    '30': { class_type: 'VAEDecodeTiled', inputs: { samples: ['29', 0], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
-    '31': {
-      class_type: 'SaveWEBM',
-      inputs: {
-        images: ['30', 0],
-        filename_prefix: 'mullet/scene-motion',
-        codec: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.codec,
-        fps,
-        crf: LTX25_INLINE_SCENE_VIDEO_TEMPLATE.crf
-      }
-    }
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
+    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
+    '5': { class_type: 'LoadImage', inputs: { image: sceneInput.subfolder + '/' + sceneInput.name } },
+    '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
+      clip: ['2', 0],
+      vae: ['3', 0],
+      prompt: buildInlineSceneVideoPrompt(normalized),
+      width,
+      height,
+      length: frames,
+      first_frame: ['5', 0]
+    } },
+    '7': { class_type: 'BasicGuider', inputs: { model: ['16', 0], conditioning: ['6', 0] } },
+    '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '9': { class_type: 'BasicScheduler', inputs: { model: ['16', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
+    '10': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
+    '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
+    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
+    '13': { class_type: 'VAEDecodeAudio', inputs: { samples: ['11', 0], vae: ['4', 0] } },
+    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps, audio: ['13', 0], bit_depth: template.bitDepth } },
+    '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: 'mullet/scene-motion', format: template.format, codec: template.codec } },
+    '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } }
   };
 }
 
 export function normalizeInlineSceneVideoCapabilities(value: unknown): InlineSceneVideoCapabilities {
-  if (!isRecord(value) || value.spec !== 'mullet_inline_scene_video_capabilities_v1') {
+  if (!isRecord(value) || value.spec !== 'mullet_inline_scene_video_capabilities_v2') {
     throw new Error('invalid inline-scene video capabilities');
   }
   if (!isRecord(value.template) || value.template.id !== INLINE_SCENE_VIDEO_TEMPLATE_ID) {
     throw new Error('invalid inline-scene video template');
   }
   return {
-    spec: 'mullet_inline_scene_video_capabilities_v1',
-    template: LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
+    spec: 'mullet_inline_scene_video_capabilities_v2',
+    template: MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
     modes: [INLINE_SCENE_VIDEO_MODE],
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
     durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]
