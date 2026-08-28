@@ -68,12 +68,23 @@ function block(timestamp) {
   return element(0xa3, payload);
 }
 
+function malformedXiphLacedBlock(frameCount) {
+  const payload = new Uint8Array(5);
+  payload[0] = 0x81;
+  new DataView(payload.buffer).setInt16(1, 0, false);
+  payload[3] = 0x82;
+  payload[4] = frameCount - 1;
+  return element(0xa3, payload);
+}
+
 export function buildVp9WebmFixture({
   width = 1024,
   height = 576,
   frames = 49,
   fps = 24,
-  durationUnits = Math.round(frames * 1000 / fps)
+  durationUnits = Math.round(frames * 1000 / fps),
+  timestamps = Array.from({ length: frames }, (_, index) => Math.round(index * 1000 / fps)),
+  malformedXiphLacing = false
 } = {}) {
   const ebml = element(0x1a45dfa3, element(0x4282, string('webm')));
   const info = element(0x1549a966, concat([
@@ -94,7 +105,9 @@ export function buildVp9WebmFixture({
   const tracks = element(0x1654ae6b, track);
   const cluster = element(0x1f43b675, concat([
     element(0xe7, unsigned(0, 1)),
-    ...Array.from({ length: frames }, (_, index) => block(Math.round(index * 1000 / fps)))
+    ...(malformedXiphLacing
+      ? [malformedXiphLacedBlock(frames)]
+      : timestamps.map((timestamp) => block(timestamp)))
   ]));
   return element(0x18538067, concat([info, tracks, cluster]))
     .reduce((parts, byte, index, source) => {

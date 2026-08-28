@@ -26,3 +26,29 @@ test('rejects WebM bytes with wrong dimensions, frame count, frame rate, or dura
   assert.throws(() => validateVp9Webm(buildVp9WebmFixture({ durationUnits: 3000 }), expected), /container duration/);
   assert.throws(() => validateVp9Webm(Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3]), expected), /truncated/);
 });
+
+test('rejects duplicate middle timestamps instead of trusting only the endpoints', () => {
+  const timestamps = Array.from({ length: 49 }, (_, index) => (
+    index === 48 ? 2000 : 0
+  ));
+  assert.throws(
+    () => validateVp9Webm(buildVp9WebmFixture({ timestamps }), expected),
+    /timestamps|cadence/
+  );
+});
+
+test('rejects malformed lacing that only claims the expected frame count', () => {
+  assert.throws(
+    () => validateVp9Webm(buildVp9WebmFixture({ malformedXiphLacing: true }), expected),
+    /lacing/
+  );
+});
+
+test('bounds structural element parsing before adversarial allocation grows with input size', () => {
+  const bytes = new Uint8Array(10_000);
+  for (let offset = 0; offset < bytes.length; offset += 2) {
+    bytes[offset] = 0xec;
+    bytes[offset + 1] = 0x80;
+  }
+  assert.throws(() => validateVp9Webm(bytes, expected), /element count/);
+});

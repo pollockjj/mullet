@@ -27,6 +27,10 @@ type BlockMetadata = {
   relativeTimestamp: number;
 };
 
+type ParseBudget = {
+  remainingElements: number;
+};
+
 const EBML_ID = 0x1a45dfa3;
 const DOC_TYPE_ID = 0x4282;
 const SEGMENT_ID = 0x18538067;
@@ -47,6 +51,8 @@ const CLUSTER_TIMESTAMP_ID = 0xe7;
 const SIMPLE_BLOCK_ID = 0xa3;
 const BLOCK_GROUP_ID = 0xa0;
 const BLOCK_ID = 0xa1;
+const MINIMUM_ELEMENT_BUDGET = 4_096;
+const MAXIMUM_ELEMENT_BUDGET = 200_000;
 
 function safeInteger(value: number, name: string, minimum: number, maximum: number): number {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new Error(name + ' is invalid');
@@ -78,10 +84,12 @@ function readVint(
   return { length, value, unknown };
 }
 
-function elements(bytes: Uint8Array, start: number, end: number): Element[] {
+function elements(bytes: Uint8Array, start: number, end: number, budget: ParseBudget): Element[] {
   const result: Element[] = [];
   let offset = start;
   while (offset < end) {
+    if (budget.remainingElements < 1) throw new Error('WebM structural element count exceeds the parser limit');
+    budget.remainingElements -= 1;
     const id = readVint(bytes, offset, false, 4);
     const size = readVint(bytes, offset + id.length, true, 8);
     if (id.value > BigInt(Number.MAX_SAFE_INTEGER) || size.value > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -139,6 +147,62 @@ function signedInt16(bytes: Uint8Array, offset: number): number {
   return new DataView(bytes.buffer, bytes.byteOffset + offset, 2).getInt16(0, false);
 }
 
+function validateLacing(
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+  lacing: number,
+  frameCount: number
+): void {
+  let offset = start;
+  const sizes: number[] = [];
+  if (lacing === 1) {
+    for (let frame = 0; frame < frameCount - 1; frame += 1) {
+      let size = 0;
+      let part = 255;
+      while (part === 255) {
+        if (offset >= end) throw new Error('WebM Xiph lacing is truncated');
+        part = bytes[offset];
+        offset += 1;
+        size += part;
+        if (!Number.isSafeInteger(size)) throw new Error('WebM Xiph lace size is invalid');
+      }
+      sizes.push(size);
+    }
+  } else if (lacing === 2) {
+    const payloadLength = end - offset;
+    if (payloadLength < frameCount || payloadLength % frameCount !== 0) {
+      throw new Error('WebM fixed lacing payload is invalid');
+    }
+    sizes.push(...Array.from({ length: frameCount - 1 }, () => payloadLength / frameCount));
+  } else if (lacing === 3) {
+    const first = readVint(bytes, offset, true, 8);
+    if (first.unknown || first.value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error('WebM EBML lace size is invalid');
+    }
+    offset += first.length;
+    sizes.push(Number(first.value));
+    for (let frame = 1; frame < frameCount - 1; frame += 1) {
+      const encoded = readVint(bytes, offset, true, 8);
+      if (encoded.unknown) throw new Error('WebM EBML lace delta is invalid');
+      offset += encoded.length;
+      const bias = (1n << BigInt(7 * encoded.length - 1)) - 1n;
+      const nextSize = BigInt(sizes[frame - 1]) + encoded.value - bias;
+      if (nextSize < 1n || nextSize > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('WebM EBML lace size is invalid');
+      }
+      sizes.push(Number(nextSize));
+    }
+  } else {
+    throw new Error('WebM block lacing mode is invalid');
+  }
+  const declaredPayload = sizes.reduce((total, size) => total + size, 0);
+  const finalSize = end - offset - declaredPayload;
+  if (sizes.some((size) => size < 1) || finalSize < 1) {
+    throw new Error('WebM lacing frame payload is invalid');
+  }
+}
+
 function blockMetadata(bytes: Uint8Array, element: Element): BlockMetadata {
   const track = readVint(bytes, element.dataStart, true, 8);
   if (track.unknown || track.value < 1n || track.value > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -148,12 +212,15 @@ function blockMetadata(bytes: Uint8Array, element: Element): BlockMetadata {
   const flagsOffset = timestampOffset + 2;
   if (flagsOffset >= element.dataEnd) throw new Error('WebM block is truncated');
   const flags = bytes[flagsOffset];
-  const lacing = flags & 0x06;
+  const lacing = (flags & 0x06) >> 1;
   let frameCount = 1;
-  if (lacing !== 0) {
-    const countOffset = flagsOffset + 1;
-    if (countOffset >= element.dataEnd) throw new Error('WebM laced block is truncated');
-    frameCount = bytes[countOffset] + 1;
+  const payloadStart = flagsOffset + 1;
+  if (lacing === 0) {
+    if (payloadStart >= element.dataEnd) throw new Error('WebM block frame payload is truncated');
+  } else {
+    if (payloadStart >= element.dataEnd) throw new Error('WebM laced block is truncated');
+    frameCount = bytes[payloadStart] + 1;
+    validateLacing(bytes, payloadStart + 1, element.dataEnd, lacing, frameCount);
   }
   return {
     trackNumber: Number(track.value),
@@ -164,9 +231,10 @@ function blockMetadata(bytes: Uint8Array, element: Element): BlockMetadata {
 
 function clusterBlocks(
   bytes: Uint8Array,
-  cluster: Element
+  cluster: Element,
+  budget: ParseBudget
 ): Array<BlockMetadata & { clusterTimestamp: number }> {
-  const children = elements(bytes, cluster.dataStart, cluster.dataEnd);
+  const children = elements(bytes, cluster.dataStart, cluster.dataEnd, budget);
   const timestampElement = exactlyOne(children, CLUSTER_TIMESTAMP_ID, 'cluster timestamp');
   const clusterTimestamp = unsignedInteger(bytes, timestampElement, 'cluster timestamp');
   const blocks: Array<BlockMetadata & { clusterTimestamp: number }> = [];
@@ -174,7 +242,7 @@ function clusterBlocks(
     if (child.id === SIMPLE_BLOCK_ID) {
       blocks.push({ ...blockMetadata(bytes, child), clusterTimestamp });
     } else if (child.id === BLOCK_GROUP_ID) {
-      const group = elements(bytes, child.dataStart, child.dataEnd);
+      const group = elements(bytes, child.dataStart, child.dataEnd, budget);
       const block = exactlyOne(group, BLOCK_ID, 'block-group block');
       blocks.push({ ...blockMetadata(bytes, block), clusterTimestamp });
     }
@@ -191,18 +259,26 @@ export function validateVp9Webm(
   const expectedHeight = safeInteger(expected.height, 'expected WebM height', 1, 16_384);
   const expectedFrames = safeInteger(expected.frames, 'expected WebM frame count', 1, 100_000);
   const expectedFps = safeInteger(expected.fps, 'expected WebM frame rate', 1, 1_000);
-  const root = elements(bytes, 0, bytes.byteLength);
+  const budget: ParseBudget = {
+    remainingElements: Math.min(
+      MAXIMUM_ELEMENT_BUDGET,
+      Math.max(MINIMUM_ELEMENT_BUDGET, expectedFrames * 4 + 1_024)
+    )
+  };
+  const root = elements(bytes, 0, bytes.byteLength, budget);
   const ebml = exactlyOne(root, EBML_ID, 'EBML header');
   const segment = exactlyOne(root, SEGMENT_ID, 'segment');
-  const ebmlChildren = elements(bytes, ebml.dataStart, ebml.dataEnd);
+  const ebmlChildren = elements(bytes, ebml.dataStart, ebml.dataEnd, budget);
   if (text(bytes, exactlyOne(ebmlChildren, DOC_TYPE_ID, 'EBML document type')) !== 'webm') {
     throw new Error('EBML document type is not WebM');
   }
-  const segmentChildren = elements(bytes, segment.dataStart, segment.dataEnd);
+  const segmentChildren = elements(bytes, segment.dataStart, segment.dataEnd, budget);
+  const infoElement = exactlyOne(segmentChildren, INFO_ID, 'segment info');
   const infoChildren = elements(
     bytes,
-    exactlyOne(segmentChildren, INFO_ID, 'segment info').dataStart,
-    exactlyOne(segmentChildren, INFO_ID, 'segment info').dataEnd
+    infoElement.dataStart,
+    infoElement.dataEnd,
+    budget
   );
   const timecodeScale = unsignedInteger(
     bytes,
@@ -212,14 +288,14 @@ export function validateVp9Webm(
   if (timecodeScale < 1 || timecodeScale > 1_000_000_000) throw new Error('WebM timecode scale is invalid');
   const durationUnits = floatingPoint(bytes, exactlyOne(infoChildren, DURATION_ID, 'duration'), 'duration');
   const tracksElement = exactlyOne(segmentChildren, TRACKS_ID, 'tracks');
-  const trackEntries = elements(bytes, tracksElement.dataStart, tracksElement.dataEnd)
+  const trackEntries = elements(bytes, tracksElement.dataStart, tracksElement.dataEnd, budget)
     .filter((entry) => entry.id === TRACK_ENTRY_ID);
   const videoTracks = trackEntries.map((entry) => {
-    const children = elements(bytes, entry.dataStart, entry.dataEnd);
+    const children = elements(bytes, entry.dataStart, entry.dataEnd, budget);
     const trackType = unsignedInteger(bytes, exactlyOne(children, TRACK_TYPE_ID, 'track type'), 'track type');
     if (trackType !== 1) return null;
     const video = exactlyOne(children, VIDEO_ID, 'video settings');
-    const videoChildren = elements(bytes, video.dataStart, video.dataEnd);
+    const videoChildren = elements(bytes, video.dataStart, video.dataEnd, budget);
     return {
       trackNumber: unsignedInteger(bytes, exactlyOne(children, TRACK_NUMBER_ID, 'track number'), 'track number'),
       codecId: text(bytes, exactlyOne(children, CODEC_ID, 'video codec')),
@@ -245,23 +321,35 @@ export function validateVp9Webm(
   const clusters = segmentChildren.filter((entry) => entry.id === CLUSTER_ID);
   if (clusters.length < 1) throw new Error('WebM contains no clusters');
   const videoBlocks = clusters
-    .flatMap((cluster) => clusterBlocks(bytes, cluster))
+    .flatMap((cluster) => clusterBlocks(bytes, cluster, budget))
     .filter((block) => block.trackNumber === videoTrack.trackNumber);
   const frameCount = videoBlocks.reduce((total, block) => total + block.frameCount, 0);
   if (frameCount !== expectedFrames) throw new Error('WebM frame count does not match the request');
-  const timestamps = videoBlocks.map((block) => block.clusterTimestamp + block.relativeTimestamp);
-  if (timestamps.some((timestamp) => timestamp < 0)) throw new Error('WebM video timestamp is invalid');
-  const firstTimestampNs = Math.min(...timestamps) * timecodeScale;
-  const lastTimestampNs = Math.max(...videoBlocks.map((block) => (
-    block.clusterTimestamp * timecodeScale
-    + block.relativeTimestamp * timecodeScale
-    + (block.frameCount - 1) * videoTrack.defaultDuration
-  )));
-  const expectedSpanNs = (expectedFrames - 1) * 1_000_000_000 / expectedFps;
-  if (
-    firstTimestampNs > timecodeScale
-    || Math.abs(lastTimestampNs - expectedSpanNs) > Math.max(timecodeScale * 2, videoTrack.defaultDuration)
-  ) throw new Error('WebM video timestamps do not match the request');
+  const frameTimestampsNs = videoBlocks.flatMap((block) => {
+    const firstTimestamp = (block.clusterTimestamp + block.relativeTimestamp) * timecodeScale;
+    return Array.from(
+      { length: block.frameCount },
+      (_, frame) => firstTimestamp + frame * videoTrack.defaultDuration
+    );
+  });
+  if (frameTimestampsNs.some((timestamp) => !Number.isSafeInteger(timestamp) || timestamp < 0)) {
+    throw new Error('WebM video timestamp is invalid');
+  }
+  const expectedFrameDurationNs = 1_000_000_000 / expectedFps;
+  const timestampToleranceNs = Math.max(timecodeScale, 2);
+  for (let frame = 0; frame < frameTimestampsNs.length; frame += 1) {
+    const timestamp = frameTimestampsNs[frame];
+    if (Math.abs(timestamp - frame * expectedFrameDurationNs) > timestampToleranceNs) {
+      throw new Error('WebM video timestamps do not match the request');
+    }
+    if (
+      frame > 0
+      && (
+        timestamp <= frameTimestampsNs[frame - 1]
+        || Math.abs(timestamp - frameTimestampsNs[frame - 1] - expectedFrameDurationNs) > timestampToleranceNs
+      )
+    ) throw new Error('WebM video cadence does not match the request');
+  }
   const containerDurationNs = durationUnits * timecodeScale;
   const expectedContainerDurationNs = expectedFrames * 1_000_000_000 / expectedFps;
   if (Math.abs(containerDurationNs - expectedContainerDurationNs) > timecodeScale * 2) {
