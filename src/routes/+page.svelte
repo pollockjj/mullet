@@ -20,6 +20,8 @@
   } from '$lib/lorebook';
   import { extractPngCharacterCard, MAX_CHARACTER_CARD_PNG_BYTES } from '$lib/png-character-card';
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
+  import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
+  import { serializeChatRequest } from '$lib/chat-request-size';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -42,6 +44,9 @@
   let lastLoreActivations: LoreActivation[] | null = null;
   let lastLoreActivationCount = 0;
   let lastLoreBudget = 0;
+  let lorePersistenceReady = false;
+  let lorePersistenceBusy = false;
+  let lorePersistenceAvailable = true;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
   let cardInput: HTMLInputElement;
@@ -53,6 +58,7 @@
   const lorebookStorageKey = 'mullet.active-lorebook';
   const loreEnabledStorageKey = 'mullet.lorebook-enabled';
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
+  const maxActiveLorebookBytes = 24 * 1024 * 1024;
 
   $: activeLorebooks = [
     ...(embeddedLorebook && !importedLorebooks.some((book) => book.name === embeddedLorebook?.name) ? [embeddedLorebook] : []),
@@ -89,16 +95,7 @@
       }
     }
 
-    const savedLorebook = localStorage.getItem(lorebookStorageKey);
-    if (savedLorebook) {
-      try {
-        const stored = JSON.parse(savedLorebook);
-        const storedBooks = Array.isArray(stored) ? stored : [stored];
-        importedLorebooks = storedBooks.slice(0, 20).map((book) => normalizeLorebook(book.raw, book.name, 'imported'));
-      } catch {
-        localStorage.removeItem(lorebookStorageKey);
-      }
-    }
+    void restoreLorebooks();
     loreEnabled = localStorage.getItem(loreEnabledStorageKey) !== 'false';
     const savedLoreSettings = localStorage.getItem(loreSettingsStorageKey);
     if (savedLoreSettings) {
@@ -131,6 +128,48 @@
       return normalizeLorebook(card.data.characterBook, `${card.data.name} lore`, 'embedded');
     } catch {
       return null;
+    }
+  }
+
+  function storedLorebooks(books: ImportedLorebook[]): StoredLorebook[] {
+    return books.map((book) => ({ name: book.name, raw: book.raw }));
+  }
+
+  function validateActiveLorebookSize(books: ImportedLorebook[]) {
+    const bytes = new TextEncoder().encode(JSON.stringify(storedLorebooks(books))).byteLength;
+    if (bytes > maxActiveLorebookBytes) throw new Error('Active lorebooks exceed the 24 MB chat transport limit.');
+  }
+
+  function normalizeStoredLorebooks(stored: StoredLorebook[]): ImportedLorebook[] {
+    if (stored.length > 20) throw new Error('Persisted lorebooks exceed the 20-book active limit.');
+    const restored = stored.map((book) => normalizeLorebook(book.raw, book.name, 'imported'));
+    validateActiveLorebookSize(restored);
+    return restored;
+  }
+
+  async function restoreLorebooks() {
+    try {
+      let stored = await loadStoredLorebooks();
+      const legacy = localStorage.getItem(lorebookStorageKey);
+      if (stored.length === 0 && legacy) {
+        const parsed = JSON.parse(legacy);
+        const legacyBooks = Array.isArray(parsed) ? parsed : [parsed];
+        stored = legacyBooks;
+        const restored = normalizeStoredLorebooks(stored);
+        await saveStoredLorebooks(stored);
+        localStorage.removeItem(lorebookStorageKey);
+        importedLorebooks = restored;
+      } else if (stored.length > 0 && legacy) {
+        importedLorebooks = normalizeStoredLorebooks(stored);
+        localStorage.removeItem(lorebookStorageKey);
+      } else {
+        importedLorebooks = normalizeStoredLorebooks(stored);
+      }
+    } catch (cause) {
+      lorePersistenceAvailable = false;
+      errorMessage = cause instanceof Error ? cause.message : 'Lorebook persistence failed.';
+    } finally {
+      lorePersistenceReady = true;
     }
   }
 
@@ -240,6 +279,7 @@
 
     errorMessage = '';
     noticeMessage = '';
+    lorePersistenceBusy = true;
     try {
       if (file.size > MAX_LOREBOOK_PNG_BYTES) throw new Error('Lorebook exceeds 25 MB.');
       const fallbackName = file.name.replace(/\.(?:json|lorebook|png)$/i, '') || 'Imported lorebook';
@@ -252,7 +292,8 @@
         ? importedLorebooks.map((book, index) => index === sameNameIndex ? imported : book)
         : [...importedLorebooks, imported];
       if (nextBooks.length > 20) throw new Error('At most 20 imported lorebooks can be active.');
-      localStorage.setItem(lorebookStorageKey, JSON.stringify(nextBooks.map((book) => ({ name: book.name, raw: book.raw }))));
+      validateActiveLorebookSize(nextBooks);
+      await saveStoredLorebooks(storedLorebooks(nextBooks));
       importedLorebooks = nextBooks;
       loreEnabled = true;
       persistLoreEnabled();
@@ -262,22 +303,27 @@
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Lorebook import failed.';
     } finally {
+      lorePersistenceBusy = false;
       input.value = '';
     }
   }
 
-  function removeImportedLorebook(bookIndex: number) {
+  async function removeImportedLorebook(bookIndex: number) {
     if (streaming || !importedLorebooks[bookIndex]) return;
     const removedName = importedLorebooks[bookIndex].name;
-    importedLorebooks = importedLorebooks.filter((_book, index) => index !== bookIndex);
-    lastLoreActivations = null;
-    lastLoreBudget = 0;
-    if (importedLorebooks.length) {
-      localStorage.setItem(lorebookStorageKey, JSON.stringify(importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))));
-    } else {
-      localStorage.removeItem(lorebookStorageKey);
+    const nextBooks = importedLorebooks.filter((_book, index) => index !== bookIndex);
+    lorePersistenceBusy = true;
+    try {
+      await saveStoredLorebooks(storedLorebooks(nextBooks));
+      importedLorebooks = nextBooks;
+      lastLoreActivations = null;
+      lastLoreBudget = 0;
+      noticeMessage = `${removedName} removed.`;
+    } catch (cause) {
+      errorMessage = cause instanceof Error ? cause.message : 'Lorebook persistence failed.';
+    } finally {
+      lorePersistenceBusy = false;
     }
-    noticeMessage = `${removedName} removed.`;
   }
 
   function persistLoreEnabled() {
@@ -317,7 +363,7 @@
 
   async function send() {
     const content = draft.trim();
-    if (!content || streaming) return;
+    if (!content || streaming || !lorePersistenceReady) return;
 
     errorMessage = '';
     noticeMessage = '';
@@ -330,20 +376,21 @@
     await scrollToLatest();
 
     try {
+      const requestBody = serializeChatRequest({
+        messages: messages.slice(0, -1),
+        maxTokens: tokenLimit,
+        characterCard: activeCard?.raw ?? null,
+        userName: 'You',
+        loreEnabled,
+        lorebooks: loreEnabled
+          ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
+          : [],
+        lorebookSettings: loreSettings
+      });
       const response = await fetch(`${base}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          messages: messages.slice(0, -1),
-          maxTokens: tokenLimit,
-          characterCard: activeCard?.raw ?? null,
-          userName: 'You',
-          loreEnabled,
-          lorebooks: loreEnabled
-            ? importedLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
-            : [],
-          lorebookSettings: loreSettings
-        }),
+        body: requestBody,
         signal: controller.signal
       });
 
@@ -500,7 +547,7 @@
                   <small>{book.origin} · {book.entries.length} entries</small>
                 </div>
                 {#if book.origin === 'imported'}
-                  <button on:click={() => removeImportedLorebook(importedLorebooks.indexOf(book))} disabled={streaming} aria-label={`Remove ${book.name}`}>×</button>
+                  <button on:click={() => void removeImportedLorebook(importedLorebooks.indexOf(book))} disabled={streaming || lorePersistenceBusy} aria-label={`Remove ${book.name}`}>×</button>
                 {/if}
               </div>
             {/each}
@@ -524,10 +571,10 @@
           type="file"
           accept=".json,.lorebook,.png,application/json,image/png"
           on:change={importLorebook}
-          disabled={streaming}
+          disabled={streaming || !lorePersistenceReady || !lorePersistenceAvailable || lorePersistenceBusy}
           aria-label="Choose a lorebook"
         />
-        <button class="lore-import" on:click={() => loreInput?.click()} disabled={streaming}>
+        <button class="lore-import" on:click={() => loreInput?.click()} disabled={streaming || !lorePersistenceReady || !lorePersistenceAvailable || lorePersistenceBusy}>
           Import lorebook
         </button>
 
@@ -589,7 +636,7 @@
           {#if streaming}
             <button class="stop" on:click={stop}>Stop</button>
           {:else}
-            <button class="send" on:click={send} disabled={!draft.trim()}>Send</button>
+            <button class="send" on:click={send} disabled={!draft.trim() || !lorePersistenceReady}>Send</button>
           {/if}
         </div>
         <div class="composer-meta">

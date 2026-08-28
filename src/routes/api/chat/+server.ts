@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runtime } from '$lib/server/runtime';
 import { countModelTokens, getModelContextTokens } from '$lib/server/model-tokenizer';
+import { RegexSandbox } from '$lib/server/regex-sandbox';
 import { resolveTokenLimit } from '$lib/token-limit';
 import {
   compileCharacterMessages,
@@ -104,12 +105,19 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       if (books.length) {
         const modelContextTokens = await getModelContextTokens(fetch, runtime.modelBaseUrl, runtime.modelId, request.signal);
         const loreSettings = resolveLorebookSettings(body.lorebookSettings, modelContextTokens);
-        loreResult = await scanLorebooks(books, messages, loreSettings, {
-          card: characterCard,
-          userName: userName.trim(),
-          assistantName: runtime.modelId,
-          tokenCount: (content) => countModelTokens(fetch, runtime.modelBaseUrl, content, request.signal)
-        });
+        const regexSandbox = new RegexSandbox();
+        try {
+          loreResult = await scanLorebooks(books, messages, loreSettings, {
+            card: characterCard,
+            userName: userName.trim(),
+            assistantName: runtime.modelId,
+            tokenCount: (content) => countModelTokens(fetch, runtime.modelBaseUrl, content, request.signal),
+            regexTest: (source, flags, haystack) => regexSandbox.test(source, flags, haystack),
+            generationTrigger: 'normal'
+          });
+        } finally {
+          await regexSandbox.dispose();
+        }
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'invalid lorebooks';

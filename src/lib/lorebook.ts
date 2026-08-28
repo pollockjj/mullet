@@ -63,6 +63,8 @@ export type NormalizedLoreEntry = {
   groupWeight: number;
   useGroupScoring: boolean | null;
   outletName: string;
+  triggers: string[];
+  decorators: string[];
   matchCharacterDescription: boolean;
   matchCharacterPersonality: boolean;
   matchScenario: boolean;
@@ -92,6 +94,18 @@ export type LoreDepthInjection = {
   content: string;
 };
 
+export type AuthorNoteSettings = {
+  prompt: string;
+  depth: number;
+  role: 0 | 1 | 2;
+};
+
+export const DEFAULT_AUTHOR_NOTE_SETTINGS: AuthorNoteSettings = Object.freeze({
+  prompt: '',
+  depth: 4,
+  role: 0
+});
+
 export type LoreScanResult = {
   beforeCharacter: string[];
   afterCharacter: string[];
@@ -107,12 +121,20 @@ export type LoreScanResult = {
   usedTokens: number;
 };
 
+export type RegexTestResult = {
+  matched: boolean;
+  invalid?: boolean;
+  timeout?: boolean;
+};
+
 type ScanOptions = {
   card?: ImportedCharacterCard | null;
   userName?: string;
   assistantName?: string;
   random?: () => number;
   tokenCount?: (value: string) => number | Promise<number>;
+  regexTest?: (source: string, flags: string, haystack: string) => RegexTestResult | Promise<RegexTestResult>;
+  generationTrigger?: string;
 };
 
 function isRecord(value: unknown): value is JsonObject {
@@ -156,6 +178,31 @@ function normalizePosition(entry: JsonObject): number {
   return 0;
 }
 
+function parseLoreDecorators(content: string): { decorators: string[]; content: string } {
+  const known = ['@@activate', '@@dont_activate'];
+  if (!content.startsWith('@@')) return { decorators: [], content };
+  const lines = content.split('\n');
+  const decorators: string[] = [];
+  let fallback = false;
+  let stripped = content;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.startsWith('@@')) {
+      stripped = lines.slice(index).join('\n');
+      break;
+    }
+    if (line.startsWith('@@@') && !fallback) continue;
+    const candidate = line.startsWith('@@@') ? line.slice(1) : line;
+    if (known.some((decorator) => candidate.startsWith(decorator))) {
+      decorators.push(candidate);
+      fallback = false;
+    } else {
+      fallback = true;
+    }
+  }
+  return { decorators, content: stripped };
+}
+
 function normalizeEntry(value: unknown, id: string, index: number, format: LorebookFormat): NormalizedLoreEntry | null {
   if (!isRecord(value) || typeof value.content !== 'string') return null;
   const keys = stringArray(value.keys ?? value.key);
@@ -164,6 +211,7 @@ function normalizeEntry(value: unknown, id: string, index: number, format: Loreb
   const rawRole = finiteNumber(extensionValue(value, 'role', 'role'), 0);
   const probability = Math.min(100, Math.max(0, finiteNumber(extensionValue(value, 'probability', 'probability'), 100)));
   const delayUntilRecursion = extensionValue(value, 'delayUntilRecursion', 'delay_until_recursion');
+  const parsedContent = parseLoreDecorators(value.content);
 
   return {
     id: String(value.id ?? value.uid ?? id),
@@ -174,7 +222,7 @@ function normalizeEntry(value: unknown, id: string, index: number, format: Loreb
         : `Entry ${String(value.id ?? value.uid ?? id)}`,
     keys,
     secondaryKeys,
-    content: value.content,
+    content: parsedContent.content,
     enabled: typeof value.enabled === 'boolean' ? value.enabled : value.disable !== true,
     constant: value.constant === true,
     selective: typeof value.selective === 'boolean' ? value.selective : false,
@@ -198,6 +246,8 @@ function normalizeEntry(value: unknown, id: string, index: number, format: Loreb
     groupWeight: Math.max(0, finiteNumber(extensionValue(value, 'groupWeight', 'group_weight'), 100)),
     useGroupScoring: nullableBoolean(extensionValue(value, 'useGroupScoring', 'use_group_scoring')),
     outletName: stringValue(extensionValue(value, 'outletName', 'outlet_name')).trim(),
+    triggers: stringArray(extensionValue(value, 'triggers', 'triggers')),
+    decorators: parsedContent.decorators,
     matchCharacterDescription: extensionValue(value, 'matchCharacterDescription', 'match_character_description') === true,
     matchCharacterPersonality: extensionValue(value, 'matchCharacterPersonality', 'match_character_personality') === true,
     matchScenario: extensionValue(value, 'matchScenario', 'match_scenario') === true,
@@ -384,41 +434,30 @@ export function resolveLorebookSettings(
   };
 }
 
-function isSafeRegexSource(source: string): boolean {
-  if (!source || source.length > 512) return false;
-  if (/\\[1-9]/.test(source) || /\(\?<([=!])/.test(source)) return false;
-  if (/\((?:\\.|[^()])*[+*{](?:\\.|[^()])*\)[+*{]/.test(source)) return false;
-  if (/\((?:\\.|[^()])*\|(?:\\.|[^()])*\)[+*{]/.test(source)) return false;
-  if (/(?:\.\*|\.\+).*(?:\.\*|\.\+)/.test(source)) return false;
-  return true;
+function regexFromSlashNotation(value: string): { source: string; flags: string } | null {
+  const match = value.match(/^\/([\w\W]+?)\/([gimsuy]*)$/);
+  if (!match || match[1].match(/(^|[^\\])\//)) return null;
+  return { source: match[1].replace('\\/', '/'), flags: match[2] };
 }
 
-function compileSafeRegex(source: string, flags = ''): RegExp | null {
-  if (!isSafeRegexSource(source)) return null;
-  try {
-    return new RegExp(source, flags.replace(/[^dimsuv]/g, ''));
-  } catch {
-    return null;
-  }
-}
-
-function regexFromSlashNotation(value: string): RegExp | null {
-  if (!value.startsWith('/')) return null;
-  const finalSlash = value.lastIndexOf('/');
-  if (finalSlash <= 0) return null;
-  const flags = value.slice(finalSlash + 1).replace(/[gy]/g, '');
-  return compileSafeRegex(value.slice(1, finalSlash), flags);
-}
-
-function matchesKey(haystack: string, key: string, entry: NormalizedLoreEntry, settings: LorebookSettings): boolean {
+async function matchesKey(
+  haystack: string,
+  key: string,
+  entry: NormalizedLoreEntry,
+  settings: LorebookSettings,
+  regexTest: NonNullable<ScanOptions['regexTest']>
+): Promise<boolean> {
   const trimmed = key.trim();
   if (!trimmed) return false;
   const slashRegex = regexFromSlashNotation(trimmed);
-  if (slashRegex) return slashRegex.test(haystack);
+  if (slashRegex) {
+    const result = await regexTest(slashRegex.source, slashRegex.flags, haystack);
+    if (!result.invalid) return result.matched;
+  }
 
   const caseSensitive = entry.caseSensitive ?? settings.caseSensitive;
   if (entry.useRegex) {
-    return compileSafeRegex(trimmed, caseSensitive ? '' : 'i')?.test(haystack) ?? false;
+    return (await regexTest(trimmed, caseSensitive ? '' : 'i', haystack)).matched;
   }
 
   const transformedHaystack = caseSensitive ? haystack : haystack.toLowerCase();
@@ -429,14 +468,29 @@ function matchesKey(haystack: string, key: string, entry: NormalizedLoreEntry, s
   return new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`).test(transformedHaystack);
 }
 
-function entryMatches(haystack: string, entry: NormalizedLoreEntry, settings: LorebookSettings, substitute: (value: string) => string): boolean {
+async function entryMatches(
+  haystack: string,
+  entry: NormalizedLoreEntry,
+  settings: LorebookSettings,
+  substitute: (value: string) => string,
+  regexTest: NonNullable<ScanOptions['regexTest']>
+): Promise<boolean> {
   if (entry.constant) return true;
   if (!entry.keys.length) return false;
-  const primary = entry.keys.some((key) => matchesKey(haystack, substitute(key), entry, settings));
+  let primary = false;
+  for (const key of entry.keys) {
+    if (await matchesKey(haystack, substitute(key), entry, settings, regexTest)) {
+      primary = true;
+      break;
+    }
+  }
   if (!primary) return false;
   if (!entry.selective || !entry.secondaryKeys.length) return true;
 
-  const matches = entry.secondaryKeys.map((key) => matchesKey(haystack, substitute(key), entry, settings));
+  const matches: boolean[] = [];
+  for (const key of entry.secondaryKeys) {
+    matches.push(await matchesKey(haystack, substitute(key), entry, settings, regexTest));
+  }
   if (entry.selectiveLogic === 0) return matches.some(Boolean);
   if (entry.selectiveLogic === 1) return !matches.every(Boolean);
   if (entry.selectiveLogic === 2) return !matches.some(Boolean);
@@ -515,15 +569,18 @@ function filterInclusionGroups(
   return candidates.filter((candidate) => survivors.has(candidate));
 }
 
-function entryMatchScore(
+async function entryMatchScore(
   haystack: string,
   entry: NormalizedLoreEntry,
   settings: LorebookSettings,
-  substitute: (value: string) => string
-): number {
+  substitute: (value: string) => string,
+  regexTest: NonNullable<ScanOptions['regexTest']>
+): Promise<number> {
   if (!entry.keys.length) return 0;
-  const primary = entry.keys.filter((key) => matchesKey(haystack, substitute(key), entry, settings)).length;
-  const secondary = entry.secondaryKeys.filter((key) => matchesKey(haystack, substitute(key), entry, settings)).length;
+  let primary = 0;
+  let secondary = 0;
+  for (const key of entry.keys) primary += await matchesKey(haystack, substitute(key), entry, settings, regexTest) ? 1 : 0;
+  for (const key of entry.secondaryKeys) secondary += await matchesKey(haystack, substitute(key), entry, settings, regexTest) ? 1 : 0;
   if (entry.selectiveLogic === 0) return primary + secondary;
   if (entry.selectiveLogic === 3 && secondary === entry.secondaryKeys.length) return primary + secondary;
   return primary;
@@ -557,6 +614,10 @@ export async function scanLorebooks(
     : DEFAULT_LOREBOOK_SETTINGS.maxContextTokens;
   const settings = resolveLorebookSettings(settingsInput, contextTokens);
   const tokenCount = options.tokenCount ?? estimateTokensForTests;
+  const regexTest = options.regexTest ?? (() => {
+    throw new Error('regex sandbox is required for regex lore keys');
+  });
+  const generationTrigger = options.generationTrigger?.trim() || 'normal';
   const random = options.random ?? Math.random;
   const userName = options.userName?.trim() || 'You';
   const assistantName = options.card?.data.nickname || options.card?.data.name || options.assistantName?.trim() || 'Assistant';
@@ -602,11 +663,18 @@ export async function scanLorebooks(
     for (const candidate of candidates) {
       const { book, entry } = candidate;
       if (activated.has(candidate.identity) || failedProbabilityChecks.has(candidate.identity) || !entry.enabled) continue;
+      if (entry.triggers.length > 0 && !entry.triggers.includes(generationTrigger)) continue;
       if (initialScan && entry.delayUntilRecursion > 0) continue;
       if (!initialScan && (entry.excludeRecursion || entry.delayUntilRecursion > currentRecursionDelayLevel)) continue;
+      if (entry.decorators.includes('@@activate')) {
+        candidate.score = 0;
+        matched.push(candidate);
+        continue;
+      }
+      if (entry.decorators.includes('@@dont_activate')) continue;
       const haystack = scanText(historyNewestFirst, entry, settings, recursion, options.card);
-      if (!entryMatches(haystack, entry, settings, substitute)) continue;
-      candidate.score = entryMatchScore(haystack, entry, settings, substitute);
+      if (!await entryMatches(haystack, entry, settings, substitute, regexTest)) continue;
+      candidate.score = await entryMatchScore(haystack, entry, settings, substitute, regexTest);
       matched.push(candidate);
     }
 
@@ -670,7 +738,11 @@ export async function scanLorebooks(
     else if (entry.position === 1) afterCharacter.unshift(content);
     else if (entry.position === 2) authorNoteBefore.unshift(content);
     else if (entry.position === 3) authorNoteAfter.unshift(content);
-    else if (entry.position === 4) depth.push({ depth: entry.depth, role: entry.role, content });
+    else if (entry.position === 4) {
+      const existing = depth.find((injection) => injection.depth === entry.depth && injection.role === entry.role);
+      if (existing) existing.content = `${content}\n${existing.content}`;
+      else depth.push({ depth: entry.depth, role: entry.role, content });
+    }
     else if (entry.position === 5) examplesBefore.unshift(content);
     else if (entry.position === 6) examplesAfter.unshift(content);
     else if (entry.position === 7 && entry.outletName) (outlets[entry.outletName] ??= []).push(content);
@@ -708,10 +780,18 @@ export function injectLoreDepth(history: ChatMessage[], depthEntries: LoreDepthI
   return result;
 }
 
-export function injectLoreContext(history: ChatMessage[], result: LoreScanResult): ChatMessage[] {
-  const authorNote = [...result.authorNoteBefore, ...result.authorNoteAfter].filter(Boolean).join('\n');
+export function injectLoreContext(
+  history: ChatMessage[],
+  result: LoreScanResult,
+  authorNoteSettings: AuthorNoteSettings = DEFAULT_AUTHOR_NOTE_SETTINGS
+): ChatMessage[] {
+  const authorNote = [
+    ...result.authorNoteBefore,
+    authorNoteSettings.prompt,
+    ...result.authorNoteAfter
+  ].filter(Boolean).join('\n');
   const depth = authorNote
-    ? [...result.depth, { depth: 4, role: 0 as const, content: authorNote }]
+    ? [...result.depth, { depth: authorNoteSettings.depth, role: authorNoteSettings.role, content: authorNote }]
     : result.depth;
   return injectLoreDepth(history, depth);
 }

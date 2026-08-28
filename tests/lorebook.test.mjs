@@ -5,6 +5,7 @@ import { compileCharacterMessages, normalizeCharacterCard } from '../src/lib/cha
 import {
   DEFAULT_LOREBOOK_SETTINGS,
   compileUnboundLoreMessages,
+  injectLoreContext,
   injectLoreDepth,
   normalizeLorebook,
   resolveLorebookSettings,
@@ -12,6 +13,15 @@ import {
 } from '../src/lib/lorebook.ts';
 import { extractPngLorebook } from '../src/lib/png-lorebook.ts';
 import { countModelTokens, getModelContextTokens } from '../src/lib/server/model-tokenizer.ts';
+import { RegexSandbox } from '../src/lib/server/regex-sandbox.ts';
+
+const directRegexTest = async (source, flags, haystack) => {
+  try {
+    return { matched: new RegExp(source, flags).test(haystack) };
+  } catch {
+    return { matched: false, invalid: true };
+  }
+};
 
 function nativeEntry(overrides = {}) {
   return {
@@ -145,11 +155,25 @@ test('supports slash regex, canonical regex, invalid regex, and card macros', as
     nativeEntry({ uid: 0, comment: 'Slash', key: ['/liber[a-z]+/i'] }),
     nativeEntry({ uid: 1, comment: 'Canonical regex', key: ['danger\\d+'], use_regex: true }),
     nativeEntry({ uid: 2, comment: 'Invalid regex', key: ['['], use_regex: true }),
-    nativeEntry({ uid: 3, comment: 'Macro', key: ['{{char}}'], content: '{{char}} knows {{user}}.' })
+    nativeEntry({ uid: 3, comment: 'Macro', key: ['{{char}}'], content: '{{char}} knows {{user}}.' }),
+    nativeEntry({ uid: 4, comment: 'Escaped slash', key: ['/a\\/b/i'] }),
+    nativeEntry({ uid: 5, comment: 'All flags', key: ['/.*alpha/gimsuy'] }),
+    nativeEntry({ uid: 6, comment: 'Invalid slash is plaintext', key: ['/[/'] })
   ]);
-  const result = await scanLorebooks([book], history('Avon found Liberator and danger7'), {}, { assistantName: 'Avon', userName: 'John' });
+  const result = await scanLorebooks([book], history('Avon found Liberator, danger7, a/b, alpha, and /[/'), {}, {
+    assistantName: 'Avon',
+    userName: 'John',
+    regexTest: directRegexTest
+  });
 
-  assert.deepEqual(result.activated.map((entry) => entry.name), ['Slash', 'Canonical regex', 'Macro']);
+  assert.deepEqual(result.activated.map((entry) => entry.name), [
+    'Slash',
+    'Canonical regex',
+    'Macro',
+    'Escaped slash',
+    'All flags',
+    'Invalid slash is plaintext'
+  ]);
   assert.match(result.beforeCharacter.join('\n'), /Avon knows John\./);
 });
 
@@ -280,6 +304,33 @@ test('routes all SillyTavern lore positions including named outlets', async () =
   assert.deepEqual(result.outlets, { facts: ['OUTLET'] });
 });
 
+test('groups same-depth same-role entries and wraps author-note lore around the note prompt', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'High', constant: true, position: 4, depth: 2, role: 0, order: 100, content: 'HIGH' }),
+    nativeEntry({ uid: 1, comment: 'Low', constant: true, position: 4, depth: 2, role: 0, order: 90, content: 'LOW' }),
+    nativeEntry({ uid: 2, comment: 'AN top', constant: true, position: 2, content: 'TOP' }),
+    nativeEntry({ uid: 3, comment: 'AN bottom', constant: true, position: 3, content: 'BOTTOM' })
+  ]);
+  const result = await scanLorebooks([book], [], { recursive: false });
+  assert.deepEqual(result.depth, [{ depth: 2, role: 0, content: 'LOW\nHIGH' }]);
+  const injected = injectLoreContext([{ role: 'user', content: 'HISTORY' }], result, { prompt: 'NOTE', depth: 1, role: 2 });
+  assert.deepEqual(injected.find((message) => message.role === 'assistant'), { role: 'assistant', content: 'TOP\nNOTE\nBOTTOM' });
+});
+
+test('honors normal-generation triggers and lore decorators', async () => {
+  const book = nativeBook([
+    nativeEntry({ uid: 0, comment: 'Normal', constant: true, triggers: ['normal'], content: 'NORMAL' }),
+    nativeEntry({ uid: 1, comment: 'Continue only', constant: true, triggers: ['continue'], content: 'CONTINUE' }),
+    nativeEntry({ uid: 2, comment: 'Forced', key: [], content: '@@activate\nFORCED' }),
+    nativeEntry({ uid: 3, comment: 'Suppressed', constant: true, content: '@@dont_activate\nSUPPRESSED' })
+  ]);
+  const normal = await scanLorebooks([book], [], { recursive: false }, { generationTrigger: 'normal' });
+  assert.deepEqual(normal.activated.map((entry) => entry.name), ['Normal', 'Forced']);
+  assert.doesNotMatch(normal.beforeCharacter.join('\n'), /@@activate|SUPPRESSED/);
+  const continued = await scanLorebooks([book], [], { recursive: false }, { generationTrigger: 'continue' });
+  assert.deepEqual(continued.activated.map((entry) => entry.name), ['Continue only', 'Forced']);
+});
+
 test('normalizes NovelAI, Agnai, and Risu lorebook exports', () => {
   const novel = normalizeLorebook({ lorebookVersion: 1, entries: [{ keys: ['n'], text: 'Novel', enabled: true, displayName: 'N' }] });
   const agnai = normalizeLorebook({ kind: 'memory', entries: [{ keywords: ['a'], entry: 'Agnai', enabled: true, name: 'A' }] });
@@ -325,4 +376,17 @@ test('uses the model server context and exact tokenizer contracts', async () => 
     parse_special: true,
     with_pieces: false
   });
+});
+
+test('runs imported regex in a killable worker with a hard timeout', async () => {
+  const sandbox = new RegexSandbox(50);
+  try {
+    assert.deepEqual(await sandbox.test('liber[a-z]+', 'i', 'LIBERATOR'), { matched: true, invalid: false });
+    const started = Date.now();
+    assert.deepEqual(await sandbox.test('^(a+)+$', '', `${'a'.repeat(50_000)}!`), { matched: false, timeout: true });
+    assert.ok(Date.now() - started < 1000);
+    assert.deepEqual(await sandbox.test('recovered', '', 'worker recovered'), { matched: true, invalid: false });
+  } finally {
+    await sandbox.dispose();
+  }
 });
