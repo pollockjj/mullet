@@ -3,9 +3,9 @@ import {
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_CAPABILITIES_SPEC,
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildFlux2Klein9BReferencePortraitWorkflow,
+  buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   portraitDimensions,
   validatePortraitPngDimensions,
@@ -55,7 +55,7 @@ export async function loadPortraitCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<PortraitCapabilities> {
-  const referenceNodes = FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.requiredNodes;
+  const referenceNodes = QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.requiredNodes;
   const paths = [
     '/object_info/UNETLoader',
     '/object_info/CLIPLoader',
@@ -75,15 +75,16 @@ export async function loadPortraitCapabilities(
   if (!unets.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.unet)) throw new Error('ComfyUI is missing the Z-Image Turbo model');
   if (!clips.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.clip)) throw new Error('ComfyUI is missing the Z-Image text encoder');
   if (!vaes.includes(Z_IMAGE_TURBO_TEMPLATE.modelFiles.vae)) throw new Error('ComfyUI is missing the Z-Image VAE');
-  const referenceReady = unets.includes(FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.unet)
-    && clips.includes(FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.clip)
-    && clipTypes.includes('flux2')
-    && vaes.includes(FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.vae)
+  const referenceReady = unets.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet)
+    && clips.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip)
+    && clipTypes.includes('qwen_image')
+    && vaes.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae)
+    && loras.includes(QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.lora)
     && referenceNodeInfo.every((info, index) => nodeAvailable(info, referenceNodes[index]));
   return {
     spec: PORTRAIT_CAPABILITIES_SPEC,
     template: Z_IMAGE_TURBO_TEMPLATE,
-    referenceTemplate: referenceReady ? FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE : null,
+    referenceTemplate: referenceReady ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE : null,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
     loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_TEMPLATE.loraPrefix)).sort()
@@ -116,7 +117,7 @@ function outputImage(entry: Record<string, unknown>, request: PortraitRequest): 
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
   const referenceConditioned = request.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID;
   const outputNode = referenceConditioned
-    ? FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.outputNode
+    ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.outputNode
     : Z_IMAGE_TURBO_TEMPLATE.outputNode;
   if (!isRecord(entry.outputs) || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI portrait history omitted the output node');
@@ -207,7 +208,7 @@ export async function runComfyPortrait(
 ): Promise<ComfyPortraitImage> {
   await assertIdentityReference(fetcher, baseUrl, request, signal);
   const workflow = request.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
-    ? buildFlux2Klein9BReferencePortraitWorkflow(request, seed)
+    ? buildQwenReferencePortraitWorkflow(request, seed)
     : buildZImageTurboWorkflow(request, seed);
   const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
     method: 'POST',

@@ -288,8 +288,8 @@
   let portraitSetting = '';
   let portraitAttire = '';
   let portraitLora = '';
-  const portraitAspectRatio: PortraitAspectRatio = '1:1';
-  let portraitMegapixels: PortraitMegapixels = 0.5;
+  const portraitAspectRatio: PortraitAspectRatio = '2:3';
+  let portraitMegapixels: PortraitMegapixels = 0.9;
   let portraitRequest: PortraitRequest | null = null;
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
@@ -297,7 +297,7 @@
   let portraitMotionEnabled = false;
   let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
   let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
-  let portraitVideoTiming = portraitVideoDimensions('1:1', PORTRAIT_VIDEO_DURATION_SECONDS);
+  let portraitVideoTiming = portraitVideoDimensions('2:3', PORTRAIT_VIDEO_DURATION_SECONDS);
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
@@ -439,7 +439,7 @@
   const portraitSettingStorageKey = 'mullet.portrait-setting';
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
-  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v2';
+  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v3';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
   const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v4';
@@ -2223,8 +2223,10 @@
           referenceImage: profile.referenceImage,
           characterId: profile.id,
           profileFingerprint: profile.fingerprint,
+          promptOverride: profile.expressionPrompts[result.output.expression] ?? null,
           aspectRatio,
-          megapixels
+          megapixels,
+          seed: profile.seed
         });
       }
       return buildPortraitRequest(result, {
@@ -4031,7 +4033,7 @@
                 {#if scenarioPortraitReferenceAvailable && portraitCapabilities.referenceTemplate}
                   <option value={portraitCapabilities.referenceTemplate.id}>{portraitCapabilities.referenceTemplate.label}</option>
                 {:else}
-                  <option value={scenarioPortraitProfile.modelTemplate}>FLUX.2 Klein 9B Distilled · unavailable</option>
+                  <option value={scenarioPortraitProfile.modelTemplate}>Qwen Image Edit 2511 · unavailable</option>
                 {/if}
               </select>
             {:else}
@@ -4089,7 +4091,7 @@
             </label>
           </div>
           {#if scenarioPortraitProfile && !scenarioPortraitReferenceAvailable}
-            <div class="sidecar-error" role="alert">FLUX.2 Klein 9B reference editing is unavailable. No scenario expression portrait will be generated.</div>
+            <div class="sidecar-error" role="alert">Qwen Image Edit 2511 reference editing is unavailable. No scenario expression portrait will be generated.</div>
           {:else}
             <small class="prompt-guide">{scenarioPortraitProfile && portraitCapabilities.referenceTemplate
               ? portraitCapabilities.referenceTemplate.promptGuide
@@ -4603,7 +4605,7 @@
   .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
   .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
-  .portrait.generated { aspect-ratio: 1 / 1; border-color: #49614d; }
+  .portrait.generated { aspect-ratio: 2 / 3; border-color: #49614d; }
   .portrait img, .portrait video { width: 100%; height: 100%; object-fit: cover; }
   .portrait-status { position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border: 1px solid rgba(126,184,141,.65); border-radius: 999px; color: #d9efdd; background: rgba(17,29,20,.82); font: 700 9px/1 ui-monospace, monospace; text-transform: capitalize; backdrop-filter: blur(8px); }
   .portrait-status.stale { border-color: rgba(181,135,84,.65); color: #efd0a8; background: rgba(43,31,20,.82); }

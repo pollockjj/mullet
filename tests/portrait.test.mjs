@@ -5,9 +5,9 @@ import {
   PORTRAIT_REQUEST_SPEC,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildFlux2Klein9BReferencePortraitWorkflow,
+  buildQwenReferencePortraitWorkflow,
   buildPortraitPrompt,
   buildPortraitRequest,
   buildZImageTurboWorkflow,
@@ -31,14 +31,16 @@ const expression = {
   output: { expression: 'grief' }
 };
 
+const exactJennaFearPrompt = "Use the supplied canonical Jenna Stannis reference as the identity source. Preserve the exact same woman, facial structure, eyes, nose, mouth, age, voluminous feathered blonde hairstyle, and burgundy-and-silver leather costume. Create a photorealistic head-and-chest portrait of Sally Knyvette portraying Jenna Stannis in the 1979 BBC television series Blake's 7. She has a fearful, alert facial expression. Place her on the Liberator flight deck with cream geometric walls and restrained 1970s BBC retrofuturist controls. Preserve her identity; do not substitute another woman. No text, watermark, modern zipper, or contemporary clothing.";
+
 function request(overrides = {}) {
   return buildPortraitRequest(expression, {
     subject: 'Roj Blake',
     setting: 'the Liberator flight deck',
     attire: 'a dark leather tunic',
     lora: null,
-    aspectRatio: '1:1',
-    megapixels: 0.5,
+    aspectRatio: '2:3',
+    megapixels: 0.9,
     ...overrides
   });
 }
@@ -58,27 +60,28 @@ function referenceRequest(overrides = {}) {
     },
     characterId: 'jenna-stannis',
     profileFingerprint: '1234abcd',
-    aspectRatio: '1:1',
-    megapixels: 0.5,
+    promptOverride: exactJennaFearPrompt,
+    aspectRatio: '2:3',
+    megapixels: 0.9,
     ...overrides
   });
 }
 
-test('fixes every expression portrait to 1:1 at the native 0.5 MP default', () => {
-  assert.deepEqual(portraitDimensions('1:1', 0.5), { width: 704, height: 704, pixels: 495616 });
-  const dimensions = portraitDimensions('1:1', 1);
-  assert.equal(dimensions.width, dimensions.height);
+test('fixes every expression portrait to exact 2:3 at the proven 0.9 MP default', () => {
+  assert.deepEqual(portraitDimensions('2:3', 0.9), { width: 768, height: 1152, pixels: 884736 });
+  const dimensions = portraitDimensions('2:3', 1);
+  assert.equal(dimensions.width * 3, dimensions.height * 2);
   assert.equal(dimensions.width % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
   assert.equal(dimensions.height % Z_IMAGE_TURBO_TEMPLATE.multiple, 0);
-  assert.throws(() => portraitDimensions('2:3', 0.5), /unsupported portrait aspect ratio/);
+  assert.throws(() => portraitDimensions('1:1', 0.5), /unsupported portrait aspect ratio/);
 });
 
-test('requires the advertised FLUX reference capability for reference-conditioned portraits', () => {
+test('requires the advertised Qwen reference capability for reference-conditioned portraits', () => {
   const capabilities = {
-    spec: 'mullet_portrait_capabilities_v3',
+    spec: 'mullet_portrait_capabilities_v4',
     template: Z_IMAGE_TURBO_TEMPLATE,
-    referenceTemplate: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
-    aspectRatios: [{ id: '1:1', width: 1, height: 1, label: '1:1 fixed expression' }],
+    referenceTemplate: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
+    aspectRatios: [{ id: '2:3', width: 2, height: 3, label: '2:3 fixed expression' }],
     megapixels: [0.5, 0.75, 0.9, 1, 1.5, 2],
     loras: []
   };
@@ -113,7 +116,7 @@ test('compiles the proven Z-Image graph and inserts only compatible LoRAs', () =
   assert.equal(plain['1'].inputs.unet_name, 'z_image_turbo_int8_convrot.safetensors');
   assert.equal(plain['2'].inputs.clip_name, 'qwen_3_4b.safetensors');
   assert.equal(plain['3'].inputs.vae_name, 'ae.safetensors');
-  assert.deepEqual(plain['7'].inputs, { width: 704, height: 704, batch_size: 1 });
+  assert.deepEqual(plain['7'].inputs, { width: 768, height: 1152, batch_size: 1 });
   assert.equal(plain['8'].inputs.steps, 8);
   assert.equal(plain['8'].inputs.cfg, 1);
   assert.equal(plain['8'].inputs.seed, 42);
@@ -125,45 +128,47 @@ test('compiles the proven Z-Image graph and inserts only compatible LoRAs', () =
   assert.deepEqual(withLora['6'].inputs.model, ['11', 0]);
 });
 
-test('binds Jenna identity provenance and compiles the official FLUX.2 Klein 9B reference graph', () => {
+test('binds Jenna identity provenance and compiles the proven Qwen Image Edit reference graph', () => {
   const built = referenceRequest();
   assert.equal(built.modelTemplate, PORTRAIT_REFERENCE_TEMPLATE_ID);
   assert.equal(built.source.characterId, 'jenna-stannis');
   assert.equal(built.source.profileFingerprint, '1234abcd');
   assert.equal(built.referenceImage.name, 'jenna-stannis-v1.jpg');
   const prompt = buildPortraitPrompt(built);
-  assert.match(prompt, /supplied canonical reference/);
-  assert.match(prompt, /Preserve identity; do not substitute another person/);
+  assert.equal(prompt, exactJennaFearPrompt);
 
-  const graph = buildFlux2Klein9BReferencePortraitWorkflow(built, 19790213);
-  assert.equal(graph['1'].inputs.unet_name, FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['2'].inputs.clip_name, 'qwen_3_8b_fp8mixed.safetensors');
-  assert.equal(graph['2'].inputs.type, 'flux2');
-  assert.equal(graph['3'].inputs.vae_name, 'full_encoder_small_decoder.safetensors');
+  const graph = buildQwenReferencePortraitWorkflow(built, 19790213);
+  assert.equal(graph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.clip_name, 'qwen_2.5_vl_7b_fp8_scaled.safetensors');
+  assert.equal(graph['2'].inputs.type, 'qwen_image');
+  assert.equal(graph['3'].inputs.vae_name, 'qwen_image_vae.safetensors');
   assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(graph['5'].class_type, 'ImageScaleToTotalPixels');
-  assert.equal(graph['5'].inputs.megapixels, 0.5);
-  assert.equal(graph['6'].class_type, 'VAEEncode');
-  assert.equal(graph['7'].class_type, 'CLIPTextEncode');
-  assert.equal(graph['8'].class_type, 'ConditioningZeroOut');
-  assert.deepEqual(graph['9'].inputs, { conditioning: ['7', 0], latent: ['6', 0] });
-  assert.deepEqual(graph['10'].inputs, { conditioning: ['8', 0], latent: ['6', 0] });
-  assert.deepEqual(graph['11'].inputs, { width: 704, height: 704, batch_size: 1 });
-  assert.equal(graph['12'].inputs.noise_seed, 19790213);
-  assert.deepEqual(graph['15'].inputs, { steps: 4, width: 704, height: 704 });
-  assert.deepEqual(graph['18'].inputs.images, ['17', 0]);
+  assert.equal(graph['5'].class_type, 'FluxKontextImageScale');
+  assert.equal(graph['6'].inputs.shift, 3.1);
+  assert.equal(graph['7'].class_type, 'CFGNorm');
+  assert.equal(graph['8'].inputs.lora_name, 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors');
+  assert.equal(graph['9'].class_type, 'TextEncodeQwenImageEditPlus');
+  assert.equal(graph['9'].inputs.prompt, exactJennaFearPrompt);
+  assert.equal(graph['12'].inputs.seed, 19790213);
+  assert.equal(graph['12'].inputs.steps, 4);
+  assert.equal(graph['12'].inputs.cfg, 1);
+  assert.deepEqual(graph['15'].inputs, {
+    image: ['13', 0], upscale_method: 'lanczos', width: 768, height: 1152, crop: 'disabled'
+  });
+  assert.deepEqual(graph['14'].inputs.images, ['15', 0]);
   assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
 });
 
 test('rejects arbitrary templates, dimensions, LoRA paths, and stale sources', () => {
   const built = request();
   assert.throws(() => normalizePortraitRequest({ ...built, modelTemplate: 'anything' }), /unsupported portrait model/);
-  assert.throws(() => normalizePortraitRequest({ ...built, aspectRatio: '2:3' }), /unsupported portrait aspect ratio/);
+  assert.throws(() => normalizePortraitRequest({ ...built, aspectRatio: '1:1' }), /unsupported portrait aspect ratio/);
   assert.throws(() => normalizePortraitRequest({ ...built, megapixels: 9 }), /unsupported portrait megapixel/);
   assert.throws(() => normalizePortraitRequest({ ...built, lora: '../escape.safetensors' }), /LoRA is invalid/);
   assert.throws(() => normalizePortraitRequest({ ...built, source: { ...built.source, messageIndex: 0 } }), /latest response/);
   assert.throws(() => normalizePortraitRequest({ ...referenceRequest(), referenceImage: null }), /requires an identity reference/);
   assert.throws(() => normalizePortraitRequest({ ...referenceRequest(), lora: 'zimage/kristi6.safetensors' }), /does not accept a Z-Image LoRA/);
+  assert.throws(() => normalizePortraitRequest({ ...built, promptOverride: 'forged override' }), /requires a profile-bound reference portrait/);
   assert.notEqual(portraitRequestKey(built), portraitRequestKey(request({ attire: 'a Federation uniform' })));
   assert.notEqual(portraitRequestKey(referenceRequest()), portraitRequestKey(referenceRequest({ profileFingerprint: '5678abcd' })));
 });

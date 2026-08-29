@@ -8,6 +8,7 @@ import {
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   type PortraitReferenceImage
 } from './portrait.ts';
+import { isExpressionLabel, type ExpressionLabel } from './sidecar.ts';
 
 export const SCENARIO_CATALOG_SPEC = 'mullet_scenario_catalog_v1' as const;
 
@@ -39,6 +40,8 @@ export type ScenarioPortraitProfile = {
   subject: string;
   attire: string;
   setting: string;
+  seed: number;
+  expressionPrompts: Partial<Record<ExpressionLabel, string>>;
   modelTemplate: typeof PORTRAIT_REFERENCE_TEMPLATE_ID;
   referenceImage: PortraitReferenceImage;
   fingerprint: string;
@@ -126,6 +129,23 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
     const subject = requiredString(visual.subject, `scenario portrait profile ${index} subject`, 500);
     const attire = requiredString(visual.attire, `scenario portrait profile ${index} attire`, 500);
     const setting = requiredString(visual.setting, `scenario portrait profile ${index} setting`, 500);
+    if (!Number.isSafeInteger(visual.seed) || Number(visual.seed) < 0 || Number(visual.seed) > Number.MAX_SAFE_INTEGER) {
+      throw new Error(`scenario portrait profile ${index} seed must be a non-negative safe integer`);
+    }
+    const seed = Number(visual.seed);
+    if (!isRecord(visual.expression_prompts)) {
+      throw new Error(`scenario portrait profile ${index} expression_prompts must be an object`);
+    }
+    const expressionPrompts: Partial<Record<ExpressionLabel, string>> = {};
+    const promptFingerprintFields: string[] = [];
+    for (const [expression, prompt] of Object.entries(visual.expression_prompts).sort(([left], [right]) => left.localeCompare(right))) {
+      if (!isExpressionLabel(expression)) {
+        throw new Error(`scenario portrait profile ${index} expression prompt "${expression}" is invalid`);
+      }
+      const normalizedPrompt = requiredString(prompt, `scenario portrait profile ${index} ${expression} expression prompt`, 2000);
+      expressionPrompts[expression] = normalizedPrompt;
+      promptFingerprintFields.push(expression, normalizedPrompt);
+    }
     if (visual.model_template !== PORTRAIT_REFERENCE_TEMPLATE_ID) {
       throw new Error(`scenario portrait profile ${index} must use the reference-conditioned portrait template`);
     }
@@ -152,6 +172,8 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       subject,
       attire,
       setting,
+      seed,
+      expressionPrompts,
       modelTemplate: PORTRAIT_REFERENCE_TEMPLATE_ID,
       referenceImage,
       fingerprint: profileFingerprint([
@@ -161,6 +183,8 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
         subject,
         attire,
         setting,
+        String(seed),
+        ...promptFingerprintFields,
         PORTRAIT_REFERENCE_TEMPLATE_ID,
         referenceImage.name,
         referenceImage.sha256

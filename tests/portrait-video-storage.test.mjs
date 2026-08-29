@@ -24,8 +24,8 @@ function request(overrides = {}) {
       portraitPromptId: '11111111-1111-4111-8111-111111111111',
       portraitSeed: 41,
       portraitGeneratedAt: 17,
-      portraitWidth: 704,
-      portraitHeight: 704,
+      portraitWidth: 768,
+      portraitHeight: 1152,
       portraitImageSha256: 'a'.repeat(64),
       portraitSource: {
         conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -35,7 +35,7 @@ function request(overrides = {}) {
         expression: 'grief'
       }
     },
-    aspectRatio: '1:1',
+    aspectRatio: '2:3',
     durationSeconds: 3,
     ...overrides
   };
@@ -54,7 +54,7 @@ function stored(overrides = {}) {
     promptId: '22222222-2222-4222-8222-222222222222',
     seed: 42,
     width: 768,
-    height: 768,
+    height: 1152,
     frames,
     fps: 24,
     durationSeconds: motionRequest.durationSeconds,
@@ -64,7 +64,7 @@ function stored(overrides = {}) {
     inputImageSha256: 'a'.repeat(64),
     endFrame: null,
     videoSha256: 'b'.repeat(64),
-    video: new Blob([buildH264AacMp4Fixture({ width: 768, height: 768, frames, includeAudio: false })], { type: 'video/mp4' }),
+    video: new Blob([buildH264AacMp4Fixture({ width: 768, height: 1152, frames, includeAudio: false })], { type: 'video/mp4' }),
     ...overrides
   };
 }
@@ -162,8 +162,8 @@ test('requires exact generated end-frame provenance only for generated FLF mode'
       modelTemplate: 'flux2-klein-9b-distilled-end-frame-v1',
       promptId: '33333333-3333-4333-8333-333333333333',
       seed: 43,
-      width: 704,
-      height: 704,
+      width: 768,
+      height: 1152,
       imageSha256: 'c'.repeat(64)
     }
   });

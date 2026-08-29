@@ -5,14 +5,14 @@ import {
   type ExpressionSidecarResult
 } from './sidecar.ts';
 
-export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v3' as const;
-export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v3' as const;
+export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v4' as const;
+export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v4' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
-export const PORTRAIT_REFERENCE_TEMPLATE_ID = 'flux2-klein-9b-distilled-reference-v1' as const;
+export const PORTRAIT_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
-  { id: '1:1', width: 1, height: 1, label: '1:1 fixed expression' }
+  { id: '2:3', width: 2, height: 3, label: '2:3 fixed expression' }
 ] as const);
 
 export const PORTRAIT_MEGAPIXELS = Object.freeze([0.5, 0.75, 0.9, 1, 1.5, 2] as const);
@@ -41,8 +41,44 @@ export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
   shift: 3
 } as const);
 
-export const FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE = Object.freeze({
+export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
   id: PORTRAIT_REFERENCE_TEMPLATE_ID,
+  label: 'Qwen Image Edit 2511 · identity reference',
+  modelFamily: 'qwen-image-edit-2511',
+  promptGuide: 'preserve the supplied canonical identity exactly, photorealistic fiction still, coherent anatomy, natural skin texture, no text, no watermark',
+  modelFiles: {
+    unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
+    clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+    vae: 'qwen_image_vae.safetensors',
+    lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'FluxKontextImageScale',
+    'ModelSamplingAuraFlow',
+    'CFGNorm',
+    'LoraLoaderModelOnly',
+    'TextEncodeQwenImageEditPlus',
+    'VAEEncode',
+    'KSampler',
+    'VAEDecode',
+    'ImageScale',
+    'SaveImage'
+  ],
+  multiple: 16,
+  outputNode: '14',
+  steps: 4,
+  cfg: 1,
+  sampler: 'euler',
+  scheduler: 'simple',
+  shift: 3.1
+} as const);
+
+export const FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE = Object.freeze({
+  id: 'flux2-klein-9b-distilled-reference-v1',
   label: 'FLUX.2 Klein 9B Distilled · identity reference',
   modelFamily: 'flux2-klein',
   promptGuide: 'preserve the supplied canonical identity exactly; edit only expression, attire, setting, and fixed head-and-chest framing; photorealistic fiction still; no text or watermark',
@@ -52,23 +88,10 @@ export const FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE = Object.freeze({
     vae: 'full_encoder_small_decoder.safetensors'
   },
   requiredNodes: [
-    'UNETLoader',
-    'CLIPLoader',
-    'VAELoader',
-    'LoadImage',
-    'ImageScaleToTotalPixels',
-    'VAEEncode',
-    'CLIPTextEncode',
-    'ConditioningZeroOut',
-    'ReferenceLatent',
-    'EmptyFlux2LatentImage',
-    'RandomNoise',
-    'CFGGuider',
-    'KSamplerSelect',
-    'Flux2Scheduler',
-    'SamplerCustomAdvanced',
-    'VAEDecode',
-    'SaveImage'
+    'UNETLoader', 'CLIPLoader', 'VAELoader', 'LoadImage', 'ImageScaleToTotalPixels',
+    'VAEEncode', 'CLIPTextEncode', 'ConditioningZeroOut', 'ReferenceLatent',
+    'EmptyFlux2LatentImage', 'RandomNoise', 'CFGGuider', 'KSamplerSelect',
+    'Flux2Scheduler', 'SamplerCustomAdvanced', 'VAEDecode', 'SaveImage'
   ],
   multiple: 16,
   outputNode: '18',
@@ -121,6 +144,7 @@ export type PortraitRequest = {
   attire: string;
   lora: string | null;
   referenceImage: PortraitReferenceImage | null;
+  promptOverride: string | null;
   aspectRatio: PortraitAspectRatio;
   megapixels: PortraitMegapixels;
   seed?: number;
@@ -129,7 +153,7 @@ export type PortraitRequest = {
 export type PortraitCapabilities = {
   spec: typeof PORTRAIT_CAPABILITIES_SPEC;
   template: typeof Z_IMAGE_TURBO_TEMPLATE;
-  referenceTemplate: typeof FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE | null;
+  referenceTemplate: typeof QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE | null;
   aspectRatios: typeof PORTRAIT_ASPECT_RATIOS;
   megapixels: typeof PORTRAIT_MEGAPIXELS;
   loras: string[];
@@ -221,9 +245,10 @@ export function validatePortraitPngDimensions(
 
 export function buildPortraitRequest(
   expression: ExpressionSidecarResult,
-  settings: Omit<PortraitRequest, 'spec' | 'modelTemplate' | 'source' | 'referenceImage'> & {
+  settings: Omit<PortraitRequest, 'spec' | 'modelTemplate' | 'source' | 'referenceImage' | 'promptOverride'> & {
     modelTemplate?: PortraitModelTemplate;
     referenceImage?: PortraitReferenceImage | null;
+    promptOverride?: string | null;
     characterId?: string;
     profileFingerprint?: string;
   }
@@ -245,6 +270,7 @@ export function buildPortraitRequest(
     attire: settings.attire,
     lora: settings.lora,
     referenceImage: settings.referenceImage ?? null,
+    promptOverride: settings.promptOverride ?? null,
     aspectRatio: settings.aspectRatio,
     megapixels: settings.megapixels,
     ...(settings.seed === undefined ? {} : { seed: settings.seed })
@@ -320,6 +346,12 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
   if (value.modelTemplate === PORTRAIT_TEMPLATE_ID && referenceImage !== null) {
     throw new Error('Z-Image portrait does not accept an identity reference');
   }
+  const promptOverride = value.promptOverride === null || value.promptOverride === undefined
+    ? null
+    : textField(value.promptOverride, 'portrait prompt override', 1, 2000);
+  if (promptOverride !== null && (value.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || profileBinding === null)) {
+    throw new Error('portrait prompt override requires a profile-bound reference portrait');
+  }
   const seed = value.seed === undefined
     ? undefined
     : integer(value.seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
@@ -339,6 +371,7 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
     attire: textField(value.attire ?? '', 'portrait attire', 0, 500),
     lora,
     referenceImage,
+    promptOverride,
     aspectRatio: aspectRatio as PortraitAspectRatio,
     megapixels: megapixels as PortraitMegapixels,
     ...(seed === undefined ? {} : { seed })
@@ -362,6 +395,7 @@ export function portraitRequestKey(request: PortraitRequest): string {
     normalized.lora ?? '',
     normalized.referenceImage?.name ?? '',
     normalized.referenceImage?.sha256 ?? '',
+    normalized.promptOverride ?? '',
     normalized.aspectRatio,
     normalized.megapixels,
     normalized.seed ?? 'random'
@@ -370,18 +404,19 @@ export function portraitRequestKey(request: PortraitRequest): string {
 
 export function buildPortraitPrompt(request: PortraitRequest): string {
   const normalized = normalizePortraitRequest(request);
+  if (normalized.promptOverride) return normalized.promptOverride;
   const clauses = [
     `head-and-chest portrait of ${normalized.subject}`,
     `${normalized.source.expression} facial expression`,
     normalized.attire ? `wearing ${normalized.attire}` : '',
     normalized.setting ? `in ${normalized.setting}` : '',
     normalized.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
-      ? FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.promptGuide
+      ? QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.promptGuide
       : Z_IMAGE_TURBO_TEMPLATE.promptGuide
   ];
   const description = clauses.filter(Boolean).join(', ');
   return normalized.modelTemplate === PORTRAIT_REFERENCE_TEMPLATE_ID
-    ? `Keep the exact same person, facial structure, eyes, nose, mouth, age, and hairstyle from the supplied canonical reference. Reframe as a ${description}. Change only the expression, attire, and setting requested. Preserve identity; do not substitute another person or add modern clothing details.`
+    ? `Use the supplied canonical reference as the identity source. Preserve the exact same person, facial structure, eyes, nose, mouth, age, and hairstyle. Create a ${description}. Preserve identity; do not substitute another person. Do not add modern clothing details.`
     : description;
 }
 
@@ -431,6 +466,41 @@ export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number)
     };
   }
   return graph;
+}
+
+export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('Qwen reference workflow requires a reference-conditioned portrait');
+  }
+  const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
+  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
+  const template = QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE;
+  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
+  return {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'qwen_image', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
+    '4': { class_type: 'LoadImage', inputs: { image: referencePath } },
+    '5': { class_type: 'FluxKontextImageScale', inputs: { image: ['4', 0] } },
+    '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: template.shift } },
+    '7': { class_type: 'CFGNorm', inputs: { model: ['6', 0], strength: 1, pre_cfg: false } },
+    '8': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['7', 0], lora_name: template.modelFiles.lora, strength_model: 1 } },
+    '9': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: buildPortraitPrompt(normalized) } },
+    '10': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: '' } },
+    '11': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
+    '12': {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['8', 0], positive: ['9', 0], negative: ['10', 0], latent_image: ['11', 0],
+        seed: validatedSeed, steps: template.steps, cfg: template.cfg,
+        sampler_name: template.sampler, scheduler: template.scheduler, denoise: 1
+      }
+    },
+    '13': { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['3', 0] } },
+    '14': { class_type: 'SaveImage', inputs: { images: ['15', 0], filename_prefix: 'mullet/portrait-reference' } },
+    '15': { class_type: 'ImageScale', inputs: { image: ['13', 0], upscale_method: 'lanczos', width, height, crop: 'disabled' } }
+  };
 }
 
 type Flux2Klein9BReferenceEditSettings = {
@@ -491,24 +561,6 @@ export function buildFlux2Klein9BReferenceEditWorkflow(
   };
 }
 
-export function buildFlux2Klein9BReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('FLUX.2 Klein reference workflow requires a reference-conditioned portrait');
-  }
-  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
-  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
-  return buildFlux2Klein9BReferenceEditWorkflow({
-    referencePath,
-    prompt: buildPortraitPrompt(normalized),
-    width,
-    height,
-    referenceMegapixels: normalized.megapixels,
-    seed,
-    filenamePrefix: 'mullet/portrait-reference'
-  });
-}
-
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {
   if (!isRecord(value) || value.spec !== PORTRAIT_CAPABILITIES_SPEC) throw new Error('invalid portrait capabilities');
   if (!isRecord(value.template) || value.template.id !== PORTRAIT_TEMPLATE_ID) throw new Error('invalid portrait template');
@@ -522,7 +574,7 @@ export function normalizePortraitCapabilities(value: unknown): PortraitCapabilit
   return {
     spec: PORTRAIT_CAPABILITIES_SPEC,
     template: Z_IMAGE_TURBO_TEMPLATE,
-    referenceTemplate: value.referenceTemplate === null ? null : FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
+    referenceTemplate: value.referenceTemplate === null ? null : QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
     loras: [...new Set(value.loras)].sort()

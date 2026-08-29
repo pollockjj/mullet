@@ -28,7 +28,7 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   const { catalog, entry } = bundledScenario();
   assert.equal(catalog.spec, 'mullet_scenario_catalog_v1');
   assert.equal(entry.id, 'blakes-7-post-gan');
-  assert.equal(entry.version, '1.0.3');
+  assert.equal(entry.version, '1.0.4');
 
   const duplicate = asset('catalog.json');
   duplicate.scenarios.push(structuredClone(duplicate.scenarios[0]));
@@ -65,19 +65,22 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
     assert.ok(cardRaw.data[field].every((value) => typeof value === 'string'), field);
   });
   assert.equal(typeof cardRaw.data.extensions, 'object');
-  assert.equal(cardRaw.data.character_version, '0.1.2');
+  assert.equal(cardRaw.data.character_version, '0.1.3');
   assert.equal(cardRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(lorebookRaw.data.extensions.mullet.user_definition, 'female_she_her');
-  assert.equal(packaged.portraitCast.defaultProfileId, 'cally');
+  assert.equal(packaged.portraitCast.defaultProfileId, 'jenna-stannis');
   const portraitProfile = defaultScenarioPortraitProfile(packaged.card);
-  assert.equal(portraitProfile.id, 'cally');
-  assert.equal(portraitProfile.displayName, 'Cally');
-  assert.match(portraitProfile.subject, /Jan Chappell portraying Cally/);
-  assert.match(portraitProfile.attire, /rust-red and deep maroon Liberator tunic/);
+  assert.equal(portraitProfile.id, 'jenna-stannis');
+  assert.equal(portraitProfile.displayName, 'Jenna Stannis');
+  assert.match(portraitProfile.subject, /Sally Knyvette portraying Jenna Stannis/);
+  assert.match(portraitProfile.attire, /burgundy, maroon, and silver-grey leather/);
   assert.match(portraitProfile.setting, /Liberator flight deck/);
-  assert.equal(portraitProfile.modelTemplate, 'flux2-klein-9b-distilled-reference-v1');
-  assert.equal(portraitProfile.referenceImage.name, 'cally-v1.jpg');
-  assert.equal(portraitProfile.referenceImage.sha256, '8d61eb6b5218cb76c259f41d848cbc0953500bc133de807e9464db013a0fc962');
+  assert.equal(portraitProfile.seed, 19790213);
+  assert.match(portraitProfile.expressionPrompts.fear, /fearful, alert facial expression/);
+  assert.match(portraitProfile.expressionPrompts.fear, /No text, watermark, modern zipper, or contemporary clothing\.$/);
+  assert.equal(portraitProfile.modelTemplate, 'qwen-image-edit-2511-reference-v1');
+  assert.equal(portraitProfile.referenceImage.name, 'jenna-stannis-v1.jpg');
+  assert.equal(portraitProfile.referenceImage.sha256, 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8');
   assert.match(portraitProfile.fingerprint, /^[0-9a-f]{8}$/);
   const protagonist = lorebookRaw.data.entries.find((loreEntry) => loreEntry.id === 1);
   assert.match(protagonist.content, /protagonist is a woman and uses she\/her pronouns/);
@@ -113,7 +116,7 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   const duplicateAliasLore = structuredClone(lorebookRaw);
   duplicateAliasLore.data.extensions.mullet.portrait_cast_v1.profiles.push({
     ...structuredClone(duplicateAliasLore.data.extensions.mullet.portrait_cast_v1.profiles[0]),
-    id: 'duplicate-cally'
+    id: 'duplicate-jenna'
   });
   const duplicateAliasCard = structuredClone(cardRaw);
   duplicateAliasCard.data.character_book = structuredClone(duplicateAliasLore.data);

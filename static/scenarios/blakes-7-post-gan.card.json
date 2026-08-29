@@ -26,7 +26,7 @@
       "lorebook"
     ],
     "creator": "MULLET",
-    "character_version": "0.1.2",
+    "character_version": "0.1.3",
     "source": [
       "BBC television: Blake's 7, Series 2, Pressure Point"
     ],
@@ -36,7 +36,7 @@
       "mullet": {
         "kind": "scenario",
         "scenario_id": "blakes-7-post-gan",
-        "scenario_version": "1.0.3",
+        "scenario_version": "1.0.4",
         "mode": "ensemble",
         "canon_gate": "Immediately after Pressure Point",
         "user_definition": "female_she_her",
@@ -65,29 +65,33 @@
         "mullet": {
           "kind": "scenario",
           "scenario_id": "blakes-7-post-gan",
-          "scenario_version": "1.0.3",
+          "scenario_version": "1.0.4",
           "canon_gate": "Immediately after Pressure Point",
           "canon_through": "Pressure Point",
           "spoiler_policy": "Later events are neither known nor inevitable.",
           "user_definition": "female_she_her",
           "portrait_cast_v1": {
             "spec": "mullet_portrait_cast_v1",
-            "default_profile_id": "cally",
+            "default_profile_id": "jenna-stannis",
             "profiles": [
               {
-                "id": "cally",
-                "display_name": "Cally",
-                "aliases": ["Cally"],
+                "id": "jenna-stannis",
+                "display_name": "Jenna Stannis",
+                "aliases": ["Jenna", "Jenna Stannis", "Stannis"],
                 "visual_profile": {
-                  "subject": "Jan Chappell portraying Cally in the 1979 BBC television series Blake's 7, an Auron woman with an angular oval face, high cheekbones, deep-set brown eyes, and short layered ash-brown feathered hair",
-                  "attire": "Cally's fitted rust-red and deep maroon Liberator tunic with a high metallic patterned collar and black underlayer",
+                  "subject": "Sally Knyvette portraying Jenna Stannis in the 1979 BBC television series Blake's 7, a British woman aged twenty-eight with an oval face, high cheekbones, pale blue-green eyes, and voluminous shoulder-length honey-blonde feathered 1970s hair",
+                  "attire": "Jenna's fitted burgundy, maroon, and silver-grey leather spaceflight tunic with angular panels, wide lapels, and her sculpted silver necklace",
                   "setting": "the Liberator flight deck with cream geometric walls, glowing colored control panels, and restrained 1970s BBC retrofuturist production design",
-                  "model_template": "flux2-klein-9b-distilled-reference-v1",
+                  "seed": 19790213,
+                  "expression_prompts": {
+                    "fear": "Use the supplied canonical Jenna Stannis reference as the identity source. Preserve the exact same woman, facial structure, eyes, nose, mouth, age, voluminous feathered blonde hairstyle, and burgundy-and-silver leather costume. Create a photorealistic head-and-chest portrait of Sally Knyvette portraying Jenna Stannis in the 1979 BBC television series Blake's 7. She has a fearful, alert facial expression. Place her on the Liberator flight deck with cream geometric walls and restrained 1970s BBC retrofuturist controls. Preserve her identity; do not substitute another woman. No text, watermark, modern zipper, or contemporary clothing."
+                  },
+                  "model_template": "qwen-image-edit-2511-reference-v1",
                   "reference_image": {
-                    "name": "cally-v1.jpg",
+                    "name": "jenna-stannis-v1.jpg",
                     "subfolder": "mullet/identity",
                     "type": "input",
-                    "sha256": "8d61eb6b5218cb76c259f41d848cbc0953500bc133de807e9464db013a0fc962"
+                    "sha256": "c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8"
                   }
                 }
               }

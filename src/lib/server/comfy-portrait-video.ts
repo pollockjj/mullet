@@ -166,7 +166,7 @@ export async function loadPortraitVideoCapabilities(
       info.MiniMaxH3ImageToVideo,
       'MiniMaxH3ImageToVideo',
       'length',
-      portraitVideoDimensions('1:1', durationSeconds).frames,
+      portraitVideoDimensions('2:3', durationSeconds).frames,
       17
     );
   }

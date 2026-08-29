@@ -32,18 +32,18 @@ const portrait = {
   },
   promptId: '11111111-1111-4111-8111-111111111111',
   seed: 41,
-  width: 704,
-  height: 704,
+  width: 768,
+  height: 1152,
   generatedAt: 17
 };
 
 const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const imageSha256 = await sha256Hex(imageBytes);
 const requests = {
-  i2v: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_I2V),
-  loop: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF),
-  loopFive: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5),
-  generated: buildPortraitVideoRequest(portrait, '1:1', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF)
+  i2v: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_I2V),
+  loop: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF),
+  loopFive: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5),
+  generated: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF)
 };
 const input = {
   name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
@@ -59,11 +59,11 @@ const endInput = {
 };
 const mp4 = buildH264AacMp4Fixture({
   width: 768,
-  height: 768,
+  height: 1152,
   frames: 73,
   includeAudio: false
 });
-const mp4Five = buildH264AacMp4Fixture({ width: 768, height: 768, frames: 124, includeAudio: false });
+const mp4Five = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 124, includeAudio: false });
 
 function standardInfo(node, inputName, options, metadata = {}) {
   return { [node]: { input: { required: { [inputName]: [options, metadata] } } } };
@@ -160,10 +160,10 @@ test('accepts only a PNG with the exact source IHDR dimensions', () => {
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
-  view.setUint32(16, 704, false);
-  view.setUint32(20, 704, false);
-  assert.doesNotThrow(() => validatePortraitVideoPng(png, 704, 704));
-  assert.throws(() => validatePortraitVideoPng(png, 768, 704), /dimensions do not match/);
+  view.setUint32(16, 768, false);
+  view.setUint32(20, 1152, false);
+  assert.doesNotThrow(() => validatePortraitVideoPng(png, 768, 1152));
+  assert.throws(() => validatePortraitVideoPng(png, 768, 1024), /dimensions do not match/);
 });
 
 async function runMode(selectedRequest, filename, selectedEndInput, outputBytes = mp4) {
@@ -203,7 +203,7 @@ test('queues and validates MiniMax H3 I2V as H.264 video-only MP4', async () => 
 });
 
 test('rejects every audio-bearing portrait MP4', async () => {
-  const audioMp4 = buildH264AacMp4Fixture({ width: 768, height: 768, frames: 73 });
+  const audioMp4 = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 73 });
   await assert.rejects(
     runMode(requests.i2v, 'portrait-motion_00002_.mp4', undefined, audioMp4),
     /must not contain an audio track/
@@ -245,8 +245,8 @@ test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
-  view.setUint32(16, 704, false);
-  view.setUint32(20, 704, false);
+  view.setUint32(16, 768, false);
+  view.setUint32(20, 1152, false);
   const fetcher = async (url, init) => {
     const value = String(url);
     observed.push({ url: value, init });
@@ -266,8 +266,8 @@ test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async
   assert.equal(queued.prompt['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
   assert.equal(queued.prompt['2'].inputs.type, 'flux2');
   assert.equal(queued.prompt['5'].class_type, 'ImageScaleToTotalPixels');
-  assert.equal(queued.prompt['5'].inputs.megapixels, 0.5);
-  assert.deepEqual(queued.prompt['11'].inputs, { width: 704, height: 704, batch_size: 1 });
+  assert.equal(queued.prompt['5'].inputs.megapixels, 0.9);
+  assert.deepEqual(queued.prompt['11'].inputs, { width: 768, height: 1152, batch_size: 1 });
   assert.equal(queued.prompt['12'].inputs.noise_seed, 43);
   assert.equal(result.contentType, 'image/png');
   assert.deepEqual(result.bytes, png);

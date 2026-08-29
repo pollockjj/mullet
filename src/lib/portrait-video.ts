@@ -32,7 +32,7 @@ export type PortraitVideoModeDefinition = (typeof PORTRAIT_VIDEO_MODES)[number];
 export type PortraitVideoDurationSeconds = (typeof PORTRAIT_VIDEO_DURATIONS)[number];
 
 export const PORTRAIT_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '1:1', width: 768, height: 768 }
+  { aspectRatio: '2:3', width: 768, height: 1152 }
 ] as const);
 
 export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
