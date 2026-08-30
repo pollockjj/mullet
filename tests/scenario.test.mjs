@@ -8,6 +8,7 @@ import {
   defaultScenarioPortraitProfile,
   isScenarioCard,
   normalizeScenarioCatalog,
+  scenarioPortraitGenerationReady,
   validateScenarioPackage
 } from '../src/lib/scenario.ts';
 import {
@@ -57,6 +58,9 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   assert.equal(packaged.lorebook.entries.length, 18);
   assert.deepEqual(packaged.lorebook.diagnostics, []);
   assert.equal(isScenarioCard(packaged.card), true);
+  assert.equal(scenarioPortraitGenerationReady(packaged.card, false), false);
+  assert.equal(scenarioPortraitGenerationReady(packaged.card, true), true);
+  assert.equal(scenarioPortraitGenerationReady(null, false), true);
   assert.equal(JSON.stringify(cardRaw).includes('{{user}}'), false);
   assert.equal(JSON.stringify(lorebookRaw).includes('{{user}}'), false);
 

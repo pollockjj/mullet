@@ -251,6 +251,7 @@
     defaultScenarioPortraitProfile,
     isScenarioCard,
     normalizeScenarioCatalog,
+    scenarioPortraitGenerationReady,
     validateScenarioPackage,
     type ScenarioCatalog,
     type ScenarioCatalogEntry,
@@ -304,6 +305,8 @@
   let portraitRequest: PortraitRequest | null = null;
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
+  let portraitRetriedKey = '';
+  let portraitRetryTimer: number | null = null;
   let portraitController: AbortController | null = null;
   let portraitMotionEnabled = false;
   let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;
@@ -322,6 +325,8 @@
   let portraitVideoRequest: PortraitVideoRequest | null = null;
   let portraitVideoCurrent = false;
   let lastPortraitVideoAttemptKey = '';
+  let portraitVideoRetriedKey = '';
+  let portraitVideoRetryTimer: number | null = null;
   let portraitVideoController: AbortController | null = null;
   let portraitVideoGeneration = 0;
   let portraitImageDigestPromptId = '';
@@ -395,6 +400,7 @@
   let lastInlineSceneVideoAttemptKey = '';
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
+  let scenarioCatalogSettled = false;
   let selectedScenarioId = '';
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
@@ -410,6 +416,8 @@
   let sidecarBusy = false;
   let sidecarError = '';
   let lastExpressionAttemptKey = '';
+  let expressionRetriedKey = '';
+  let expressionRetryTimer: number | null = null;
   let sidecarController: AbortController | null = null;
   let assistantMemoryId = '';
   let assistantMemoryEpoch = '';
@@ -463,6 +471,7 @@
   const inlineSceneLoraStorageKey = 'mullet.inline-scene-lora';
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
+  const automaticExpressionRetryDelayMs = 1_500;
 
   $: livingHistoryApplicable = Boolean(
     conversationMode === CONVERSATION_MODE_FICTION
@@ -605,7 +614,9 @@
     expressionCurrent
   );
   $: schedulePortraitReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+    conversationMode === CONVERSATION_MODE_FICTION
+      && expressionsEnabled
+      && scenarioPortraitGenerationReady(activeCard, scenarioCatalogSettled),
     portraitCapabilities,
     portraitPersistenceReady,
     portraitPersistenceAvailable,
@@ -803,8 +814,11 @@
     assistantMemoryController?.abort();
     livingHistoryController?.abort();
     portraitController?.abort();
+    if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
+    if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
+    if (expressionRetryTimer !== null) window.clearTimeout(expressionRetryTimer);
     inlineSceneGeneration += 1;
     inlineSceneController?.abort();
     inlineSceneVideoGeneration += 1;
@@ -2103,6 +2117,22 @@
     void generatePortraitVideo(request);
   }
 
+  function queuePortraitVideoAutomaticRetry(key: string) {
+    if (!browser || lastPortraitVideoAttemptKey !== key || portraitVideoRetriedKey === key) return;
+    portraitVideoRetriedKey = key;
+    if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
+    portraitVideoRetryTimer = window.setTimeout(() => {
+      portraitVideoRetryTimer = null;
+      if (lastPortraitVideoAttemptKey === key) lastPortraitVideoAttemptKey = '';
+    }, automaticExpressionRetryDelayMs);
+  }
+
+  function clearPortraitVideoAutomaticRetry(key: string) {
+    if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
+    portraitVideoRetryTimer = null;
+    if (portraitVideoRetriedKey === key) portraitVideoRetriedKey = '';
+  }
+
   function responseHeaderSha256(response: Response, name: string): string {
     const value = response.headers.get(name) ?? '';
     if (!/^[0-9a-f]{64}$/.test(value)) throw new Error(`Portrait-motion response omitted ${name}.`);
@@ -2237,18 +2267,23 @@
         video
       });
       await verifyPortraitVideoBytes(stored);
-      await commitStoredPortraitVideo(stored, {
+      const committed = await commitStoredPortraitVideo(stored, {
         exclusive: runStoredPortraitVideoExclusive,
         save: saveStoredPortraitVideo,
         rollback: rollbackStoredPortraitVideoWrite,
         isCurrent: () => portraitVideoSourceIsCurrent(generation, selectedPortrait, selectedRequest, key, activeController.signal),
         install: installGeneratedPortraitVideo
       });
+      if (committed) clearPortraitVideoAutomaticRetry(key);
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
-        if (timedOut) portraitVideoError = `Portrait motion timed out after ${(PORTRAIT_VIDEO_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+        if (timedOut) {
+          portraitVideoError = `Portrait motion timed out after ${(PORTRAIT_VIDEO_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+          queuePortraitVideoAutomaticRetry(key);
+        }
       } else {
         portraitVideoError = cause instanceof Error ? cause.message : 'Portrait motion failed.';
+        queuePortraitVideoAutomaticRetry(key);
       }
     } finally {
       window.clearTimeout(timeoutId);
@@ -2390,6 +2425,22 @@
     void generatePortrait(request);
   }
 
+  function queuePortraitAutomaticRetry(key: string) {
+    if (!browser || lastPortraitAttemptKey !== key || portraitRetriedKey === key) return;
+    portraitRetriedKey = key;
+    if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
+    portraitRetryTimer = window.setTimeout(() => {
+      portraitRetryTimer = null;
+      if (lastPortraitAttemptKey === key) lastPortraitAttemptKey = '';
+    }, automaticExpressionRetryDelayMs);
+  }
+
+  function clearPortraitAutomaticRetry(key: string) {
+    if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
+    portraitRetryTimer = null;
+    if (portraitRetriedKey === key) portraitRetriedKey = '';
+  }
+
   function responseHeaderInteger(response: Response, name: string, minimum: number, maximum: number): number {
     const value = Number(response.headers.get(name));
     if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new Error(`Portrait response omitted ${name}.`);
@@ -2468,17 +2519,22 @@
         return selectedRequest.source.conversationId === conversationId
           && Boolean(liveRequest && portraitRequestKey(liveRequest) === key);
       };
-      await commitStoredPortrait(stored, {
+      const committed = await commitStoredPortrait(stored, {
         save: saveStoredPortrait,
         isCurrent,
         discard: (stale) => clearStoredPortraitIfPromptId(stale.promptId),
         install: installGeneratedPortrait
       });
+      if (committed) clearPortraitAutomaticRetry(key);
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
-        if (timedOut) portraitError = `Portrait generation timed out after ${(PORTRAIT_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+        if (timedOut) {
+          portraitError = `Portrait generation timed out after ${(PORTRAIT_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+          queuePortraitAutomaticRetry(key);
+        }
       } else {
         portraitError = cause instanceof Error ? cause.message : 'Portrait generation failed.';
+        queuePortraitAutomaticRetry(key);
       }
     } finally {
       window.clearTimeout(timeoutId);
@@ -2805,6 +2861,22 @@
     if (key === lastExpressionAttemptKey) return;
     lastExpressionAttemptKey = key;
     void determineExpression(snapshot);
+  }
+
+  function queueExpressionAutomaticRetry(key: string) {
+    if (!browser || lastExpressionAttemptKey !== key || expressionRetriedKey === key) return;
+    expressionRetriedKey = key;
+    if (expressionRetryTimer !== null) window.clearTimeout(expressionRetryTimer);
+    expressionRetryTimer = window.setTimeout(() => {
+      expressionRetryTimer = null;
+      if (lastExpressionAttemptKey === key) lastExpressionAttemptKey = '';
+    }, automaticExpressionRetryDelayMs);
+  }
+
+  function clearExpressionAutomaticRetry(key: string) {
+    if (expressionRetryTimer !== null) window.clearTimeout(expressionRetryTimer);
+    expressionRetryTimer = null;
+    if (expressionRetriedKey === key) expressionRetriedKey = '';
   }
 
   function disableSidecarPersistence(cause: unknown) {
@@ -3154,7 +3226,8 @@
   async function determineExpression(selectedSnapshot: ExpressionSidecarRequest | null = null) {
     const snapshot = selectedSnapshot ?? currentExpressionSnapshot(conversationId, messages);
     if (!snapshot || streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !sidecarState) return;
-    lastExpressionAttemptKey = expressionSnapshotKey(snapshot);
+    const key = expressionSnapshotKey(snapshot);
+    lastExpressionAttemptKey = key;
     sidecarBusy = true;
     sidecarError = '';
     const activeController = new AbortController();
@@ -3187,11 +3260,16 @@
         return;
       }
       sidecarState = nextState;
+      clearExpressionAutomaticRetry(key);
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
-        if (timedOut) sidecarError = `Expression sidecar timed out after ${SIDECAR_TIMEOUT_MS / 1000} seconds.`;
+        if (timedOut) {
+          sidecarError = `Expression sidecar timed out after ${SIDECAR_TIMEOUT_MS / 1000} seconds.`;
+          queueExpressionAutomaticRetry(key);
+        }
       } else {
         sidecarError = cause instanceof Error ? cause.message : 'Expression sidecar failed.';
+        queueExpressionAutomaticRetry(key);
       }
     } finally {
       window.clearTimeout(timeoutId);
@@ -3203,6 +3281,7 @@
   }
 
   async function loadScenarioCatalog() {
+    scenarioCatalogSettled = false;
     try {
       const response = await fetch(`${base}/scenarios/catalog.json`, { cache: 'no-store' });
       if (!response.ok) throw new Error(`Bundled scenario catalog failed to load (${response.status}).`);
@@ -3226,6 +3305,8 @@
       }
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario catalog failed to load.';
+    } finally {
+      scenarioCatalogSettled = true;
     }
   }
 
@@ -3992,13 +4073,13 @@
 
   <main>
     <aside class:assistant-mode={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}>
-      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || generatedPortraitUrl} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl} class="portrait">
+      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || (generatedPortraitUrl && portraitCurrent)} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl && portraitCurrent} class="portrait">
         {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
           <span class="initial">A</span>
         {:else if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
           <video src={generatedPortraitVideoUrl} autoplay muted loop playsinline aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}></video>
           <span class="portrait-status">{portraitVideoBusy ? 'Animating…' : generatedPortrait?.source.expression}</span>
-        {:else if expressionsEnabled && generatedPortraitUrl}
+        {:else if expressionsEnabled && generatedPortraitUrl && portraitCurrent}
           <img src={generatedPortraitUrl} alt={`${generatedPortrait?.source.expression ?? 'Current'} generated expression portrait`} />
           <span class:stale={!portraitCurrent || (portraitMotionEnabled && Boolean(generatedPortraitVideo) && !portraitVideoCurrent)} class="portrait-status">{portraitBusy ? 'Updating…' : portraitVideoBusy ? 'Animating…' : portraitCurrent ? generatedPortrait?.source.expression : 'Stale'}</span>
         {:else if portraitDataUrl && activeCard}
@@ -4236,10 +4317,13 @@
             </select>
           </label>
           {#if selectedPortraitCapability && !portraitSelectedModelAvailable}
-            <div class="sidecar-error" role="alert">
-              {selectedPortraitCapability.template.label} is unavailable{selectedPortraitCapability.missing.length
-                ? ` · missing ${selectedPortraitCapability.missing.join(', ')}`
-                : ''}.
+            <div class="sidecar-error capability-error" role="alert">
+              <span>{selectedPortraitCapability.template.label} is unavailable{selectedPortraitCapability.missing.length
+                  ? ` · missing ${selectedPortraitCapability.missing.join(', ')}`
+                  : ''}.</span>
+              <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
+                {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
+              </button>
             </div>
           {:else if !scenarioPortraitProfile && portraitSelectedModelUsesReference}
             <div class="sidecar-error" role="alert">This reference-edit model requires a scenario identity reference.</div>
@@ -4837,6 +4921,10 @@
   .expression-redetermine:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
   .expression-redetermine:disabled { opacity: .4; cursor: default; }
   .sidecar-error { padding: 7px 8px; border: 1px solid #6e3c34; border-radius: 7px; color: #e6b9ae; background: #2c1b18; font-size: 9px; line-height: 1.4; }
+  .capability-error { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+  .error-retry { flex: 0 0 auto; width: auto; padding: 3px 6px; border: 1px solid #785047; border-radius: 999px; color: #e6b9ae; background: #211714; font-size: 8px; font-weight: 700; cursor: pointer; }
+  .error-retry:hover:not(:disabled) { border-color: #b87a6b; color: #ffe6df; }
+  .error-retry:disabled { opacity: .4; cursor: default; }
   .portrait-panel { display: grid; gap: 8px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
   .portrait-heading { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
   .portrait-heading > div { display: grid; gap: 4px; }

@@ -343,3 +343,10 @@ export function isScenarioCard(card: ImportedCharacterCard | null): boolean {
     && isRecord(card?.data.extensions.mullet)
     && card.data.extensions.mullet.kind === 'scenario';
 }
+
+export function scenarioPortraitGenerationReady(
+  card: ImportedCharacterCard | null,
+  scenarioCatalogSettled: boolean
+): boolean {
+  return !isScenarioCard(card) || scenarioCatalogSettled;
+}
