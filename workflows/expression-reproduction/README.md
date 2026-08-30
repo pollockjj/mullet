@@ -8,9 +8,7 @@ Every JSON file in `api/` was extracted from the `prompt` metadata embedded by C
 | --- | --- | --- | --- |
 | `api/jenna-z-image-turbo.json` | Jenna | Z-Image Turbo | `outputs/jenna-z-image-turbo.png` |
 | `api/jenna-qwen-image-edit-2511.json` | Jenna | Qwen Image Edit 2511 + 4-step LoRA | `outputs/jenna-qwen-image-edit-2511.png` |
-| `api/jenna-flux2-klein-9b.json` | Jenna | FLUX.2 Klein 9B KV INT8 ConvRot | `outputs/jenna-flux2-klein-9b.png` |
 | `api/cally-qwen-image-edit-2511.json` | Cally | Qwen Image Edit 2511 + 4-step LoRA | `outputs/cally-qwen-image-edit-2511.png` |
-| `api/cally-mage-flow-edit-turbo.json` | Cally | Mage-Flow Edit Turbo | `outputs/cally-mage-flow-edit-turbo.png` |
 
 The identity-reference inputs are the exact bytes used by ComfyUI:
 

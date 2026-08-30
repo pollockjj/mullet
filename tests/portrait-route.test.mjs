@@ -54,7 +54,9 @@ test('compiled portrait route rejects stale selectable expression contracts befo
     await close(comfyServer);
   });
   const comfyBaseUrl = await listen(comfyServer);
-  process.env.EXPRESSION_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.IMAGE_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.VIDEO_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;

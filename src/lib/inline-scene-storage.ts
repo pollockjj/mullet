@@ -6,8 +6,8 @@ import {
   type InlineSceneImageRequest
 } from './inline-scene.ts';
 
-export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v1' as const;
-export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v1' as const;
+export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v2' as const;
+export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v2' as const;
 
 export class StoredInlineSceneIntegrityError extends Error {
   constructor(cause: unknown) {

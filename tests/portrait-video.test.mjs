@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
+  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
   LTX25_PORTRAIT_VIDEO_DURATIONS,
   LTX25_PORTRAIT_VIDEO_TEMPLATE,
   LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
@@ -21,7 +21,7 @@ import {
   PORTRAIT_VIDEO_REQUEST_SPEC,
   PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_VIDEO_TEMPLATES,
-  buildFlux2Klein9BPortraitEndFrameWorkflow,
+  buildQwenPortraitEndFrameWorkflow,
   buildLtx25PortraitVideoWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
   buildPortraitEndFramePrompt,
@@ -196,20 +196,35 @@ test('retains MiniMax H3 as a separately selectable portrait-video template', ()
   assert.equal(buildMiniMaxH3PortraitVideoWorkflow(fiveSecondRequest, firstInput, 42)['6'].inputs.length, 124);
 });
 
-test('keeps FLUX.2 end-frame generation and dispatches it into either generated-FLF graph', () => {
+test('keeps Qwen Image Edit 2511 Lightning end-frame generation and dispatches it into either generated-FLF graph', () => {
   const ltxRequest = requestFor(LTX25_PORTRAIT_VIDEO_TEMPLATE_ID, PORTRAIT_VIDEO_MODE_GENERATED_FLF);
-  assert.equal(ltxRequest.endFrameModelTemplate, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.id);
+  assert.equal(ltxRequest.endFrameModelTemplate, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.id);
   assert.equal(portraitVideoEndFrameSeed(42), 43);
   assert.equal(portraitVideoEndFrameSeed(Number.MAX_SAFE_INTEGER), 0);
   assert.match(buildPortraitEndFramePrompt(ltxRequest), /exact same subject/);
   assert.match(buildPortraitVideoPrompt(ltxRequest), /distinct final pose/);
 
-  const endGraph = buildFlux2Klein9BPortraitEndFrameWorkflow(ltxRequest, firstInput, 43);
-  assert.equal(FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
-  assert.equal(endGraph['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-  assert.equal(endGraph['2'].inputs.type, 'flux2');
-  assert.deepEqual(endGraph['11'].inputs, { width: 576, height: 1024, batch_size: 1 });
-  assert.deepEqual(endGraph['18'].inputs.images, ['17', 0]);
+  const endGraph = buildQwenPortraitEndFrameWorkflow(ltxRequest, firstInput, 43);
+  assert.deepEqual(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles, {
+    unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
+    clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+    vae: 'qwen_image_vae.safetensors',
+    lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+  });
+  assert.equal(endGraph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+  assert.equal(endGraph['2'].inputs.type, 'qwen_image');
+  assert.equal(endGraph['4'].inputs.image, `mullet/motion-inputs/${firstInput.name}`);
+  assert.deepEqual(endGraph['5'].inputs, {
+    image: ['4', 0],
+    upscale_method: 'lanczos',
+    width: 576,
+    height: 1024,
+    crop: 'center'
+  });
+  assert.equal(endGraph['8'].inputs.lora_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.lora);
+  assert.equal(endGraph['8'].inputs.strength_model, 1);
+  assert.equal(endGraph['12'].inputs.seed, 43);
+  assert.deepEqual(endGraph['14'].inputs.images, ['13', 0]);
 
   const ltxGraph = buildPortraitVideoWorkflow(ltxRequest, firstInput, 42, endInput);
   assert.deepEqual(ltxGraph['13'].inputs.image, ['37', 0]);
@@ -247,7 +262,7 @@ test('normalizes additive per-template capability diagnostics without removing o
         durations: [3, 5]
       }
     ],
-    endFrameTemplate: FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
+    endFrameTemplate: QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
     aspectRatios: [{ aspectRatio: '9:16', width: 576, height: 1024 }]
   };
   const normalized = normalizePortraitVideoCapabilities(value);

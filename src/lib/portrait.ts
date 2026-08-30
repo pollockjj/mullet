@@ -9,9 +9,6 @@ export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v5' as const;
 export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v5' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
 export const PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
-export const PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID = 'flux2-klein-9b-distilled-reference-v1' as const;
-export const PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID = 'mage-flow-edit-turbo-reference-v1' as const;
-// Default reference editor. FLUX.2 Klein and Mage remain additive selectable alternatives.
 export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
@@ -23,10 +20,7 @@ export const PORTRAIT_MEGAPIXELS = Object.freeze([0.5, 0.75, 0.9, 1, 1.5, 2] as 
 
 export type PortraitAspectRatio = (typeof PORTRAIT_ASPECT_RATIOS)[number]['id'];
 export type PortraitMegapixels = (typeof PORTRAIT_MEGAPIXELS)[number];
-export type PortraitReferenceModelTemplate =
-  | typeof PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
-  | typeof PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
-  | typeof PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID;
+export type PortraitReferenceModelTemplate = typeof PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
 export type PortraitModelTemplate = typeof PORTRAIT_TEMPLATE_ID | PortraitReferenceModelTemplate;
 
 export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
@@ -88,56 +82,9 @@ export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
   shift: 3.1
 } as const);
 
-export const FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE = Object.freeze({
-  id: PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  label: 'FLUX.2 Klein 9B KV INT8 ConvRot · identity reference',
-  modelFamily: 'flux2-klein',
-  promptGuide: 'preserve the supplied canonical identity exactly; edit only expression, attire, setting, and fixed head-and-chest framing; photorealistic fiction still; no text or watermark',
-  modelFiles: {
-    unet: 'flux-2-klein-9b-kv-int8-convrot.safetensors',
-    clip: 'qwen3vl_8b_fp8_scaled.safetensors',
-    vae: 'flux2-vae.safetensors'
-  },
-  requiredNodes: [
-    'UNETLoader', 'CLIPLoader', 'VAELoader', 'LoadImage', 'ImageScaleToTotalPixels',
-    'VAEEncode', 'CLIPTextEncode', 'ConditioningZeroOut', 'ReferenceLatent',
-    'EmptyFlux2LatentImage', 'RandomNoise', 'CFGGuider', 'KSamplerSelect',
-    'Flux2Scheduler', 'SamplerCustomAdvanced', 'VAEDecode', 'SaveImage'
-  ],
-  multiple: 16,
-  outputNode: '18',
-  steps: 4,
-  cfg: 1,
-  sampler: 'euler'
-} as const);
-
-export const MAGE_FLOW_EDIT_REFERENCE_TEMPLATE = Object.freeze({
-  id: PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
-  label: 'Mage-Flow Edit Turbo · identity reference',
-  modelFamily: 'mage-flow-edit',
-  promptGuide: 'preserve the supplied canonical identity exactly; edit only expression, attire, setting, and fixed head-and-chest framing; photorealistic fiction still; no text or watermark',
-  modelFiles: {
-    unet: 'mage_flow_edit_turbo_int8_convrot.safetensors',
-    clip: 'qwen3vl_4b_bf16.safetensors',
-    vae: 'mage_flow_vae_bf16.safetensors'
-  },
-  requiredNodes: [
-    'UNETLoader', 'CLIPLoader', 'VAELoader', 'LoadImage', 'TextEncodeMageFlowEdit',
-    'KSampler', 'VAEDecode', 'SaveImage'
-  ],
-  multiple: 16,
-  outputNode: '8',
-  steps: 4,
-  cfg: 1,
-  sampler: 'euler',
-  scheduler: 'simple'
-} as const);
-
 export const PORTRAIT_TEMPLATES = Object.freeze([
   Z_IMAGE_TURBO_TEMPLATE,
-  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
-  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE
 ] as const);
 
 export type PortraitTemplate = (typeof PORTRAIT_TEMPLATES)[number];
@@ -152,15 +99,11 @@ export function migratePortraitModelTemplateSelection(
 ): PortraitModelTemplate | null {
   if (isPortraitModelTemplate(current)) return current;
   if (!isPortraitModelTemplate(previous)) return null;
-  return previous === PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
-    ? PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
-    : previous;
+  return previous;
 }
 
 export function isPortraitReferenceTemplateId(value: unknown): value is PortraitReferenceModelTemplate {
-  return value === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
-    || value === PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
-    || value === PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID;
+  return value === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
 }
 
 export function portraitTemplate(modelTemplate: PortraitModelTemplate): PortraitTemplate {
@@ -581,20 +524,36 @@ export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number)
   return graph;
 }
 
-export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('Qwen reference workflow requires a reference-conditioned portrait');
-  }
-  const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
+export type QwenReferenceEditSettings = {
+  referencePath: string;
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  filenamePrefix: 'mullet/portrait-reference' | 'mullet/portrait-generated-end-frame' | 'mullet/scene';
+  referenceWidth?: number;
+  referenceHeight?: number;
+  containReference?: boolean;
+};
+
+export function buildQwenReferenceEditWorkflow(settings: QwenReferenceEditSettings): Record<string, unknown> {
   const template = QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE;
-  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
-  return {
+  const validatedSeed = integer(settings.seed, 'Qwen edit seed', 0, Number.MAX_SAFE_INTEGER);
+  const width = integer(settings.width, 'Qwen edit width', 16, 8192);
+  const height = integer(settings.height, 'Qwen edit height', 16, 8192);
+  if (width % template.multiple !== 0 || height % template.multiple !== 0) {
+    throw new Error(`Qwen edit dimensions must be divisible by ${template.multiple}`);
+  }
+  if (!/^mullet\/(?:identity|motion-inputs)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(settings.referencePath)) {
+    throw new Error('Qwen edit reference path is invalid');
+  }
+  const prompt = textField(settings.prompt, 'Qwen edit prompt', 1, 2000);
+  let referenceSource: [string, number] = ['5', 0];
+  const graph: Record<string, unknown> = {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'qwen_image', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
-    '4': { class_type: 'LoadImage', inputs: { image: referencePath } },
+    '4': { class_type: 'LoadImage', inputs: { image: settings.referencePath } },
     '5': {
       class_type: 'ImageScale',
       inputs: { image: ['4', 0], upscale_method: 'lanczos', width, height, crop: 'center' }
@@ -602,9 +561,9 @@ export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, see
     '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: template.shift } },
     '7': { class_type: 'CFGNorm', inputs: { model: ['6', 0], strength: 1, pre_cfg: false } },
     '8': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['7', 0], lora_name: template.modelFiles.lora, strength_model: 1 } },
-    '9': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: buildPortraitPrompt(normalized) } },
-    '10': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: ['5', 0], prompt: '' } },
-    '11': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
+    '9': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: referenceSource, prompt } },
+    '10': { class_type: 'TextEncodeQwenImageEditPlus', inputs: { clip: ['2', 0], vae: ['3', 0], image1: referenceSource, prompt: '' } },
+    '11': { class_type: 'VAEEncode', inputs: { pixels: referenceSource, vae: ['3', 0] } },
     '12': {
       class_type: 'KSampler',
       inputs: {
@@ -614,133 +573,55 @@ export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, see
       }
     },
     '13': { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['3', 0] } },
-    '14': { class_type: 'SaveImage', inputs: { images: ['13', 0], filename_prefix: 'mullet/portrait-reference' } }
+    '14': { class_type: 'SaveImage', inputs: { images: ['13', 0], filename_prefix: settings.filenamePrefix } }
   };
+  if (settings.containReference) {
+    const referenceWidth = integer(settings.referenceWidth, 'Qwen edit reference width', 16, 8192);
+    const referenceHeight = integer(settings.referenceHeight, 'Qwen edit reference height', 16, 8192);
+    const scale = Math.min(width / referenceWidth, height / referenceHeight);
+    const scaledWidth = Math.max(8, Math.floor((referenceWidth * scale) / 8) * 8);
+    const scaledHeight = Math.max(8, Math.floor((referenceHeight * scale) / 8) * 8);
+    const remainingWidth = width - scaledWidth;
+    const remainingHeight = height - scaledHeight;
+    const left = Math.floor(remainingWidth / 16) * 8;
+    const top = Math.floor(remainingHeight / 16) * 8;
+    graph['5'] = {
+      class_type: 'ImageScale',
+      inputs: { image: ['4', 0], upscale_method: 'lanczos', width: scaledWidth, height: scaledHeight, crop: 'disabled' }
+    };
+    graph['15'] = {
+      class_type: 'ImagePadForOutpaint',
+      inputs: {
+        image: ['5', 0],
+        left,
+        top,
+        right: remainingWidth - left,
+        bottom: remainingHeight - top,
+        feathering: 40
+      }
+    };
+    referenceSource = ['15', 0];
+    (graph['9'] as { inputs: Record<string, unknown> }).inputs.image1 = referenceSource;
+    (graph['10'] as { inputs: Record<string, unknown> }).inputs.image1 = referenceSource;
+    (graph['11'] as { inputs: Record<string, unknown> }).inputs.pixels = referenceSource;
+  }
+  return graph;
 }
 
-type Flux2Klein9BReferenceEditSettings = {
-  referencePath: string;
-  prompt: string;
-  width: number;
-  height: number;
-  referenceMegapixels: PortraitMegapixels;
-  seed: number;
-  filenamePrefix: 'mullet/portrait-reference' | 'mullet/portrait-generated-end-frame';
-};
-
-export function buildFlux2Klein9BReferenceEditWorkflow(
-  settings: Flux2Klein9BReferenceEditSettings
-): Record<string, unknown> {
-  const template = FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE;
-  const validatedSeed = integer(settings.seed, 'FLUX.2 Klein edit seed', 0, Number.MAX_SAFE_INTEGER);
-  const width = integer(settings.width, 'FLUX.2 Klein edit width', 16, 8192);
-  const height = integer(settings.height, 'FLUX.2 Klein edit height', 16, 8192);
-  if (width % template.multiple !== 0 || height % template.multiple !== 0) {
-    throw new Error(`FLUX.2 Klein edit dimensions must be divisible by ${template.multiple}`);
-  }
-  if (!/^mullet\/(?:identity|motion-inputs)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(settings.referencePath)) {
-    throw new Error('FLUX.2 Klein edit reference path is invalid');
-  }
-  const prompt = textField(settings.prompt, 'FLUX.2 Klein edit prompt', 1, 2000);
-  if (!megapixelSet.has(settings.referenceMegapixels)) throw new Error('unsupported FLUX.2 Klein edit megapixel target');
-  return {
-    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'flux2', device: 'default' } },
-    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
-    '4': { class_type: 'LoadImage', inputs: { image: settings.referencePath } },
-    '5': { class_type: 'ImageScaleToTotalPixels', inputs: {
-      image: ['4', 0],
-      upscale_method: 'nearest-exact',
-      megapixels: settings.referenceMegapixels,
-      resolution_steps: 1
-    } },
-    '6': { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
-    '7': { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['2', 0] } },
-    '8': { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['7', 0] } },
-    '9': { class_type: 'ReferenceLatent', inputs: { conditioning: ['7', 0], latent: ['6', 0] } },
-    '10': { class_type: 'ReferenceLatent', inputs: { conditioning: ['8', 0], latent: ['6', 0] } },
-    '11': { class_type: 'EmptyFlux2LatentImage', inputs: { width, height, batch_size: 1 } },
-    '12': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '13': { class_type: 'CFGGuider', inputs: { model: ['1', 0], positive: ['9', 0], negative: ['10', 0], cfg: template.cfg } },
-    '14': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
-    '15': { class_type: 'Flux2Scheduler', inputs: { steps: template.steps, width, height } },
-    '16': { class_type: 'SamplerCustomAdvanced', inputs: {
-      noise: ['12', 0],
-      guider: ['13', 0],
-      sampler: ['14', 0],
-      sigmas: ['15', 0],
-      latent_image: ['11', 0]
-    } },
-    '17': { class_type: 'VAEDecode', inputs: { samples: ['16', 0], vae: ['3', 0] } },
-    '18': { class_type: 'SaveImage', inputs: { images: ['17', 0], filename_prefix: settings.filenamePrefix } }
-  };
-}
-
-export function buildFlux2Klein9BReferencePortraitWorkflow(
-  request: PortraitRequest,
-  seed: number
-): Record<string, unknown> {
+export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
   const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('FLUX.2 Klein reference workflow requires a reference-conditioned portrait');
+  if (normalized.modelTemplate !== PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('Qwen reference workflow requires a reference-conditioned portrait');
   }
   const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
-  return buildFlux2Klein9BReferenceEditWorkflow({
+  return buildQwenReferenceEditWorkflow({
     referencePath: `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`,
     prompt: buildPortraitPrompt(normalized),
     width,
     height,
-    referenceMegapixels: normalized.megapixels,
     seed,
     filenamePrefix: 'mullet/portrait-reference'
   });
-}
-
-export function buildMageFlowReferencePortraitWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('Mage-Flow reference workflow requires a reference-conditioned portrait');
-  }
-  const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
-  const template = MAGE_FLOW_EDIT_REFERENCE_TEMPLATE;
-  const referencePath = `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`;
-  return {
-    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'mage', device: 'default' } },
-    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
-    '4': { class_type: 'LoadImage', inputs: { image: referencePath } },
-    '5': {
-      class_type: 'TextEncodeMageFlowEdit',
-      inputs: {
-        clip: ['2', 0],
-        prompt: buildPortraitPrompt(normalized),
-        negative_prompt: '',
-        vae: ['3', 0],
-        'images.image_1': ['4', 0],
-        width,
-        height,
-        batch_size: 1
-      }
-    },
-    '6': {
-      class_type: 'KSampler',
-      inputs: {
-        model: ['1', 0],
-        positive: ['5', 0],
-        negative: ['5', 1],
-        latent_image: ['5', 2],
-        seed: validatedSeed,
-        steps: template.steps,
-        cfg: template.cfg,
-        sampler_name: template.sampler,
-        scheduler: template.scheduler,
-        denoise: 1
-      }
-    },
-    '7': { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['3', 0] } },
-    '8': { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'mullet/portrait-reference' } }
-  };
 }
 
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {

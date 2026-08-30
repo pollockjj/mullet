@@ -59,7 +59,6 @@
     type InlineSceneAspectRatio,
     type InlineSceneCapabilities,
     type InlineSceneImageRequest,
-    type InlineSceneLora,
     type InlineSceneMegapixels,
     type InlineSceneRequest,
     type InlineSceneResult
@@ -376,7 +375,6 @@
   let inlineSceneError = '';
   let inlineSceneAspectRatio: InlineSceneAspectRatio = '16:9';
   let inlineSceneMegapixels: InlineSceneMegapixels = 1;
-  let inlineSceneLora = '';
   let inlineSceneSidecarRequest: InlineSceneRequest | null = null;
   let generatedInlineScene: StoredInlineScene | null = null;
   let generatedInlineSceneUrl = '';
@@ -477,7 +475,6 @@
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
   const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
-  const inlineSceneLoraStorageKey = 'mullet.inline-scene-lora';
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
   const automaticExpressionRetryDelayMs = 1_500;
@@ -596,8 +593,7 @@
     generatedInlineScene,
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
-    inlineSceneLora,
-    inlineSceneCapabilities
+    scenarioPortraitProfile
   );
   $: inlineSceneVideoRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
   $: inlineSceneVideoCurrent = Boolean(
@@ -655,7 +651,7 @@
     inlineSceneCurrent,
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
-    inlineSceneLora
+    scenarioPortraitProfile
   );
   $: scheduleInlineSceneVideoReconciliation(
     conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
@@ -913,14 +909,11 @@
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       inlineSceneMegapixels = savedMegapixels;
     }
-    inlineSceneLora = localStorage.getItem(inlineSceneLoraStorageKey) ?? '';
   }
 
   function persistInlineSceneSettings() {
     localStorage.setItem(inlineSceneAspectStorageKey, inlineSceneAspectRatio);
     localStorage.setItem(inlineSceneMegapixelsStorageKey, String(inlineSceneMegapixels));
-    if (inlineSceneLora) localStorage.setItem(inlineSceneLoraStorageKey, inlineSceneLora);
-    else localStorage.removeItem(inlineSceneLoraStorageKey);
     inlineSceneGeneration += 1;
     inlineSceneController?.abort();
     inlineSceneController = null;
@@ -994,24 +987,15 @@
     scene: StoredInlineScene | null,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    lora: string,
-    capabilities: InlineSceneCapabilities | null
+    profile: ScenarioPortraitProfile | null
   ): boolean {
-    const selectedLora = inlineSceneLoraDescriptor(capabilities, lora);
-    if (lora && !selectedLora) return false;
     return Boolean(
       scene
+      && profile
       && scene.request.aspectRatio === aspectRatio
       && scene.request.megapixels === megapixels
-      && scene.request.lora?.path === selectedLora?.path
-      && scene.request.lora?.trigger === selectedLora?.trigger
-      && scene.request.lora?.modelHash === selectedLora?.modelHash
+      && scene.request.referenceImage.sha256 === profile.referenceImage.sha256
     );
-  }
-
-  function inlineSceneLoraDescriptor(capabilities: InlineSceneCapabilities | null, path: string): InlineSceneLora | null {
-    if (!path) return null;
-    return capabilities?.loras.find((lora) => lora.path === path) ?? null;
   }
 
   function removeInstalledInlineScene() {
@@ -1492,10 +1476,6 @@
         restorationStarted = true;
       }
       inlineSceneCapabilities = capabilities;
-      if (inlineSceneLora && !inlineSceneCapabilities.loras.some((lora) => lora.path === inlineSceneLora)) {
-        inlineSceneLora = '';
-        localStorage.removeItem(inlineSceneLoraStorageKey);
-      }
       await tick();
       if (
         inlineSceneMotionEnabled
@@ -1515,10 +1495,8 @@
     request: InlineSceneRequest,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    lora: string,
-    capabilities: InlineSceneCapabilities | null
+    profile: ScenarioPortraitProfile
   ): string {
-    const descriptor = inlineSceneLoraDescriptor(capabilities, lora);
     return [
       request.source.conversationId,
       request.source.messageCount,
@@ -1526,9 +1504,9 @@
       request.source.turnFingerprint,
       aspectRatio,
       megapixels,
-      descriptor?.path ?? '',
-      descriptor?.trigger ?? '',
-      descriptor?.modelHash ?? ''
+      profile.id,
+      profile.fingerprint,
+      profile.referenceImage.sha256
     ].join('\u001f');
   }
 
@@ -1543,13 +1521,13 @@
     current: boolean,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    lora: string
+    profile: ScenarioPortraitProfile | null
   ) {
-    if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current) return;
-    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, lora, capabilities);
+    if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current || !profile) return;
+    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, profile);
     if (key === lastInlineSceneAttemptKey) return;
     lastInlineSceneAttemptKey = key;
-    void generateInlineScene(request, aspectRatio, megapixels, lora);
+    void generateInlineScene(request, aspectRatio, megapixels, profile);
   }
 
   function inlineSceneGenerationIsCurrent(
@@ -1570,9 +1548,11 @@
     const liveSidecar = currentInlineSceneSidecarRequest(conversationId, messages, finalizedInlineSceneSource);
     if (!liveSidecar || !livingHistorySourcesMatch(liveSidecar.source, sidecarRequest.source)) return false;
     if (!result) return true;
+    if (!scenarioPortraitProfile) return false;
     try {
       const liveImageRequest = buildInlineSceneImageRequest(result, {
-        lora: inlineSceneLoraDescriptor(inlineSceneCapabilities, inlineSceneLora),
+        referenceImage: scenarioPortraitProfile.referenceImage,
+        lora: null,
         aspectRatio: inlineSceneAspectRatio,
         megapixels: inlineSceneMegapixels
       });
@@ -1592,12 +1572,13 @@
     selectedSidecarRequest: InlineSceneRequest | null = inlineSceneSidecarRequest,
     selectedAspectRatio: InlineSceneAspectRatio = inlineSceneAspectRatio,
     selectedMegapixels: InlineSceneMegapixels = inlineSceneMegapixels,
-    selectedLora: string = inlineSceneLora
+    selectedProfile: ScenarioPortraitProfile | null = scenarioPortraitProfile
   ) {
     if (
       !selectedSidecarRequest
       || !inlineScenesEnabled
       || !inlineSceneCapabilities
+      || !selectedProfile
       || inlineSceneBusy
       || !inlineScenePersistenceReady
       || !inlineScenePersistenceAvailable
@@ -1605,14 +1586,11 @@
     suspendInlineSceneVideoForStaticChange();
     const generation = inlineSceneGeneration;
     const epoch = inlineSceneEpoch;
-    const selectedLoraDescriptor = inlineSceneLoraDescriptor(inlineSceneCapabilities, selectedLora);
-    if (selectedLora && !selectedLoraDescriptor) return;
     lastInlineSceneAttemptKey = inlineSceneAttemptKey(
       selectedSidecarRequest,
       selectedAspectRatio,
       selectedMegapixels,
-      selectedLora,
-      inlineSceneCapabilities
+      selectedProfile
     );
     inlineSceneBusy = true;
     inlineSceneError = '';
@@ -1642,7 +1620,8 @@
         throw new Error('Inline-scene sidecar returned a mismatched finalized source.');
       }
       const imageRequest = buildInlineSceneImageRequest(result, {
-        lora: selectedLoraDescriptor,
+        referenceImage: selectedProfile.referenceImage,
+        lora: null,
         aspectRatio: selectedAspectRatio,
         megapixels: selectedMegapixels
       });
@@ -4555,15 +4534,6 @@
               <option value={inlineSceneCapabilities.template.id}>{inlineSceneCapabilities.template.label}</option>
             </select>
           </label>
-          <label>
-            <span>Subject LoRA</span>
-            <select bind:value={inlineSceneLora} on:change={persistInlineSceneSettings} disabled={inlineSceneBusy} aria-label="Inline scene subject LoRA">
-              <option value="">None</option>
-              {#each inlineSceneCapabilities.loras as lora}
-                <option value={lora.path}>{lora.path.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · {lora.trigger}</option>
-              {/each}
-            </select>
-          </label>
           <div class="portrait-grid">
             <label>
               <span>Aspect</span>
@@ -4583,12 +4553,13 @@
           {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
           <button
             on:click={() => void generateInlineScene()}
-            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || !inlineScenesEnabled || !inlineScenePersistenceAvailable}
+            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || !scenarioPortraitProfile || !inlineScenesEnabled || !inlineScenePersistenceAvailable}
           >
             {inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Regenerate scene' : 'Generate scene'}
           </button>
           {#if !inlineScenesEnabled}<small>Turn on Inline scene to direct and render each finalized response.</small>{/if}
           {#if inlineScenesEnabled && !inlineSceneSidecarRequest}<small>Finish one user-and-assistant turn before scene generation starts.</small>{/if}
+          {#if inlineScenesEnabled && inlineSceneSidecarRequest && !scenarioPortraitProfile}<small>A validated scenario identity reference is required for Qwen scene editing.</small>{/if}
           <div class="scene-motion-controls">
             <div class="portrait-heading">
               <div>
@@ -4867,7 +4838,7 @@
                     </div>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible ? 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Z-Image') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    <span>{inlineSceneVideoVisible ? 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Qwen Image Edit') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>

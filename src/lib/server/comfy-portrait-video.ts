@@ -7,8 +7,8 @@ import {
   PORTRAIT_VIDEO_DIMENSIONS,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
-  FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
-  buildFlux2Klein9BPortraitEndFrameWorkflow,
+  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
+  buildQwenPortraitEndFrameWorkflow,
   buildLtx25PortraitVideoWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
   portraitVideoDimensions,
@@ -128,51 +128,63 @@ function requireIntegerInput(
 
 export async function loadPortraitVideoCapabilities(
   fetcher: Fetcher,
-  baseUrl: string,
+  videoBaseUrl: string,
+  imageBaseUrl: string,
   signal?: AbortSignal
 ): Promise<PortraitVideoCapabilities> {
   const ltxTemplate = LTX25_PORTRAIT_VIDEO_TEMPLATE;
   const minimaxTemplate = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
-  const endFrameTemplate = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE;
-  const nodeNames = [...new Set([
+  const endFrameTemplate = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
+  const videoNodeNames = [...new Set([
     ...ltxTemplate.requiredNodes,
-    ...minimaxTemplate.requiredNodes,
-    ...endFrameTemplate.requiredNodes
+    ...minimaxTemplate.requiredNodes
   ])];
-  const bodies = new Map(await Promise.all(nodeNames.map(async (nodeName): Promise<[string, unknown | null]> => {
-    try {
-      const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
-      if (!response.ok) return [nodeName, null];
-      return [nodeName, await response.json()];
-    } catch (cause) {
-      if (signal?.aborted) throw cause;
-      return [nodeName, null];
-    }
-  })));
-  const nodeAvailable = (nodeName: string): boolean => {
+  const endFrameNodeNames = [...new Set(endFrameTemplate.requiredNodes)];
+  const loadNodeBodies = async (baseUrl: string, nodeNames: readonly string[]) => new Map(await Promise.all(
+    nodeNames.map(async (nodeName): Promise<[string, unknown | null]> => {
+      try {
+        const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
+        if (!response.ok) return [nodeName, null];
+        return [nodeName, await response.json()];
+      } catch (cause) {
+        if (signal?.aborted) throw cause;
+        return [nodeName, null];
+      }
+    })
+  ));
+  const [videoBodies, endFrameBodies] = await Promise.all([
+    loadNodeBodies(videoBaseUrl, videoNodeNames),
+    loadNodeBodies(imageBaseUrl, endFrameNodeNames)
+  ]);
+  const nodeAvailable = (bodies: Map<string, unknown | null>, nodeName: string): boolean => {
     const body = bodies.get(nodeName);
     return isRecord(body) && isRecord(body[nodeName]);
   };
-  const info = Object.fromEntries(nodeNames
-    .filter(nodeAvailable)
-    .map((nodeName) => [nodeName, nodeInfo(bodies.get(nodeName), nodeName)])) as Record<string, Record<string, unknown>>;
+  const videoNodeAvailable = (nodeName: string): boolean => nodeAvailable(videoBodies, nodeName);
+  const endFrameNodeAvailable = (nodeName: string): boolean => nodeAvailable(endFrameBodies, nodeName);
+  const videoInfo = Object.fromEntries(videoNodeNames
+    .filter(videoNodeAvailable)
+    .map((nodeName) => [nodeName, nodeInfo(videoBodies.get(nodeName), nodeName)])) as Record<string, Record<string, unknown>>;
+  const endFrameInfo = Object.fromEntries(endFrameNodeNames
+    .filter(endFrameNodeAvailable)
+    .map((nodeName) => [nodeName, nodeInfo(endFrameBodies.get(nodeName), nodeName)])) as Record<string, Record<string, unknown>>;
   const ltxI2vNodes = new Set(['LTXVImgToVideoInplace']);
   const ltxFlfNodes = new Set(['LTXVAddGuide', 'LTXVCropGuides']);
   const ltxCommonMissing = ltxTemplate.requiredNodes
-    .filter((nodeName) => !ltxI2vNodes.has(nodeName) && !ltxFlfNodes.has(nodeName) && !nodeAvailable(nodeName))
+    .filter((nodeName) => !ltxI2vNodes.has(nodeName) && !ltxFlfNodes.has(nodeName) && !videoNodeAvailable(nodeName))
     .map((nodeName) => `node:${nodeName}`);
   const ltxI2vMissing = ltxTemplate.requiredNodes
-    .filter((nodeName) => ltxI2vNodes.has(nodeName) && !nodeAvailable(nodeName))
+    .filter((nodeName) => ltxI2vNodes.has(nodeName) && !videoNodeAvailable(nodeName))
     .map((nodeName) => `node:${nodeName}`);
   const ltxFlfMissing = ltxTemplate.requiredNodes
-    .filter((nodeName) => ltxFlfNodes.has(nodeName) && !nodeAvailable(nodeName))
+    .filter((nodeName) => ltxFlfNodes.has(nodeName) && !videoNodeAvailable(nodeName))
     .map((nodeName) => `node:${nodeName}`);
   const minimaxCommonMissing = minimaxTemplate.requiredNodes
-    .filter((nodeName) => !nodeAvailable(nodeName))
+    .filter((nodeName) => !videoNodeAvailable(nodeName))
     .map((nodeName) => `node:${nodeName}`);
   const minimaxLoopMissing: string[] = [];
   const endFrameMissing = endFrameTemplate.requiredNodes
-    .filter((nodeName) => !nodeAvailable(nodeName))
+    .filter((nodeName) => !endFrameNodeAvailable(nodeName))
     .map((nodeName) => `node:${nodeName}`);
   const diagnostic = (missing: string[], label: string, check: () => void): void => {
     try {
@@ -188,8 +200,22 @@ export async function loadPortraitVideoCapabilities(
     expected: string,
     label: string
   ): void => {
-    if (!nodeAvailable(nodeName)) return;
-    diagnostic(missing, label, () => requireOption(optionList(info[nodeName], nodeName, inputName), expected, label));
+    if (!videoNodeAvailable(nodeName)) return;
+    diagnostic(missing, label, () => requireOption(optionList(videoInfo[nodeName], nodeName, inputName), expected, label));
+  };
+  const endFrameModelOption = (
+    missing: string[],
+    nodeName: string,
+    inputName: string,
+    expected: string,
+    label: string
+  ): void => {
+    if (!endFrameNodeAvailable(nodeName)) return;
+    diagnostic(missing, label, () => requireOption(
+      optionList(endFrameInfo[nodeName], nodeName, inputName),
+      expected,
+      label
+    ));
   };
 
   modelOption(ltxCommonMissing, 'UNETLoader', 'unet_name', ltxTemplate.modelFiles.unet, `model:unet:${ltxTemplate.modelFiles.unet}`);
@@ -214,58 +240,66 @@ export async function loadPortraitVideoCapabilities(
   modelOption(minimaxCommonMissing, 'LoraLoaderModelOnly', 'lora_name', minimaxTemplate.modelFiles.turboLora, `model:lora:${minimaxTemplate.modelFiles.turboLora}`);
   modelOption(minimaxCommonMissing, 'KSamplerSelect', 'sampler_name', minimaxTemplate.sampler, `sampler:${minimaxTemplate.sampler}`);
   modelOption(minimaxCommonMissing, 'BasicScheduler', 'scheduler', minimaxTemplate.scheduler, `scheduler:${minimaxTemplate.scheduler}`);
-  if (nodeAvailable('SaveVideo')) {
+  if (videoNodeAvailable('SaveVideo')) {
     diagnostic(minimaxCommonMissing, `video-format:${minimaxTemplate.format}`, () => requireOption(
-      dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+      dynamicOptionKeys(requiredInput(videoInfo.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
       minimaxTemplate.format,
       `video-format:${minimaxTemplate.format}`
     ));
     diagnostic(minimaxCommonMissing, `video-codec:${minimaxTemplate.codec}`, () => requireOption(
-      dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+      dynamicOptionKeys(inputDefinition(videoInfo.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
       minimaxTemplate.codec,
       `video-codec:${minimaxTemplate.codec}`
     ));
   }
-  if (nodeAvailable('MiniMaxH3ImageToVideo')) {
+  if (videoNodeAvailable('MiniMaxH3ImageToVideo')) {
     diagnostic(minimaxCommonMissing, 'node-input:MiniMaxH3ImageToVideo.first_frame', () => {
-      if (inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'first_frame')[0] !== 'IMAGE') {
+      if (inputDefinition(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'first_frame')[0] !== 'IMAGE') {
         throw new Error('invalid first-frame input');
       }
     });
     diagnostic(minimaxLoopMissing, 'node-input:MiniMaxH3ImageToVideo.last_frame', () => {
-      if (inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'last_frame')[0] !== 'IMAGE') {
+      if (inputDefinition(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'last_frame')[0] !== 'IMAGE') {
         throw new Error('invalid last-frame input');
       }
     });
     const maximumWidth = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ width }) => width));
     const maximumHeight = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ height }) => height));
     diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.width:${maximumWidth}`, () => {
-      requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'width', maximumWidth, minimaxTemplate.multiple);
+      requireIntegerInput(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'width', maximumWidth, minimaxTemplate.multiple);
     });
     diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.height:${maximumHeight}`, () => {
-      requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, minimaxTemplate.multiple);
+      requireIntegerInput(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, minimaxTemplate.multiple);
     });
     for (const durationSeconds of minimaxTemplate.durations) {
       const frames = portraitVideoDimensions('9:16', durationSeconds).frames;
       diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.length:${frames}`, () => {
-        requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'length', frames, 17);
+        requireIntegerInput(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'length', frames, 17);
       });
     }
   }
-  if (nodeAvailable('LoadImage')) {
+  if (videoNodeAvailable('LoadImage')) {
     for (const missing of [ltxCommonMissing, minimaxCommonMissing]) {
       diagnostic(missing, 'node-input:LoadImage.image_upload', () => {
-        const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
+        const uploadInput = requiredInput(videoInfo.LoadImage, 'LoadImage', 'image');
         if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('upload unavailable');
       });
     }
   }
 
-  modelOption(endFrameMissing, 'UNETLoader', 'unet_name', endFrameTemplate.modelFiles.unet, `model:unet:${endFrameTemplate.modelFiles.unet}`);
-  modelOption(endFrameMissing, 'CLIPLoader', 'clip_name', endFrameTemplate.modelFiles.clip, `model:clip:${endFrameTemplate.modelFiles.clip}`);
-  modelOption(endFrameMissing, 'CLIPLoader', 'type', 'flux2', 'clip-type:flux2');
-  modelOption(endFrameMissing, 'VAELoader', 'vae_name', endFrameTemplate.modelFiles.vae, `model:vae:${endFrameTemplate.modelFiles.vae}`);
-  modelOption(endFrameMissing, 'KSamplerSelect', 'sampler_name', endFrameTemplate.sampler, `sampler:${endFrameTemplate.sampler}`);
+  if (endFrameNodeAvailable('LoadImage')) {
+    diagnostic(endFrameMissing, 'node-input:LoadImage.image_upload', () => {
+      const uploadInput = requiredInput(endFrameInfo.LoadImage, 'LoadImage', 'image');
+      if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('upload unavailable');
+    });
+  }
+  endFrameModelOption(endFrameMissing, 'UNETLoader', 'unet_name', endFrameTemplate.modelFiles.unet, `model:unet:${endFrameTemplate.modelFiles.unet}`);
+  endFrameModelOption(endFrameMissing, 'CLIPLoader', 'clip_name', endFrameTemplate.modelFiles.clip, `model:clip:${endFrameTemplate.modelFiles.clip}`);
+  endFrameModelOption(endFrameMissing, 'CLIPLoader', 'type', 'qwen_image', 'clip-type:qwen_image');
+  endFrameModelOption(endFrameMissing, 'VAELoader', 'vae_name', endFrameTemplate.modelFiles.vae, `model:vae:${endFrameTemplate.modelFiles.vae}`);
+  endFrameModelOption(endFrameMissing, 'LoraLoaderModelOnly', 'lora_name', endFrameTemplate.modelFiles.lora, `model:lora:${endFrameTemplate.modelFiles.lora}`);
+  endFrameModelOption(endFrameMissing, 'KSampler', 'sampler_name', endFrameTemplate.sampler, `sampler:${endFrameTemplate.sampler}`);
+  endFrameModelOption(endFrameMissing, 'KSampler', 'scheduler', endFrameTemplate.scheduler, `scheduler:${endFrameTemplate.scheduler}`);
 
   const unique = (items: readonly string[]): string[] => [...new Set(items)];
   const modes = (
@@ -412,7 +446,7 @@ function outputVideo(entry: Record<string, unknown>, request: PortraitVideoReque
 
 function outputEndFrame(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  const outputNode = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.outputNode;
+  const outputNode = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.outputNode;
   if (!isRecord(entry.outputs) || Object.keys(entry.outputs).length !== 1 || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI portrait end-frame history omitted the selected output node');
   }
@@ -566,7 +600,7 @@ export async function runComfyPortraitEndFrame(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildFlux2Klein9BPortraitEndFrameWorkflow(request, input, seed),
+        prompt: buildQwenPortraitEndFrameWorkflow(request, input, seed),
         client_id: 'mullet-portrait-end-frame'
       }),
       signal

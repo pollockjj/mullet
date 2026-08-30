@@ -22,9 +22,14 @@ import { runtime } from '$lib/server/runtime';
 
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
-function configuredExpressionComfyBaseUrl(): string {
-  if (!runtime.expressionComfyBaseUrl) throw error(503, 'Portrait motion is not configured.');
-  return runtime.expressionComfyBaseUrl;
+function configuredImageComfyBaseUrl(): string {
+  if (!runtime.imageComfyBaseUrl) throw error(503, 'Portrait end-frame generation is not configured.');
+  return runtime.imageComfyBaseUrl;
+}
+
+function configuredVideoComfyBaseUrl(): string {
+  if (!runtime.videoComfyBaseUrl) throw error(503, 'Portrait motion is not configured.');
+  return runtime.videoComfyBaseUrl;
 }
 
 function randomSeed(): number {
@@ -54,11 +59,13 @@ function exactMultipartParts(form: FormData): { requestJson: string; image: Blob
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
-  const baseUrl = configuredExpressionComfyBaseUrl();
+  const imageBaseUrl = configuredImageComfyBaseUrl();
+  const videoBaseUrl = configuredVideoComfyBaseUrl();
   try {
     const capabilities = await loadPortraitVideoCapabilities(
       fetch,
-      baseUrl,
+      videoBaseUrl,
+      imageBaseUrl,
       AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
     );
     return json(capabilities, { headers: { 'cache-control': 'no-store' } });
@@ -69,7 +76,8 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
 };
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  const baseUrl = configuredExpressionComfyBaseUrl();
+  const imageBaseUrl = configuredImageComfyBaseUrl();
+  const videoBaseUrl = configuredVideoComfyBaseUrl();
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('multipart/form-data')) {
     throw error(400, 'portrait-video request must be multipart form data');
   }
@@ -102,7 +110,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const timeoutSignal = AbortSignal.timeout(PORTRAIT_VIDEO_TIMEOUT_MS);
   const signal = AbortSignal.any([request.signal, timeoutSignal]);
   try {
-    const capabilities = await loadPortraitVideoCapabilities(fetch, baseUrl, signal);
+    const capabilities = await loadPortraitVideoCapabilities(fetch, videoBaseUrl, imageBaseUrl, signal);
     if (!portraitVideoModeAvailable(
       capabilities,
       portraitVideoRequest.mode,
@@ -116,17 +124,39 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       const diagnostics = mode?.missing.length ? ` Missing: ${mode.missing.join(', ')}.` : '';
       throw error(503, `The selected portrait-motion mode is unavailable.${diagnostics}`);
     }
-    const input = await uploadPortraitVideoInput(fetch, baseUrl, imageBytes, imageSha256, signal);
+    const videoInput = await uploadPortraitVideoInput(fetch, videoBaseUrl, imageBytes, imageSha256, signal);
     let endFrame: Awaited<ReturnType<typeof runComfyPortraitEndFrame>> | null = null;
     let endFrameInput;
     let endFrameSeed: number | null = null;
     if (portraitVideoRequest.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
       endFrameSeed = portraitVideoEndFrameSeed(seed);
-      endFrame = await runComfyPortraitEndFrame(fetch, baseUrl, portraitVideoRequest, input, endFrameSeed, signal);
+      const imageInput = await uploadPortraitVideoInput(fetch, imageBaseUrl, imageBytes, imageSha256, signal);
+      endFrame = await runComfyPortraitEndFrame(
+        fetch,
+        imageBaseUrl,
+        portraitVideoRequest,
+        imageInput,
+        endFrameSeed,
+        signal
+      );
       if (endFrame.sha256 === imageSha256) throw new Error('Generated portrait end frame did not differ from its source.');
-      endFrameInput = await uploadPortraitVideoInput(fetch, baseUrl, endFrame.bytes, endFrame.sha256, signal);
+      endFrameInput = await uploadPortraitVideoInput(
+        fetch,
+        videoBaseUrl,
+        endFrame.bytes,
+        endFrame.sha256,
+        signal
+      );
     }
-    const result = await runComfyPortraitVideo(fetch, baseUrl, portraitVideoRequest, input, seed, signal, endFrameInput);
+    const result = await runComfyPortraitVideo(
+      fetch,
+      videoBaseUrl,
+      portraitVideoRequest,
+      videoInput,
+      seed,
+      signal,
+      endFrameInput
+    );
     const dimensions = portraitVideoDimensions(portraitVideoRequest.aspectRatio, portraitVideoRequest.durationSeconds);
     const headers: Record<string, string> = {
       'content-type': result.contentType,

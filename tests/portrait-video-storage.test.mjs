@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
+  PORTRAIT_END_FRAME_TEMPLATE_ID,
+  PORTRAIT_VIDEO_REQUEST_SPEC,
   portraitVideoRequestKey
 } from '../src/lib/portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
@@ -19,7 +21,7 @@ import {
 
 function request(overrides = {}) {
   return {
-    spec: 'mullet_portrait_video_request_v7',
+    spec: PORTRAIT_VIDEO_REQUEST_SPEC,
     modelTemplate: LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
     endFrameModelTemplate: null,
     mode: 'i2v',
@@ -88,8 +90,8 @@ function stored(overrides = {}) {
 
 test('normalizes the default two-second LTX VP9 WebM within container-duration tolerance', () => {
   const result = normalizeStoredPortraitVideo(stored());
-  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v7');
-  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v7');
+  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v8');
+  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v8');
   assert.equal(result.modelTemplate, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(result.video.type, 'video/webm');
   assert.equal(result.frames, 49);
@@ -162,8 +164,8 @@ test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
   assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
 });
 
-test('discards obsolete v1-v6 direct values and envelopes for automatic regeneration', () => {
-  for (let version = 1; version <= 6; version += 1) {
+test('discards obsolete v1-v7 direct values and envelopes for automatic regeneration', () => {
+  for (let version = 1; version <= 7; version += 1) {
     assert.equal(unwrapStoredPortraitVideo({ spec: `mullet_stored_portrait_video_v${version}` }), null);
     assert.equal(unwrapStoredPortraitVideo({
       spec: `mullet_stored_portrait_video_envelope_v${version}`,
@@ -176,14 +178,14 @@ test('discards obsolete v1-v6 direct values and envelopes for automatic regenera
 test('requires exact generated end-frame provenance only for generated FLF mode', () => {
   const generatedRequest = request({
     mode: 'flf2v_generated',
-    endFrameModelTemplate: 'flux2-klein-9b-distilled-end-frame-v1'
+    endFrameModelTemplate: PORTRAIT_END_FRAME_TEMPLATE_ID
   });
   const generated = stored({
     request: generatedRequest,
     requestKey: portraitVideoRequestKey(generatedRequest),
     mode: generatedRequest.mode,
     endFrame: {
-      modelTemplate: 'flux2-klein-9b-distilled-end-frame-v1',
+      modelTemplate: PORTRAIT_END_FRAME_TEMPLATE_ID,
       promptId: '33333333-3333-4333-8333-333333333333',
       seed: 43,
       width: 576,

@@ -35,6 +35,15 @@ const motionPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const mp4Bytes = buildH264AacMp4Fixture();
 const videoSha256 = createHash('sha256').update(mp4Bytes).digest('hex');
+const canonicalReference = Object.freeze({
+  name: 'jenna-stannis-v1.jpg',
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: 'c'.repeat(64),
+  width: 400,
+  height: 600,
+  aspectRatio: '2:3'
+});
 
 function request() {
   const messages = [
@@ -43,7 +52,12 @@ function request() {
   ];
   const sidecar = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', prompt);
-  const sceneRequest = buildInlineSceneImageRequest(result, { lora: null, aspectRatio: '16:9', megapixels: 1 });
+  const sceneRequest = buildInlineSceneImageRequest(result, {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio: '16:9',
+    megapixels: 1
+  });
   const dimensions = inlineSceneDimensions('16:9', 1);
   return buildInlineSceneVideoRequest({
     conversationId,
@@ -86,6 +100,8 @@ function stored(overrides = {}) {
 
 test('normalizes and byte-verifies a static-scene-bound H.264/AAC MP4', async () => {
   const normalized = normalizeStoredInlineSceneVideo(stored());
+  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v4');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v4');
   assert.equal(normalized.requestKey, inlineSceneVideoRequestKey(normalized.request));
   assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/mp4');
   assert.equal(normalized.request.source.scenePromptId, staticPromptId);
@@ -199,12 +215,14 @@ test('discards a malformed writer envelope inside its restore lock', async () =>
   assert.equal(discardedInsideLock, true);
 });
 
-test('silently discards obsolete v1 and v2 motion inside the restore lock', async () => {
+test('silently discards obsolete v1 through v3 motion inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_video_v1',
     'mullet_stored_inline_scene_video_envelope_v1',
     'mullet_stored_inline_scene_video_v2',
-    'mullet_stored_inline_scene_video_envelope_v2'
+    'mullet_stored_inline_scene_video_envelope_v2',
+    'mullet_stored_inline_scene_video_v3',
+    'mullet_stored_inline_scene_video_envelope_v3'
   ]) {
     let lockHeld = false;
     let discardedInsideLock = false;

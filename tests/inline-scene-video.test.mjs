@@ -35,6 +35,15 @@ const messages = [
   { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
 ];
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
+const canonicalReference = Object.freeze({
+  name: 'jenna-stannis-v1.jpg',
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: 'c'.repeat(64),
+  width: 400,
+  height: 600,
+  aspectRatio: '2:3'
+});
 
 function staticScene(aspectRatio = '16:9', megapixels = 1) {
   const sidecarRequest = buildInlineSceneRequest(
@@ -43,7 +52,12 @@ function staticScene(aspectRatio = '16:9', megapixels = 1) {
     livingHistorySourceForMessages(conversationId, messages)
   );
   const result = createInlineSceneResult(sidecarRequest, 'gemma-4-ortenzya', prompt);
-  const request = buildInlineSceneImageRequest(result, { lora: null, aspectRatio, megapixels });
+  const request = buildInlineSceneImageRequest(result, {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio,
+    megapixels
+  });
   const dimensions = inlineSceneDimensions(aspectRatio, megapixels);
   return {
     conversationId,
@@ -80,7 +94,7 @@ test('binds motion to every static-scene provenance field', () => {
         ...request.source,
         sceneRequest: {
           ...request.source.sceneRequest,
-          lora: { path: 'zimage/subject.safetensors', trigger: 'subject', modelHash: 'b'.repeat(64) }
+          referenceImage: { ...canonicalReference, sha256: 'b'.repeat(64) }
         }
       }
     }),

@@ -26,6 +26,15 @@ const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const promptId = '22222222-2222-4222-8222-222222222222';
 const comfyPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
+const canonicalReference = Object.freeze({
+  name: 'jenna-stannis-v1.jpg',
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: 'c'.repeat(64),
+  width: 400,
+  height: 600,
+  aspectRatio: '2:3'
+});
 
 function request() {
   const messages = [
@@ -34,7 +43,12 @@ function request() {
   ];
   const sidecar = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', prompt);
-  const sceneRequest = buildInlineSceneImageRequest(result, { lora: null, aspectRatio: '16:9', megapixels: 1 });
+  const sceneRequest = buildInlineSceneImageRequest(result, {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio: '16:9',
+    megapixels: 1
+  });
   const dimensions = inlineSceneDimensions('16:9', 1);
   return buildInlineSceneVideoRequest({
     conversationId,

@@ -17,6 +17,8 @@ npm run start
 
 Copy `.env.example` values into the service environment. Model credentials and private network addresses belong in the runtime environment, never in the repository.
 
+Image generation is isolated on Firestorm CUDA0 through `IMAGE_COMFY_BASE_URL`; video generation is isolated on CUDA1 through `VIDEO_COMFY_BASE_URL`. Qwen Image Edit 2511 with its fixed four-step Lightning LoRA is the reference editor for portraits, scenes, and generated motion end frames. Mage-Flow and FLUX.2 are not part of the supported model inventory.
+
 ## MiniMax H3 model provenance
 
 Recorded 2026-08-28 for the local 768p scene-motion path.

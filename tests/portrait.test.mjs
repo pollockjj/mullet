@@ -2,11 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
-  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
   PORTRAIT_CAPABILITIES_SPEC,
-  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_REQUEST_SPEC,
@@ -14,10 +10,9 @@ import {
   PORTRAIT_TEMPLATES,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildFlux2Klein9BReferencePortraitWorkflow,
-  buildMageFlowReferencePortraitWorkflow,
   buildPortraitPrompt,
   buildPortraitRequest,
+  buildQwenReferenceEditWorkflow,
   buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   migratePortraitModelTemplateSelection,
@@ -90,14 +85,14 @@ test('fixes every expression portrait to exact 9:16 at the 0.5 MP default', () =
   assert.throws(() => portraitDimensions('2:3', 0.5), /unsupported portrait aspect ratio/);
 });
 
-test('normalizes and retains all four additive model capabilities, including unavailable models', () => {
+test('normalizes exactly the Z-Image and Qwen model capabilities, including unavailable Qwen', () => {
   const capabilities = normalizePortraitCapabilities({
     spec: PORTRAIT_CAPABILITIES_SPEC,
     templates: PORTRAIT_TEMPLATES.map((template) => ({
       template,
-      available: template.id !== PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
-      missing: template.id === PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
-        ? [`model:unet:${MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet}`]
+      available: template.id !== PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+      missing: template.id === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+        ? [`model:unet:${QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet}`]
         : []
     })),
     aspectRatios: [{ id: 'forged' }],
@@ -108,36 +103,32 @@ test('normalizes and retains all four additive model capabilities, including una
   assert.equal(capabilities.spec, 'mullet_portrait_capabilities_v5');
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   ]);
   assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_TEMPLATE_ID), true);
-  assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID), true);
-  assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID), true);
-  assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID), false);
+  assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID), false);
+  assert.equal(portraitModelTemplateAvailable(capabilities, 'retired-reference-editor-v1'), false);
   assert.equal(portraitModelTemplateAvailable(null, PORTRAIT_TEMPLATE_ID), false);
   assert.deepEqual(capabilities.aspectRatios, [{ id: '9:16', width: 9, height: 16, label: '9:16 fixed expression' }]);
   assert.equal(capabilities.megapixels[0], 0.5);
 });
 
-test('migrates only the rejected saved FLUX default to Qwen while preserving every other explicit selection', () => {
+test('migrates only recognized Z-Image and Qwen selections and rejects retired editors', () => {
   assert.equal(
-    migratePortraitModelTemplateSelection(null, PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID),
+    migratePortraitModelTemplateSelection(null, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID),
     PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   );
   for (const selection of [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   ]) {
     assert.equal(migratePortraitModelTemplateSelection(null, selection), selection);
   }
   assert.equal(
-    migratePortraitModelTemplateSelection(PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID),
-    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
+    migratePortraitModelTemplateSelection('retired-reference-editor-v1', PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID),
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   );
-  assert.equal(migratePortraitModelTemplateSelection('forged', 'also-forged'), null);
+  assert.equal(migratePortraitModelTemplateSelection('retired-reference-editor-v1', 'also-retired'), null);
 });
 
 test('binds a portrait request only to an expression result fingerprint', () => {
@@ -195,6 +186,14 @@ test('defaults to revision-matched Qwen Edit 2511 Lightning at four steps withou
   assert.equal(buildPortraitPrompt(built), exactJennaFearPrompt);
 
   const graph = buildQwenReferencePortraitWorkflow(built, 19790213);
+  assert.deepEqual(graph, buildQwenReferenceEditWorkflow({
+    referencePath: 'mullet/identity/jenna-stannis-v1.jpg',
+    prompt: exactJennaFearPrompt,
+    width: 576,
+    height: 1024,
+    seed: 19790213,
+    filenamePrefix: 'mullet/portrait-reference'
+  }));
   assert.equal(graph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
   assert.equal(graph['2'].inputs.clip_name, 'qwen_2.5_vl_7b_fp8_scaled.safetensors');
   assert.equal(graph['2'].inputs.type, 'qwen_image');
@@ -219,37 +218,6 @@ test('defaults to revision-matched Qwen Edit 2511 Lightning at four steps withou
   assert.equal(graph['15'], undefined);
   assert.equal(JSON.stringify(graph).includes('"crop":"disabled"'), false);
   assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
-});
-
-test('compiles the FLUX.2 Klein 9B Distilled INT8 ConvRot reference workflow additively', () => {
-  const graph = buildFlux2Klein9BReferencePortraitWorkflow(referenceRequest({
-    modelTemplate: PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
-  }), 73);
-  assert.equal(graph['1'].inputs.unet_name, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
-  assert.equal(graph['1'].inputs.unet_name, FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['2'].inputs.clip_name, 'qwen3vl_8b_fp8_scaled.safetensors');
-  assert.equal(graph['2'].inputs.type, 'flux2');
-  assert.equal(graph['3'].inputs.vae_name, 'flux2-vae.safetensors');
-  assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(graph['9'].class_type, 'ReferenceLatent');
-  assert.deepEqual(graph['11'].inputs, { width: 576, height: 1024, batch_size: 1 });
-  assert.deepEqual(graph['15'].inputs, { steps: 4, width: 576, height: 1024 });
-  assert.equal(graph['18'].inputs.filename_prefix, 'mullet/portrait-reference');
-});
-
-test('compiles the restored Mage-Flow Edit reference workflow additively', () => {
-  const graph = buildMageFlowReferencePortraitWorkflow(referenceRequest({
-    modelTemplate: PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
-  }), 91);
-  assert.equal(graph['1'].inputs.unet_name, MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['2'].inputs.type, 'mage');
-  assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(graph['5'].class_type, 'TextEncodeMageFlowEdit');
-  assert.equal(graph['5'].inputs.width, 576);
-  assert.equal(graph['5'].inputs.height, 1024);
-  assert.deepEqual(graph['5'].inputs['images.image_1'], ['4', 0]);
-  assert.equal(graph['6'].inputs.seed, 91);
-  assert.equal(graph['8'].inputs.filename_prefix, 'mullet/portrait-reference');
 });
 
 test('rejects arbitrary templates, portrait geometry, malformed reference metadata, LoRAs, and stale sources', () => {

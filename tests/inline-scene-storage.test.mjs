@@ -14,10 +14,20 @@ import {
   verifyStoredInlineScene
 } from '../src/lib/inline-scene-storage.ts';
 
+const canonicalReference = Object.freeze({
+  name: 'jenna-stannis-v1.jpg',
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: 'c'.repeat(64),
+  width: 400,
+  height: 600,
+  aspectRatio: '2:3'
+});
+
 function request(overrides = {}) {
   return {
-    spec: 'mullet_inline_scene_image_request_v1',
-    modelTemplate: 'z-image-turbo-scene-v1',
+    spec: 'mullet_inline_scene_image_request_v2',
+    modelTemplate: 'qwen-image-edit-2511-scene-v1',
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       messageCount: 2,
@@ -28,6 +38,7 @@ function request(overrides = {}) {
       promptSha256: `sha256:${'f'.repeat(64)}`
     },
     prompt: 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.',
+    referenceImage: canonicalReference,
     lora: null,
     aspectRatio: '3:2',
     megapixels: 0.5,
@@ -69,7 +80,10 @@ function stored(overrides = {}) {
 
 test('normalizes and byte-verifies a provenance-bound inline PNG', async () => {
   const scene = normalizeStoredInlineScene(stored());
+  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v2');
+  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v2');
   assert.equal(scene.requestKey, inlineSceneImageRequestKey(scene.request));
+  assert.deepEqual(scene.request.referenceImage, canonicalReference);
   assert.equal((await verifyStoredInlineScene(scene)).image.type, 'image/png');
   assert.equal(JSON.stringify(scene).includes('transcript'), false);
 });

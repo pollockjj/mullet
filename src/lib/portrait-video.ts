@@ -1,19 +1,19 @@
 import {
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
   PORTRAIT_MEGAPIXELS,
-  buildFlux2Klein9BReferenceEditWorkflow,
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
+  buildQwenReferenceEditWorkflow,
   isPortraitSource,
   portraitDimensions,
   type PortraitAspectRatio,
   type PortraitSource
 } from './portrait.ts';
 
-export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v7' as const;
-export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v7' as const;
+export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v8' as const;
+export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v8' as const;
 export const LTX25_PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v3' as const;
 export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
 export const PORTRAIT_VIDEO_TEMPLATE_ID = LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
-export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'flux2-klein-9b-distilled-end-frame-v1' as const;
+export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-end-frame-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;
 export const LTX25_PORTRAIT_VIDEO_DURATIONS = Object.freeze([2] as const);
@@ -145,16 +145,17 @@ export const PORTRAIT_VIDEO_TEMPLATES = Object.freeze([
 
 export type PortraitVideoTemplate = (typeof PORTRAIT_VIDEO_TEMPLATES)[number];
 
-export const FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
+export const QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
   id: PORTRAIT_END_FRAME_TEMPLATE_ID,
-  label: 'FLUX.2 Klein 9B KV INT8 ConvRot',
-  modelFamily: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFamily,
-  modelFiles: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles,
-  requiredNodes: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.requiredNodes,
-  outputNode: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.outputNode,
-  steps: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.steps,
-  cfg: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.cfg,
-  sampler: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.sampler
+  label: 'Qwen Image Edit 2511 · Lightning 4-step',
+  modelFamily: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFamily,
+  modelFiles: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles,
+  requiredNodes: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.requiredNodes,
+  outputNode: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.outputNode,
+  steps: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.steps,
+  cfg: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.cfg,
+  sampler: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.sampler,
+  scheduler: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.scheduler
 } as const);
 
 export type PortraitVideoSource = {
@@ -190,7 +191,7 @@ export type PortraitVideoTemplateCapability = {
 export type PortraitVideoCapabilities = {
   spec: typeof PORTRAIT_VIDEO_CAPABILITIES_SPEC;
   templates: PortraitVideoTemplateCapability[];
-  endFrameTemplate: typeof FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE;
+  endFrameTemplate: typeof QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
   aspectRatios: typeof PORTRAIT_VIDEO_DIMENSIONS;
 };
 
@@ -458,7 +459,7 @@ function validatePortraitVideoInputReference(
   ) throw new Error('portrait-video input reference is invalid');
 }
 
-export function buildFlux2Klein9BPortraitEndFrameWorkflow(
+export function buildQwenPortraitEndFrameWorkflow(
   request: PortraitVideoRequest,
   portraitInput: PortraitVideoInputReference,
   seed: number
@@ -466,17 +467,11 @@ export function buildFlux2Klein9BPortraitEndFrameWorkflow(
   const normalized = normalizePortraitVideoRequest(request);
   if (normalized.mode !== PORTRAIT_VIDEO_MODE_GENERATED_FLF) throw new Error('portrait-video mode does not generate an end frame');
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
-  const referenceMegapixels = PORTRAIT_MEGAPIXELS.find((megapixels) => {
-    const dimensions = portraitDimensions(normalized.aspectRatio, megapixels);
-    return dimensions.width === normalized.source.portraitWidth && dimensions.height === normalized.source.portraitHeight;
-  });
-  if (referenceMegapixels === undefined) throw new Error('portrait end-frame source megapixel target is invalid');
-  return buildFlux2Klein9BReferenceEditWorkflow({
+  return buildQwenReferenceEditWorkflow({
     referencePath: `${portraitInput.subfolder}/${portraitInput.name}`,
     prompt: buildPortraitEndFramePrompt(normalized),
     width: normalized.source.portraitWidth,
     height: normalized.source.portraitHeight,
-    referenceMegapixels,
     seed,
     filenamePrefix: 'mullet/portrait-generated-end-frame'
   });
@@ -774,7 +769,7 @@ export function normalizePortraitVideoCapabilities(value: unknown): PortraitVide
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     templates,
-    endFrameTemplate: FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
+    endFrameTemplate: QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
     aspectRatios: PORTRAIT_VIDEO_DIMENSIONS
   };
 }

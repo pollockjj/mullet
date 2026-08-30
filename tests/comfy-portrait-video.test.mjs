@@ -9,7 +9,7 @@ import {
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODE_I2V,
   PORTRAIT_VIDEO_MODE_LOOP_FLF,
-  FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
+  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
   buildPortraitVideoRequest
 } from '../src/lib/portrait-video.ts';
 import {
@@ -100,18 +100,22 @@ function dynamicInfo(node, section, inputName, options) {
 function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, lengthMaximum = 3600) {
   const ltxFiles = LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const minimaxFiles = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
-  const endFiles = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
+  const endFiles = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
   if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [ltxFiles.unet, minimaxFiles.unet, endFiles.unet]);
   if (node === 'CLIPLoader') return { [node]: { input: { required: {
     clip_name: [[ltxFiles.clip, minimaxFiles.clip, endFiles.clip]],
-    type: [['ltxv', 'minimax', 'flux2']]
+    type: [['ltxv', 'minimax', 'qwen_image']]
   } } } };
   if (node === 'VAELoader') return standardInfo(node, 'vae_name', [
     ltxFiles.videoVae, ltxFiles.audioVae, minimaxFiles.videoVae, endFiles.vae
   ]);
   if (node === 'LatentUpscaleModelLoader') return standardInfo(node, 'model_name', [ltxFiles.latentUpscaler]);
-  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [minimaxFiles.turboLora]);
+  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [minimaxFiles.turboLora, endFiles.lora]);
   if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['euler_ancestral', 'res_multistep', 'euler']);
+  if (node === 'KSampler') return { [node]: { input: { required: {
+    sampler_name: [['euler']],
+    scheduler: [['simple']]
+  } } } };
   if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
   if (node === 'SaveWEBM') return standardInfo(node, 'codec', ['vp9']);
   if (node === 'SaveVideo') return { [node]: { input: {
@@ -144,13 +148,13 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node));
   };
-  const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://comfy');
-  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v7');
+  const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://video-comfy', 'http://image-comfy');
+  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v8');
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   ]);
-  assert.equal(capabilities.endFrameTemplate?.id, 'flux2-klein-9b-distilled-end-frame-v1');
+  assert.equal(capabilities.endFrameTemplate?.id, 'qwen-image-edit-2511-end-frame-v1');
   const ltx = templateCapability(capabilities, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
   const minimax = templateCapability(capabilities, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(ltx.available, true);
@@ -165,10 +169,10 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     const node = decodeURIComponent(String(url).split('/').at(-1));
     if (node === 'UNETLoader') return Response.json(standardInfo(node, 'unet_name', [
       MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet,
-      FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet
+      QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet
     ]));
     return Response.json(capabilityResponse(node));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   const ltxWithoutUnet = templateCapability(withoutLtxUnet, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(ltxWithoutUnet.available, false);
   assert.deepEqual(ltxWithoutUnet.missing, [
@@ -185,10 +189,10 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     const node = decodeURIComponent(String(url).split('/').at(-1));
     if (node === 'UNETLoader') return Response.json(standardInfo(node, 'unet_name', [
       LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet,
-      FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet
+      QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet
     ]));
     return Response.json(capabilityResponse(node));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   assert.equal(templateCapability(withoutMinimaxUnet, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID).available, true);
   assert.deepEqual(templateCapability(withoutMinimaxUnet, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).missing, [
     `model:unet:${MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet}`
@@ -198,7 +202,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     const node = decodeURIComponent(String(url).split('/').at(-1));
     if (node === 'LTXVImgToVideoInplace') return new Response('missing', { status: 404 });
     return Response.json(capabilityResponse(node));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   const ltxWithoutI2vNode = templateCapability(withoutLtxI2vNode, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(ltxWithoutI2vNode.available, true);
   assert.deepEqual(ltxWithoutI2vNode.modes.map(({ missing }) => missing), [
@@ -211,7 +215,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     const node = decodeURIComponent(String(url).split('/').at(-1));
     if (node === 'LTXVAddGuide') return new Response('missing', { status: 404 });
     return Response.json(capabilityResponse(node));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   const ltxWithoutGuide = templateCapability(withoutLtxGuide, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(ltxWithoutGuide.available, true);
   assert.deepEqual(ltxWithoutGuide.modes.map(({ missing }) => missing), [
@@ -223,7 +227,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
   const withoutLastFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, false));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   const minimaxWithoutLastFrame = templateCapability(withoutLastFrame, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(minimaxWithoutLastFrame.modes[0].available, true);
   assert.deepEqual(minimaxWithoutLastFrame.modes[1].missing, ['node-input:MiniMaxH3ImageToVideo.last_frame']);
@@ -232,7 +236,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
   const wrongLengthGrid = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, true, 16));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   assert.deepEqual(templateCapability(wrongLengthGrid, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).modes[0].missing, [
     'node-input:MiniMaxH3ImageToVideo.length:73',
     'node-input:MiniMaxH3ImageToVideo.length:124'
@@ -241,7 +245,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
   const missingLongDuration = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, true, 17, 100));
-  }, 'http://comfy');
+  }, 'http://video-comfy', 'http://image-comfy');
   assert.deepEqual(
     templateCapability(missingLongDuration, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).modes[0].missing,
     ['node-input:MiniMaxH3ImageToVideo.length:124']
@@ -249,10 +253,10 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
 
   const withoutEndFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
-    if (node === 'ReferenceLatent') return new Response('missing', { status: 404 });
+    if (node === 'TextEncodeQwenImageEditPlus') return new Response('missing', { status: 404 });
     return Response.json(capabilityResponse(node));
-  }, 'http://comfy');
-  assert.equal(withoutEndFrame.endFrameTemplate.id, 'flux2-klein-9b-distilled-end-frame-v1');
+  }, 'http://video-comfy', 'http://image-comfy');
+  assert.equal(withoutEndFrame.endFrameTemplate.id, 'qwen-image-edit-2511-end-frame-v1');
   for (const capability of withoutEndFrame.templates) {
     assert.equal(capability.modes[0].available, true, capability.template.id);
     assert.equal(capability.modes[1].available, true, capability.template.id);
@@ -260,11 +264,11 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
       id: 'flf2v_generated',
       label: 'Generated second-frame FLF',
       available: false,
-      missing: ['node:ReferenceLatent']
+      missing: ['node:TextEncodeQwenImageEditPlus']
     }, capability.template.id);
   }
 
-  const withoutFluxModel = await loadPortraitVideoCapabilities(async (url) => {
+  const withoutQwenModel = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     if (node === 'UNETLoader') {
       return Response.json(standardInfo(node, 'unet_name', [
@@ -273,12 +277,12 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
       ]));
     }
     return Response.json(capabilityResponse(node));
-  }, 'http://comfy');
-  for (const capability of withoutFluxModel.templates) {
+  }, 'http://video-comfy', 'http://image-comfy');
+  for (const capability of withoutQwenModel.templates) {
     assert.equal(capability.modes[0].available, true, capability.template.id);
     assert.equal(capability.modes[1].available, true, capability.template.id);
     assert.deepEqual(capability.modes[2].missing, [
-      `model:unet:${FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet}`
+      `model:unet:${QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet}`
     ], capability.template.id);
   }
 });
@@ -432,7 +436,7 @@ test('queues and validates the selected five-second 124-frame natural loop', asy
   assert.deepEqual(result.bytes, mp4Five);
 });
 
-test('queues generated-keyframe FLF with the distinct FLUX.2 Klein image as H3 last frame', async () => {
+test('queues generated-keyframe FLF with the distinct Qwen Image Edit image as H3 last frame', async () => {
   const { queued, observed } = await runMode(requests.generated, 'portrait-motion-generated-flf_00001_.mp4', endInput);
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['17', 0]);
@@ -440,7 +444,7 @@ test('queues generated-keyframe FLF with the distinct FLUX.2 Klein image as H3 l
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion-generated-flf_00001_.mp4&subfolder=mullet&type=output');
 });
 
-test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async () => {
+test('queues and validates the exact Qwen Image Edit 2511 Lightning portrait end-frame PNG', async () => {
   const observed = [];
   const png = new Uint8Array(24);
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
@@ -455,7 +459,7 @@ test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async
     if (value.includes('/history/')) return Response.json({
       '66666666-6666-4666-8666-666666666666': {
         status: { completed: true, status_str: 'success' },
-        outputs: { '18': { images: [{ filename: 'portrait-generated-end-frame_00001_.png', subfolder: 'mullet', type: 'output' }] } }
+        outputs: { '14': { images: [{ filename: 'portrait-generated-end-frame_00001_.png', subfolder: 'mullet', type: 'output' }] } }
       }
     });
     if (value.includes('/view?')) return new Response(png, { headers: { 'content-type': 'image/png' } });
@@ -464,13 +468,26 @@ test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async
   const result = await runComfyPortraitEndFrame(fetcher, 'http://comfy/', requests.generated, input, 43);
   const queued = JSON.parse(observed[0].init.body);
   assert.equal(queued.client_id, 'mullet-portrait-end-frame');
-  assert.equal(FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
-  assert.equal(queued.prompt['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-  assert.equal(queued.prompt['2'].inputs.type, 'flux2');
-  assert.equal(queued.prompt['5'].class_type, 'ImageScaleToTotalPixels');
-  assert.equal(queued.prompt['5'].inputs.megapixels, 0.5);
-  assert.deepEqual(queued.prompt['11'].inputs, { width: 576, height: 1024, batch_size: 1 });
-  assert.equal(queued.prompt['12'].inputs.noise_seed, 43);
+  assert.deepEqual(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles, {
+    unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
+    clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+    vae: 'qwen_image_vae.safetensors',
+    lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+  });
+  assert.equal(queued.prompt['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+  assert.equal(queued.prompt['2'].inputs.type, 'qwen_image');
+  assert.equal(queued.prompt['4'].inputs.image, `mullet/motion-inputs/${input.name}`);
+  assert.deepEqual(queued.prompt['5'].inputs, {
+    image: ['4', 0],
+    upscale_method: 'lanczos',
+    width: 576,
+    height: 1024,
+    crop: 'center'
+  });
+  assert.equal(queued.prompt['8'].inputs.lora_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.lora);
+  assert.equal(queued.prompt['8'].inputs.strength_model, 1);
+  assert.equal(queued.prompt['12'].inputs.seed, 43);
+  assert.deepEqual(queued.prompt['14'].inputs.images, ['13', 0]);
   assert.equal(result.contentType, 'image/png');
   assert.deepEqual(result.bytes, png);
 });

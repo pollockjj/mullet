@@ -1,18 +1,12 @@
 import {
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
-  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
   PORTRAIT_ASPECT_RATIOS,
   PORTRAIT_CAPABILITIES_SPEC,
-  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
   PORTRAIT_TEMPLATES,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildFlux2Klein9BReferencePortraitWorkflow,
-  buildMageFlowReferencePortraitWorkflow,
   buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   isPortraitReferenceTemplateId,
@@ -20,6 +14,7 @@ import {
   portraitTemplate,
   validatePortraitPngDimensions,
   type PortraitCapabilities,
+  type PortraitReferenceImage,
   type PortraitRequest,
   type PortraitTemplate
 } from '../portrait.ts';
@@ -87,9 +82,7 @@ export async function loadPortraitCapabilities(
   const loras = optionList(loraInfo, 'LoraLoader', 'lora_name');
   const clipType = new Map<PortraitTemplate['id'], string>([
     [Z_IMAGE_TURBO_TEMPLATE.id, 'lumina2'],
-    [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image'],
-    [FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.id, 'flux2'],
-    [MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.id, 'mage']
+    [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image']
   ]);
   const templates = PORTRAIT_TEMPLATES.map((template) => {
     const missing: string[] = [];
@@ -307,17 +300,16 @@ function referenceImageInfo(bytes: Uint8Array): ReferenceImageInfo {
   return info;
 }
 
-async function assertIdentityReference(
+export async function assertComfyIdentityReference(
   fetcher: Fetcher,
   baseUrl: string,
-  request: PortraitRequest,
+  referenceImage: PortraitReferenceImage,
   signal?: AbortSignal
 ): Promise<void> {
-  if (!isPortraitReferenceTemplateId(request.modelTemplate) || !request.referenceImage) return;
   const query = new URLSearchParams({
-    filename: request.referenceImage.name,
-    subfolder: request.referenceImage.subfolder,
-    type: request.referenceImage.type
+    filename: referenceImage.name,
+    subfolder: referenceImage.subfolder,
+    type: referenceImage.type
   });
   const response = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
   if (!response.ok) throw new Error('ComfyUI identity reference is unavailable');
@@ -331,13 +323,13 @@ async function assertIdentityReference(
   }
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  if (sha256 !== request.referenceImage.sha256) throw new Error('ComfyUI identity reference does not match its profile');
+  if (sha256 !== referenceImage.sha256) throw new Error('ComfyUI identity reference does not match its profile');
   const imageInfo = referenceImageInfo(bytes);
   if (imageInfo.mediaType !== contentType) throw new Error('ComfyUI identity reference media type does not match its bytes');
-  if (imageInfo.width !== request.referenceImage.width || imageInfo.height !== request.referenceImage.height) {
+  if (imageInfo.width !== referenceImage.width || imageInfo.height !== referenceImage.height) {
     throw new Error(
       `ComfyUI identity reference dimensions ${imageInfo.width}x${imageInfo.height} do not match profile dimensions `
-      + `${request.referenceImage.width}x${request.referenceImage.height}`
+      + `${referenceImage.width}x${referenceImage.height}`
     );
   }
 }
@@ -349,16 +341,14 @@ export async function runComfyPortrait(
   seed: number,
   signal?: AbortSignal
 ): Promise<ComfyPortraitImage> {
-  await assertIdentityReference(fetcher, baseUrl, request, signal);
+  if (isPortraitReferenceTemplateId(request.modelTemplate) && request.referenceImage) {
+    await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
+  }
   const workflow = request.modelTemplate === PORTRAIT_TEMPLATE_ID
     ? buildZImageTurboWorkflow(request, seed)
     : request.modelTemplate === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
       ? buildQwenReferencePortraitWorkflow(request, seed)
-      : request.modelTemplate === PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
-        ? buildFlux2Klein9BReferencePortraitWorkflow(request, seed)
-        : request.modelTemplate === PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
-          ? buildMageFlowReferencePortraitWorkflow(request, seed)
-          : (() => { throw new Error('unsupported portrait model template'); })();
+      : (() => { throw new Error('unsupported portrait model template'); })();
   let id = '';
   let validated = false;
   try {

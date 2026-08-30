@@ -12,8 +12,6 @@ import {
   verifyStoredPortrait
 } from '../src/lib/portrait-storage.ts';
 import {
-  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID
 } from '../src/lib/portrait.ts';
@@ -59,15 +57,17 @@ test('normalizes a generated portrait without any canonical transcript text', ()
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('accepts persisted results from every additive image model', () => {
+test('accepts persisted results only from the Z-Image and Qwen image models', () => {
   for (const modelTemplate of [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   ]) {
     assert.equal(normalizeStoredPortrait(stored({ modelTemplate })).modelTemplate, modelTemplate);
   }
+  assert.throws(
+    () => normalizeStoredPortrait(stored({ modelTemplate: 'retired-reference-editor-v1' })),
+    /stored portrait template is invalid/
+  );
 });
 
 test('rejects portraits for another conversation, non-image results, or non-9:16 dimensions', () => {
@@ -113,7 +113,7 @@ test('ignores every legacy portrait envelope, including the superseded 2:3 v4 st
       const legacyPortrait = stored({
         spec,
         ...(spec.endsWith('_v1') ? { width: 768, height: 1152 } : spec.endsWith('_v2') ? {
-          modelTemplate: 'mage-flow-edit-turbo-reference-v1'
+          modelTemplate: 'retired-reference-editor-v1'
         } : spec.endsWith('_v3') ? { width: 704, height: 704 } : { width: 768, height: 1152 })
       });
       let closed = false;

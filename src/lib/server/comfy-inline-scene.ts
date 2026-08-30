@@ -1,14 +1,15 @@
 import {
   INLINE_SCENE_ASPECT_RATIOS,
+  INLINE_SCENE_CAPABILITIES_SPEC,
   INLINE_SCENE_MEGAPIXELS,
-  Z_IMAGE_TURBO_SCENE_TEMPLATE,
-  buildZImageTurboSceneWorkflow,
+  QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+  buildQwenImageEditSceneWorkflow,
   inlineSceneDimensions,
   type InlineSceneCapabilities,
-  type InlineSceneImageRequest,
-  type InlineSceneLora
+  type InlineSceneImageRequest
 } from '../inline-scene.ts';
 import { sha256Hex as sha256BytesHex } from './comfy-portrait-video.ts';
+import { assertComfyIdentityReference } from './comfy-portrait.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -24,19 +25,7 @@ export class ComfyInlineSceneOutputTooLargeError extends Error {}
 
 const OUTPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REQUIRED_NODES = Object.freeze([
-  'UNETLoader',
-  'CLIPLoader',
-  'VAELoader',
-  'CLIPTextEncode',
-  'ConditioningZeroOut',
-  'ModelSamplingAuraFlow',
-  'EmptySD3LatentImage',
-  'KSampler',
-  'VAEDecode',
-  'SaveImage',
-  'LoraLoader'
-]);
+const REQUIRED_NODES = QWEN_IMAGE_EDIT_SCENE_TEMPLATE.requiredNodes;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -76,31 +65,6 @@ function requireOption(options: readonly string[], expected: string, label: stri
   if (!options.includes(expected)) throw new Error(`ComfyUI is missing ${label}`);
 }
 
-function loraTrigger(metadata: unknown, path: string): InlineSceneLora | null {
-  if (!isRecord(metadata) || metadata.ss_base_model_version !== 'zimage') return null;
-  if (typeof metadata.sshs_model_hash !== 'string' || !/^[0-9a-f]{64}$/.test(metadata.sshs_model_hash)) return null;
-  const raw = metadata.ss_tag_frequency;
-  let frequency: unknown = raw;
-  if (typeof raw === 'string') {
-    try {
-      frequency = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-  if (!isRecord(frequency)) return null;
-  const counts = new Map<string, number>();
-  for (const group of Object.values(frequency)) {
-    if (!isRecord(group)) continue;
-    for (const [tag, count] of Object.entries(group)) {
-      if (tag.length > 200 || typeof count !== 'number' || !Number.isFinite(count) || count <= 0) continue;
-      counts.set(tag, (counts.get(tag) ?? 0) + count);
-    }
-  }
-  const trigger = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? '';
-  return trigger ? { path, trigger, modelHash: metadata.sshs_model_hash } : null;
-}
-
 export async function loadInlineSceneCapabilities(
   fetcher: Fetcher,
   baseUrl: string,
@@ -112,35 +76,19 @@ export async function loadInlineSceneCapabilities(
     return [nodeName, nodeInfo(body, nodeName)] as const;
   }));
   const info = Object.fromEntries(pairs) as Record<string, Record<string, unknown>>;
-  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.unet, 'the Z-Image Turbo model');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.clip, 'the Z-Image text encoder');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'lumina2', 'the lumina2 text-encoder mode');
-  requireOption(optionList(info.VAELoader, 'VAELoader', 'vae_name'), Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.vae, 'the Z-Image VAE');
-  requireOption(optionList(info.KSampler, 'KSampler', 'sampler_name'), Z_IMAGE_TURBO_SCENE_TEMPLATE.sampler, 'the res_multistep sampler');
-  requireOption(optionList(info.KSampler, 'KSampler', 'scheduler'), Z_IMAGE_TURBO_SCENE_TEMPLATE.scheduler, 'the simple scheduler');
-  const widthInput = requiredInput(info.EmptySD3LatentImage, 'EmptySD3LatentImage', 'width');
-  if (!isRecord(widthInput[1]) || widthInput[1].step !== Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple) {
-    throw new Error('ComfyUI inline-scene dimension step is incompatible');
-  }
-  const loraPaths = optionList(info.LoraLoader, 'LoraLoader', 'lora_name')
-    .filter((path) => path.startsWith(Z_IMAGE_TURBO_SCENE_TEMPLATE.loraPrefix))
-    .sort();
-  const loras = (await Promise.all(loraPaths.map(async (path) => {
-    try {
-      const response = await fetcher(endpoint(baseUrl, `/view_metadata/loras?filename=${encodeURIComponent(path)}`), { signal });
-      const metadata = await responseJson(response, 'inline-scene LoRA metadata query');
-      return loraTrigger(metadata, path);
-    } catch (cause) {
-      if (signal?.aborted) throw cause;
-      return null;
-    }
-  }))).filter((lora): lora is InlineSceneLora => Boolean(lora));
+  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.unet, 'the Qwen Image Edit model');
+  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.clip, 'the Qwen image encoder');
+  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'qwen_image', 'the qwen_image encoder mode');
+  requireOption(optionList(info.VAELoader, 'VAELoader', 'vae_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.vae, 'the Qwen image VAE');
+  requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora, 'the Qwen Lightning four-step LoRA');
+  requireOption(optionList(info.KSampler, 'KSampler', 'sampler_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.sampler, 'the euler sampler');
+  requireOption(optionList(info.KSampler, 'KSampler', 'scheduler'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.scheduler, 'the simple scheduler');
   return {
-    spec: 'mullet_inline_scene_capabilities_v1',
-    template: Z_IMAGE_TURBO_SCENE_TEMPLATE,
+    spec: INLINE_SCENE_CAPABILITIES_SPEC,
+    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
     aspectRatios: INLINE_SCENE_ASPECT_RATIOS,
     megapixels: INLINE_SCENE_MEGAPIXELS,
-    loras
+    loras: []
   };
 }
 
@@ -171,10 +119,10 @@ function historyFailure(entry: Record<string, unknown>): string | null {
 
 function outputImage(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  if (!isRecord(entry.outputs) || !isRecord(entry.outputs[Z_IMAGE_TURBO_SCENE_TEMPLATE.outputNode])) {
+  if (!isRecord(entry.outputs) || !isRecord(entry.outputs[QWEN_IMAGE_EDIT_SCENE_TEMPLATE.outputNode])) {
     throw new Error('ComfyUI inline-scene history omitted the output node');
   }
-  const output = entry.outputs[Z_IMAGE_TURBO_SCENE_TEMPLATE.outputNode];
+  const output = entry.outputs[QWEN_IMAGE_EDIT_SCENE_TEMPLATE.outputNode];
   if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
     throw new Error('ComfyUI inline-scene history must contain exactly one image');
   }
@@ -281,6 +229,7 @@ export async function runComfyInlineScene(
   seed: number,
   signal?: AbortSignal
 ): Promise<ComfyInlineSceneImage> {
+  await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
   let id = '';
   let completed = false;
   try {
@@ -288,7 +237,7 @@ export async function runComfyInlineScene(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildZImageTurboSceneWorkflow(request, seed, capabilities),
+        prompt: buildQwenImageEditSceneWorkflow(request, seed, capabilities),
         client_id: 'mullet-inline-scene'
       }),
       signal

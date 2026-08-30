@@ -4,10 +4,10 @@ import test from 'node:test';
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
   INLINE_SCENE_SYSTEM_PROMPT,
-  Z_IMAGE_TURBO_SCENE_TEMPLATE,
+  QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
-  buildZImageTurboSceneWorkflow,
+  buildQwenImageEditSceneWorkflow,
   createInlineSceneResult,
   inlineSceneDimensions,
   inlineSceneImageRequestKey,
@@ -22,6 +22,15 @@ const messages = Object.freeze([
   Object.freeze({ role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' })
 ]);
 const visualPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
+const canonicalReference = Object.freeze({
+  name: 'jenna-stannis-v1.jpg',
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: 'c'.repeat(64),
+  width: 400,
+  height: 600,
+  aspectRatio: '2:3'
+});
 
 function result() {
   const request = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
@@ -72,12 +81,26 @@ test('binds the scene result and image request to exact transcript and prompt ha
   const sceneResult = result();
   const sidecarRequest = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
   assert.equal(inlineSceneResultMatchesRequest(sceneResult, sidecarRequest), true);
-  const request = buildInlineSceneImageRequest(sceneResult, { lora: null, aspectRatio: '16:9', megapixels: 1 });
+  const request = buildInlineSceneImageRequest(sceneResult, {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio: '16:9',
+    megapixels: 1
+  });
   assert.match(request.source.promptSha256, /^sha256:[0-9a-f]{64}$/);
   assert.equal(request.source.messageIndex, 1);
+  assert.deepEqual(request.referenceImage, canonicalReference);
   assert.equal(JSON.stringify(request).includes(messages[0].content), false);
   assert.throws(() => normalizeInlineSceneImageRequest({ ...request, prompt: `${request.prompt} changed` }), /prompt hash/);
+  assert.throws(() => normalizeInlineSceneImageRequest({
+    ...request,
+    lora: { path: 'subject.safetensors', trigger: 'subject', modelHash: 'd'.repeat(64) }
+  }), /does not accept a selectable LoRA/);
   assert.notEqual(inlineSceneImageRequestKey(request), inlineSceneImageRequestKey({ ...request, megapixels: 0.9 }));
+  assert.notEqual(inlineSceneImageRequestKey(request), inlineSceneImageRequestKey({
+    ...request,
+    referenceImage: { ...canonicalReference, sha256: 'd'.repeat(64) }
+  }));
 });
 
 test('independently snaps all landscape dimensions to the model multiple', () => {
@@ -88,43 +111,42 @@ test('independently snaps all landscape dimensions to the model multiple', () =>
   for (const ratio of ['3:2', '4:3', '5:4', '16:9']) {
     for (const megapixels of [0.5, 0.75, 0.9, 1, 1.5, 2]) {
       const dimensions = inlineSceneDimensions(ratio, megapixels);
-      assert.equal(dimensions.width % Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple, 0);
-      assert.equal(dimensions.height % Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple, 0);
+      assert.equal(dimensions.width % QWEN_IMAGE_EDIT_SCENE_TEMPLATE.multiple, 0);
+      assert.equal(dimensions.height % QWEN_IMAGE_EDIT_SCENE_TEMPLATE.multiple, 0);
       assert.ok(dimensions.width <= 2048 && dimensions.height <= 2048);
     }
   }
 });
 
-test('builds the second Z-Image graph with landscape prompt, namespace, and optional LoRA trigger', () => {
-  const plainRequest = buildInlineSceneImageRequest(result(), { lora: null, aspectRatio: '3:2', megapixels: 0.5 });
-  const plain = buildZImageTurboSceneWorkflow(plainRequest, 42);
-  assert.deepEqual(plain['7'].inputs, { width: 864, height: 576, batch_size: 1 });
-  assert.equal(plain['10'].inputs.filename_prefix, 'mullet/scene');
-  assert.match(plain['4'].inputs.text, /environment visible/);
-  assert.equal(plain['11'], undefined);
-
-  const loraA = { path: 'zimage/kristi6.safetensors', trigger: 'kristibentler', modelHash: 'a'.repeat(64) };
-  const loraRequest = buildInlineSceneImageRequest(result(), { lora: loraA, aspectRatio: '3:2', megapixels: 0.5 });
+test('builds the Qwen landscape outpaint graph with a fixed four-step LoRA and canonical reference', () => {
+  const request = buildInlineSceneImageRequest(result(), {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio: '3:2',
+    megapixels: 0.5
+  });
   const capabilities = {
-    spec: 'mullet_inline_scene_capabilities_v1',
-    template: Z_IMAGE_TURBO_SCENE_TEMPLATE,
+    spec: 'mullet_inline_scene_capabilities_v2',
+    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
     aspectRatios: [],
     megapixels: [],
-    loras: [loraA]
+    loras: []
   };
-  const withLora = buildZImageTurboSceneWorkflow(loraRequest, 43, capabilities);
-  assert.equal(withLora['11'].inputs.lora_name, 'zimage/kristi6.safetensors');
-  assert.match(withLora['4'].inputs.text, /^kristibentler,/);
-  const changedTrigger = buildInlineSceneImageRequest(result(), {
-    lora: { ...loraA, trigger: 'replacement-trigger' },
-    aspectRatio: '3:2',
-    megapixels: 0.5
+  const graph = buildQwenImageEditSceneWorkflow(request, 43, capabilities);
+  assert.equal(graph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.type, 'qwen_image');
+  assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
+  assert.deepEqual(graph['5'].inputs, {
+    image: ['4', 0], upscale_method: 'lanczos', width: 384, height: 576, crop: 'disabled'
   });
-  const changedHash = buildInlineSceneImageRequest(result(), {
-    lora: { ...loraA, modelHash: 'b'.repeat(64) },
-    aspectRatio: '3:2',
-    megapixels: 0.5
+  assert.deepEqual(graph['15'].inputs, {
+    image: ['5', 0], left: 240, top: 0, right: 240, bottom: 0, feathering: 40
   });
-  assert.notEqual(inlineSceneImageRequestKey(loraRequest), inlineSceneImageRequestKey(changedTrigger));
-  assert.notEqual(inlineSceneImageRequestKey(loraRequest), inlineSceneImageRequestKey(changedHash));
+  assert.equal(graph['8'].inputs.lora_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora);
+  assert.equal(graph['12'].inputs.steps, 4);
+  assert.equal(graph['12'].inputs.sampler_name, 'euler');
+  assert.deepEqual(graph['9'].inputs.image1, ['15', 0]);
+  assert.deepEqual(graph['11'].inputs.pixels, ['15', 0]);
+  assert.match(graph['9'].inputs.prompt, /outpaint it into the requested wide scene/);
+  assert.equal(graph['14'].inputs.filename_prefix, 'mullet/scene');
 });

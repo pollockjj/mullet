@@ -11,7 +11,7 @@ import {
   LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
-  FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE
+  QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE
 } from '../src/lib/portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 import { buildVp9WebmFixture } from './webm-fixture.mjs';
@@ -54,9 +54,9 @@ function motionRequest(imageSha256, {
   durationSeconds = modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID ? 2 : 3
 } = {}) {
   return {
-    spec: 'mullet_portrait_video_request_v7',
+    spec: 'mullet_portrait_video_request_v8',
     modelTemplate,
-    endFrameModelTemplate: mode === 'flf2v_generated' ? 'flux2-klein-9b-distilled-end-frame-v1' : null,
+    endFrameModelTemplate: mode === 'flf2v_generated' ? 'qwen-image-edit-2511-end-frame-v1' : null,
     mode,
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -87,16 +87,20 @@ function standardInfo(node, inputName, options, metadata = {}) {
 function capabilityResponse(node) {
   const ltxFiles = LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const minimaxFiles = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
-  const endFiles = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
+  const endFiles = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
   if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [ltxFiles.unet, minimaxFiles.unet, endFiles.unet]);
   if (node === 'CLIPLoader') return { [node]: { input: { required: {
     clip_name: [[ltxFiles.clip, minimaxFiles.clip, endFiles.clip]],
-    type: [['ltxv', 'minimax', 'flux2']]
+    type: [['ltxv', 'minimax', 'qwen_image']]
   } } } };
   if (node === 'VAELoader') return standardInfo(node, 'vae_name', [ltxFiles.videoVae, ltxFiles.audioVae, minimaxFiles.videoVae, endFiles.vae]);
   if (node === 'LatentUpscaleModelLoader') return standardInfo(node, 'model_name', [ltxFiles.latentUpscaler]);
-  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [minimaxFiles.turboLora]);
+  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [minimaxFiles.turboLora, endFiles.lora]);
   if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['euler_ancestral', 'res_multistep', 'euler']);
+  if (node === 'KSampler') return { [node]: { input: { required: {
+    sampler_name: [['euler']],
+    scheduler: [['simple']]
+  } } } };
   if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
   if (node === 'SaveWEBM') return standardInfo(node, 'codec', ['vp9']);
   if (node === 'SaveVideo') return { [node]: { input: {
@@ -207,7 +211,7 @@ function fakeComfy() {
             [historyId]: {
               status: { completed: true, status_str: 'success' },
               outputs: {
-                '18': {
+                '14': {
                   images: [{ filename: 'portrait-generated-end-frame_00001_.png', subfolder: 'mullet', type: 'output' }]
                 }
               }
@@ -329,13 +333,18 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
   });
 
   const fake = fakeComfy();
+  const imageFake = fakeComfy();
   let appServer;
   context.after(async () => {
     await close(appServer);
     await close(fake.server);
+    await close(imageFake.server);
   });
-  const comfyBaseUrl = await listen(fake.server);
-  process.env.EXPRESSION_COMFY_BASE_URL = comfyBaseUrl;
+  const videoComfyBaseUrl = await listen(fake.server);
+  const imageComfyBaseUrl = await listen(imageFake.server);
+  process.env.IMAGE_COMFY_BASE_URL = imageComfyBaseUrl;
+  process.env.VIDEO_COMFY_BASE_URL = videoComfyBaseUrl;
+  process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
@@ -357,12 +366,13 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
 
   await context.test('GET returns both exact expression-video template capabilities', async () => {
     fake.reset();
+    imageFake.reset();
     const response = await fetch(routeUrl);
     const responseText = await response.text();
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v7');
+    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v8');
     assert.deepEqual(
       capabilities.templates.map(({ template }) => template.id),
       [LTX25_PORTRAIT_VIDEO_TEMPLATE_ID, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID]
@@ -375,27 +385,28 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
       assert.deepEqual(templateCapability.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
       assert.equal(templateCapability.modes.every(({ available }) => available), true);
     }
-    assert.equal(capabilities.endFrameTemplate.id, 'flux2-klein-9b-distilled-end-frame-v1');
+    assert.equal(capabilities.endFrameTemplate.id, 'qwen-image-edit-2511-end-frame-v1');
     assert.deepEqual(capabilities.aspectRatios, [
       { aspectRatio: '9:16', width: 576, height: 1024 }
     ]);
-    const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
+    const queriedVideoNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
+    const queriedImageNodes = imageFake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
     assert.deepEqual(
-      new Set(queriedNodes),
+      new Set(queriedVideoNodes),
       new Set([
         ...LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-        ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-        ...FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes
+        ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes
       ])
     );
     assert.equal(
-      queriedNodes.length,
+      queriedVideoNodes.length,
       new Set([
         ...LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-        ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-        ...FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes
+        ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes
       ]).size
     );
+    assert.deepEqual(new Set(queriedImageNodes), new Set(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes));
+    assert.equal(queriedImageNodes.length, new Set(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes).size);
   });
 
   await context.test('POST defaults to the two-second silent LTX identical-frame loop WebM', async () => {
@@ -493,8 +504,9 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.deepEqual(queuedFive.prompt['6'].inputs.last_frame, ['5', 0]);
   });
 
-  await context.test('POST generates a FLUX.2 Klein end frame before queuing distinct-frame FLF motion', async () => {
+  await context.test('POST generates a Qwen Image Edit end frame on the image lane before queuing FLF motion on the video lane', async () => {
     fake.reset();
+    imageFake.reset();
     const generatedRequest = motionRequest(imageSha256, { mode: 'flf2v_generated' });
     const response = await post(formFor(generatedRequest, imageBytes));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
@@ -502,7 +514,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.deepEqual(responseBytes, webmBytes);
     assert.equal(response.headers.get('content-type'), 'video/webm');
     assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_generated');
-    assert.equal(response.headers.get('x-mullet-end-frame-model-template'), 'flux2-klein-9b-distilled-end-frame-v1');
+    assert.equal(response.headers.get('x-mullet-end-frame-model-template'), 'qwen-image-edit-2511-end-frame-v1');
     assert.equal(response.headers.get('x-mullet-end-frame-prompt-id'), endFramePromptId);
     assert.equal(response.headers.get('x-mullet-end-frame-width'), '576');
     assert.equal(response.headers.get('x-mullet-end-frame-height'), '1024');
@@ -514,18 +526,33 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(fake.state.uploads.length, 2);
     assert.deepEqual(fake.state.uploads[0].bytes, imageBytes);
     assert.deepEqual(fake.state.uploads[1].bytes, png(576, 1024, 1));
-    assert.equal(fake.state.prompts.length, 2);
-    const endFramePrompt = fake.state.prompts[0];
-    const videoPrompt = fake.state.prompts[1];
+    assert.equal(imageFake.state.uploads.length, 1);
+    assert.deepEqual(imageFake.state.uploads[0].bytes, imageBytes);
+    assert.equal(fake.state.prompts.length, 1);
+    assert.equal(imageFake.state.prompts.length, 1);
+    const endFramePrompt = imageFake.state.prompts[0];
+    const videoPrompt = fake.state.prompts[0];
     assert.equal(endFramePrompt.client_id, 'mullet-portrait-end-frame');
-    assert.equal(FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
-    assert.equal(endFramePrompt.prompt['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-    assert.equal(endFramePrompt.prompt['4'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[0].name}`);
-    assert.equal(endFramePrompt.prompt['5'].class_type, 'ImageScaleToTotalPixels');
-    assert.equal(endFramePrompt.prompt['5'].inputs.megapixels, 0.5);
-    assert.deepEqual(endFramePrompt.prompt['11'].inputs, { width: 576, height: 1024, batch_size: 1 });
-    assert.equal(endFramePrompt.prompt['12'].inputs.noise_seed, endFrameSeed);
-    assert.deepEqual(endFramePrompt.prompt['18'].inputs.images, ['17', 0]);
+    assert.deepEqual(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles, {
+      unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
+      clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+      vae: 'qwen_image_vae.safetensors',
+      lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+    });
+    assert.equal(endFramePrompt.prompt['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
+    assert.equal(endFramePrompt.prompt['2'].inputs.type, 'qwen_image');
+    assert.equal(endFramePrompt.prompt['4'].inputs.image, `mullet/motion-inputs/${imageFake.state.uploads[0].name}`);
+    assert.deepEqual(endFramePrompt.prompt['5'].inputs, {
+      image: ['4', 0],
+      upscale_method: 'lanczos',
+      width: 576,
+      height: 1024,
+      crop: 'center'
+    });
+    assert.equal(endFramePrompt.prompt['8'].inputs.lora_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.lora);
+    assert.equal(endFramePrompt.prompt['8'].inputs.strength_model, 1);
+    assert.equal(endFramePrompt.prompt['12'].inputs.seed, endFrameSeed);
+    assert.deepEqual(endFramePrompt.prompt['14'].inputs.images, ['13', 0]);
     assert.equal(videoPrompt.client_id, 'mullet-portrait-video');
     assert.equal(videoPrompt.prompt['1'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[0].name}`);
     assert.equal(videoPrompt.prompt['36'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[1].name}`);

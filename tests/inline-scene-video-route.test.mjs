@@ -30,6 +30,15 @@ const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const comfyPromptId = '33333333-3333-4333-8333-333333333333';
 const staticPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const mp4Bytes = buildH264AacMp4Fixture();
+const canonicalReference = Object.freeze({
+  name: 'jenna-stannis-v1.jpg',
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: 'c'.repeat(64),
+  width: 400,
+  height: 600,
+  aspectRatio: '2:3'
+});
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -57,6 +66,7 @@ function motionRequest(imageSha256) {
   );
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', staticPrompt);
   const sceneRequest = buildInlineSceneImageRequest(result, {
+    referenceImage: canonicalReference,
     lora: null,
     aspectRatio: '16:9',
     megapixels: 1
@@ -265,8 +275,10 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     await close(fake.server);
   });
   const comfyBaseUrl = await listen(fake.server);
+  process.env.IMAGE_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.VIDEO_COMFY_BASE_URL = comfyBaseUrl;
   process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.SCENE_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
   process.env.BODY_SIZE_LIMIT = '32M';

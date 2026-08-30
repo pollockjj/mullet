@@ -3,10 +3,6 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
-  FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE,
-  MAGE_FLOW_EDIT_REFERENCE_TEMPLATE,
-  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
@@ -97,38 +93,33 @@ function referenceRequest(modelTemplate, referenceBytes, overrides = {}) {
   });
 }
 
-test('exposes all four image models additively and retains exact missing diagnostics', async () => {
+test('exposes exactly the Z-Image and Qwen image models', async () => {
   const objectInfo = async (input) => {
     const node = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1));
     if (node === 'UNETLoader') {
       return Response.json(nodeInfo(node, 'unet_name', [
         Z_IMAGE_TURBO_TEMPLATE.modelFiles.unet,
-        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet,
-        FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.unet
+        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet
       ]));
     }
     if (node === 'CLIPLoader') {
       return Response.json({ CLIPLoader: { input: { required: {
         clip_name: [[
           Z_IMAGE_TURBO_TEMPLATE.modelFiles.clip,
-          QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip,
-          FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.clip,
-          MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.clip
+          QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip
         ]],
-        type: [['lumina2', 'qwen_image', 'flux2', 'mage']]
+        type: [['lumina2', 'qwen_image']]
       } } } });
     }
     if (node === 'VAELoader') {
       return Response.json(nodeInfo(node, 'vae_name', [
         Z_IMAGE_TURBO_TEMPLATE.modelFiles.vae,
-        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae,
-        FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.vae,
-        MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.vae
+        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae
       ]));
     }
     if (node === 'LoraLoader') {
       return Response.json(nodeInfo(node, 'lora_name', [
-        'flux/other.safetensors',
+        'other/model.safetensors',
         'zimage/kristi6.safetensors',
         QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.lora
       ]));
@@ -142,21 +133,13 @@ test('exposes all four image models additively and retains exact missing diagnos
   assert.equal(capabilities.megapixels[0], 0.5);
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   ]);
   assert.equal(capabilities.templates[0].available, true);
   assert.equal(capabilities.templates[1].available, true);
-  assert.equal(capabilities.templates[2].available, true);
-  assert.equal(capabilities.templates[3].available, false);
-  assert.deepEqual(capabilities.templates[3].missing, [
-    `model:unet:${MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet}`
-  ]);
-  assert.equal(capabilities.templates[2].template.modelFiles.unet, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
 });
 
-test('dispatches Z-Image, Qwen, FLUX.2 Klein INT8 ConvRot, and Mage through distinct workflows', async () => {
+test('dispatches Z-Image and Qwen through distinct workflows', async () => {
   const referenceBytes = jpeg();
   const cases = [
     {
@@ -183,27 +166,6 @@ test('dispatches Z-Image, Qwen, FLUX.2 Klein INT8 ConvRot, and Mage through dist
         assert.deepEqual(graph['11'].inputs.pixels, ['5', 0]);
         assert.deepEqual(graph['14'].inputs.images, ['13', 0]);
         assert.equal(graph['15'], undefined);
-      }
-    },
-    {
-      id: PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-      request: referenceRequest(PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID, referenceBytes),
-      outputNode: '18',
-      filename: 'portrait-reference_00001_.png',
-      inspect: (graph) => {
-        assert.equal(graph['1'].inputs.unet_name, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
-        assert.deepEqual(graph['11'].inputs, { width: 576, height: 1024, batch_size: 1 });
-      }
-    },
-    {
-      id: PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
-      request: referenceRequest(PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID, referenceBytes),
-      outputNode: '8',
-      filename: 'portrait-reference_00001_.png',
-      inspect: (graph) => {
-        assert.equal(graph['1'].inputs.unet_name, MAGE_FLOW_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
-        assert.equal(graph['5'].inputs.width, 576);
-        assert.equal(graph['5'].inputs.height, 1024);
       }
     }
   ];

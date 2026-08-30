@@ -19,8 +19,6 @@ import {
   validateScenarioPackage
 } from '../src/lib/scenario.ts';
 import {
-  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
 } from '../src/lib/portrait.ts';
 
@@ -241,29 +239,28 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   );
 });
 
-test('accepts the canonical identity reference with every additive reference editor', () => {
+test('accepts the canonical identity reference only with the Qwen reference editor', () => {
   const { entry, cardRaw, lorebookRaw } = bundledScenario();
-  for (const modelTemplate of [
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
-  ]) {
-    const lore = structuredClone(lorebookRaw);
-    lore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.model_template = modelTemplate;
-    const card = structuredClone(cardRaw);
-    card.data.character_book = structuredClone(lore.data);
-    const packaged = validateScenarioPackage(entry, card, lore);
-    assert.equal(packaged.portraitCast.profiles[0].modelTemplate, modelTemplate);
-    assert.deepEqual(packaged.portraitCast.profiles[0].referenceImage, {
-      name: 'jenna-stannis-v1.jpg',
-      subfolder: 'mullet/identity',
-      type: 'input',
-      sha256: 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8',
-      width: 400,
-      height: 600,
-      aspectRatio: '2:3'
-    });
-  }
+  const packaged = validateScenarioPackage(entry, cardRaw, lorebookRaw);
+  assert.equal(packaged.portraitCast.profiles[0].modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
+  assert.deepEqual(packaged.portraitCast.profiles[0].referenceImage, {
+    name: 'jenna-stannis-v1.jpg',
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8',
+    width: 400,
+    height: 600,
+    aspectRatio: '2:3'
+  });
+
+  const retiredLore = structuredClone(lorebookRaw);
+  retiredLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.model_template = 'retired-reference-editor-v1';
+  const retiredCard = structuredClone(cardRaw);
+  retiredCard.data.character_book = structuredClone(retiredLore.data);
+  assert.throws(
+    () => validateScenarioPackage(entry, retiredCard, retiredLore),
+    /must use the reference-conditioned portrait template/
+  );
 });
 
 test('keeps validated embedded scenario lore authoritative over same-name imported state', () => {
