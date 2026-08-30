@@ -5,7 +5,8 @@ import {
 } from './character-card.ts';
 import { normalizeLorebook, type ImportedLorebook } from './lorebook.ts';
 import {
-  PORTRAIT_REFERENCE_TEMPLATE_ID,
+  isPortraitReferenceTemplateId,
+  type PortraitModelTemplate,
   type PortraitReferenceImage
 } from './portrait.ts';
 import { isExpressionLabel, type ExpressionLabel } from './sidecar.ts';
@@ -42,13 +43,13 @@ export type ScenarioPortraitProfile = {
   setting: string;
   seed: number;
   expressionPrompts: Partial<Record<ExpressionLabel, string>>;
-  modelTemplate: typeof PORTRAIT_REFERENCE_TEMPLATE_ID;
+  modelTemplate: PortraitModelTemplate;
   referenceImage: PortraitReferenceImage;
   fingerprint: string;
 };
 
 export type ScenarioPortraitCast = {
-  spec: 'mullet_portrait_cast_v1';
+  spec: 'mullet_portrait_cast_v2';
   defaultProfileId: string;
   profiles: ScenarioPortraitProfile[];
 };
@@ -94,9 +95,27 @@ function profileFingerprint(fields: readonly string[]): string {
   return hash.toString(16).padStart(8, '0');
 }
 
+function greatestCommonDivisor(left: number, right: number): number {
+  let dividend = left;
+  let divisor = right;
+  while (divisor !== 0) {
+    const remainder = dividend % divisor;
+    dividend = divisor;
+    divisor = remainder;
+  }
+  return dividend;
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    throw new Error(`${field} must be a positive safe integer`);
+  }
+  return Number(value);
+}
+
 export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitCast {
-  if (!isRecord(value) || value.spec !== 'mullet_portrait_cast_v1') {
-    throw new Error('scenario portrait cast must use mullet_portrait_cast_v1');
+  if (!isRecord(value) || value.spec !== 'mullet_portrait_cast_v2') {
+    throw new Error('scenario portrait cast must use mullet_portrait_cast_v2');
   }
   const defaultProfileId = requiredString(value.default_profile_id, 'scenario portrait default profile id', 100);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(defaultProfileId)) {
@@ -146,9 +165,10 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       expressionPrompts[expression] = normalizedPrompt;
       promptFingerprintFields.push(expression, normalizedPrompt);
     }
-    if (visual.model_template !== PORTRAIT_REFERENCE_TEMPLATE_ID) {
+    if (!isPortraitReferenceTemplateId(visual.model_template)) {
       throw new Error(`scenario portrait profile ${index} must use the reference-conditioned portrait template`);
     }
+    const modelTemplate: PortraitModelTemplate = visual.model_template;
     if (!isRecord(visual.reference_image)) throw new Error(`scenario portrait profile ${index} reference_image must be an object`);
     const reference = visual.reference_image;
     if (typeof reference.name !== 'string'
@@ -159,11 +179,34 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       || !/^[0-9a-f]{64}$/.test(reference.sha256)) {
       throw new Error(`scenario portrait profile ${index} reference_image is invalid`);
     }
+    const referenceWidth = positiveInteger(
+      reference.width,
+      `scenario portrait profile ${index} reference_image width`
+    );
+    const referenceHeight = positiveInteger(
+      reference.height,
+      `scenario portrait profile ${index} reference_image height`
+    );
+    const referenceAspectRatio = requiredString(
+      reference.aspect_ratio,
+      `scenario portrait profile ${index} reference_image aspect_ratio`,
+      50
+    );
+    const aspectDivisor = greatestCommonDivisor(referenceWidth, referenceHeight);
+    const exactAspectRatio = `${referenceWidth / aspectDivisor}:${referenceHeight / aspectDivisor}`;
+    if (referenceAspectRatio !== exactAspectRatio) {
+      throw new Error(
+        `scenario portrait profile ${index} reference_image aspect_ratio must be the exact GCD-reduced dimensions ${exactAspectRatio}`
+      );
+    }
     const referenceImage: PortraitReferenceImage = {
       name: reference.name,
       subfolder: 'mullet/identity',
       type: 'input',
-      sha256: reference.sha256
+      sha256: reference.sha256,
+      width: referenceWidth,
+      height: referenceHeight,
+      aspectRatio: referenceAspectRatio
     };
     return {
       id,
@@ -174,7 +217,7 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       setting,
       seed,
       expressionPrompts,
-      modelTemplate: PORTRAIT_REFERENCE_TEMPLATE_ID,
+      modelTemplate,
       referenceImage,
       fingerprint: profileFingerprint([
         id,
@@ -185,16 +228,19 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
         setting,
         String(seed),
         ...promptFingerprintFields,
-        PORTRAIT_REFERENCE_TEMPLATE_ID,
+        modelTemplate,
         referenceImage.name,
-        referenceImage.sha256
+        referenceImage.sha256,
+        String(referenceImage.width),
+        String(referenceImage.height),
+        referenceImage.aspectRatio
       ])
     };
   });
   if (!profiles.some((profile) => profile.id === defaultProfileId)) {
     throw new Error('scenario portrait default profile does not exist');
   }
-  return { spec: 'mullet_portrait_cast_v1', defaultProfileId, profiles };
+  return { spec: 'mullet_portrait_cast_v2', defaultProfileId, profiles };
 }
 
 export function scenarioPortraitCast(card: ImportedCharacterCard | null): ScenarioPortraitCast | null {
@@ -202,7 +248,7 @@ export function scenarioPortraitCast(card: ImportedCharacterCard | null): Scenar
   const metadata = card.data.characterBook.extensions.mullet;
   if (!isRecord(metadata)) return null;
   try {
-    return normalizeScenarioPortraitCast(metadata.portrait_cast_v1);
+    return normalizeScenarioPortraitCast(metadata.portrait_cast_v2);
   } catch {
     return null;
   }
@@ -279,7 +325,7 @@ export function validateScenarioPackage(
   if (loreMetadata.scenario_id !== entry.id || loreMetadata.scenario_version !== entry.version) {
     throw new Error('lorebook scenario identity does not match the catalog');
   }
-  const portraitCast = normalizeScenarioPortraitCast(loreMetadata.portrait_cast_v1);
+  const portraitCast = normalizeScenarioPortraitCast(loreMetadata.portrait_cast_v2);
   if (!deepEqualJson(card.data.characterBook, lorebookValue.data)) {
     throw new Error('embedded and standalone scenario lorebooks must be identical');
   }

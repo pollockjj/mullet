@@ -8,8 +8,14 @@ import {
   normalizeStoredPortrait,
   verifyStoredPortrait
 } from '../src/lib/portrait-storage.ts';
+import {
+  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_TEMPLATE_ID
+} from '../src/lib/portrait.ts';
 
-function png(width = 768, height = 1152) {
+function png(width = 576, height = 1024) {
   const bytes = new Uint8Array(33);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   new DataView(bytes.buffer).setUint32(8, 13, false);
@@ -32,11 +38,11 @@ function stored(overrides = {}) {
       fingerprint: '4:1234abcd',
       expression: 'joy'
     },
-    modelTemplate: 'z-image-turbo-v1',
+    modelTemplate: PORTRAIT_TEMPLATE_ID,
     promptId: '11111111-1111-4111-8111-111111111111',
     seed: 17,
-    width: 768,
-    height: 1152,
+    width: 576,
+    height: 1024,
     generatedAt: 1,
     image: new Blob([png()], { type: 'image/png' }),
     ...overrides
@@ -50,28 +56,44 @@ test('normalizes a generated portrait without any canonical transcript text', ()
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('rejects portraits for another conversation, non-image results, or non-2:3 dimensions', () => {
+test('accepts persisted results from every additive image model', () => {
+  for (const modelTemplate of [
+    PORTRAIT_TEMPLATE_ID,
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+  ]) {
+    assert.equal(normalizeStoredPortrait(stored({ modelTemplate })).modelTemplate, modelTemplate);
+  }
+});
+
+test('rejects portraits for another conversation, non-image results, or non-9:16 dimensions', () => {
   assert.throws(() => normalizeStoredPortrait(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredPortrait(stored({ image: new Blob(['no'], { type: 'text/plain' }) })), /image is invalid/);
-  assert.throws(() => normalizeStoredPortrait(stored({ width: 768, height: 1024 })), /supported 2:3 expression size/);
+  assert.throws(() => normalizeStoredPortrait(stored({ width: 768, height: 1152 })), /supported 9:16 expression size/);
 });
 
 test('rejects a stored portrait whose PNG IHDR contradicts its fixed-portrait metadata', async () => {
   await assert.rejects(
-    verifyStoredPortrait(stored({ image: new Blob([png(768, 1024)], { type: 'image/png' }) })),
+    verifyStoredPortrait(stored({ image: new Blob([png(576, 960)], { type: 'image/png' }) })),
     /dimensions do not match/
   );
 });
 
-test('ignores every legacy portrait envelope, including the square Cally v3 state', async () => {
+test('ignores every legacy portrait envelope, including the superseded 2:3 v4 state', async () => {
   const originalIndexedDb = globalThis.indexedDB;
   try {
-    for (const spec of ['mullet_stored_portrait_v1', 'mullet_stored_portrait_v2', 'mullet_stored_portrait_v3']) {
+    for (const spec of [
+      'mullet_stored_portrait_v1',
+      'mullet_stored_portrait_v2',
+      'mullet_stored_portrait_v3',
+      'mullet_stored_portrait_v4'
+    ]) {
       const legacyPortrait = stored({
         spec,
         ...(spec.endsWith('_v1') ? { width: 768, height: 1152 } : spec.endsWith('_v2') ? {
           modelTemplate: 'mage-flow-edit-turbo-reference-v1'
-        } : { width: 704, height: 704 })
+        } : spec.endsWith('_v3') ? { width: 704, height: 704 } : { width: 768, height: 1152 })
       });
       let closed = false;
       globalThis.indexedDB = {

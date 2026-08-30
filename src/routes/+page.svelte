@@ -131,6 +131,7 @@
     , LivingHistoryConflictError
   } from '$lib/living-history-storage';
   import {
+    PORTRAIT_TEMPLATE_ID,
     PORTRAIT_REFERENCE_TEMPLATE_ID,
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
@@ -140,6 +141,7 @@
     type PortraitAspectRatio,
     type PortraitCapabilities,
     type PortraitMegapixels,
+    type PortraitModelTemplate,
     type PortraitRequest
   } from '$lib/portrait';
   import {
@@ -154,23 +156,30 @@
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
+    LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
+    MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
     PORTRAIT_VIDEO_DURATION_SECONDS,
     PORTRAIT_VIDEO_DURATIONS,
     PORTRAIT_VIDEO_FPS,
     PORTRAIT_VIDEO_MODE_GENERATED_FLF,
     PORTRAIT_VIDEO_MODE_LOOP_FLF,
     PORTRAIT_VIDEO_MODES,
+    PORTRAIT_VIDEO_TEMPLATE_ID,
     PORTRAIT_VIDEO_TIMEOUT_MS,
     buildPortraitVideoRequest,
     normalizePortraitVideoCapabilities,
     portraitVideoDimensions,
+    portraitVideoModeAvailable,
     portraitVideoRequestKey,
+    portraitVideoTemplateCapability,
     type PortraitVideoCapabilities,
     type PortraitVideoDurationSeconds,
     type PortraitVideoMode,
-    type PortraitVideoRequest
+    type PortraitVideoRequest,
+    type PortraitVideoTemplateId
   } from '$lib/portrait-video';
   import { validateH264VideoOnlyMp4 } from '$lib/mp4';
+  import { validateVp9Webm } from '$lib/webm';
   import {
     STORED_PORTRAIT_VIDEO_SPEC,
     clearStoredPortraitVideo,
@@ -288,16 +297,19 @@
   let portraitSetting = '';
   let portraitAttire = '';
   let portraitLora = '';
-  const portraitAspectRatio: PortraitAspectRatio = '2:3';
-  let portraitMegapixels: PortraitMegapixels = 0.9;
+  const portraitAspectRatio: PortraitAspectRatio = '9:16';
+  let portraitMegapixels: PortraitMegapixels = 0.5;
+  let portraitModelTemplate: PortraitModelTemplate = PORTRAIT_REFERENCE_TEMPLATE_ID;
+  let portraitModelSelectionPersisted = false;
   let portraitRequest: PortraitRequest | null = null;
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
   let portraitController: AbortController | null = null;
   let portraitMotionEnabled = false;
+  let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;
   let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
   let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
-  let portraitVideoTiming = portraitVideoDimensions('2:3', PORTRAIT_VIDEO_DURATION_SECONDS);
+  let portraitVideoTiming = portraitVideoDimensions('9:16', PORTRAIT_VIDEO_DURATION_SECONDS);
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
@@ -386,7 +398,6 @@
   let selectedScenarioId = '';
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
-  let scenarioPortraitReferenceAvailable = false;
   let scenarioLoading = false;
   let conversationId = '';
   let expressionsEnabled = false;
@@ -439,8 +450,10 @@
   const portraitSettingStorageKey = 'mullet.portrait-setting';
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
-  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v3';
+  const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v4';
+  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v1';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
+  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v1';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
   const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v4';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
@@ -490,9 +503,25 @@
   $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
     ? defaultScenarioPortraitProfile(activeCard)
     : null;
-  $: scenarioPortraitReferenceAvailable = Boolean(
-    scenarioPortraitProfile
-    && portraitModelTemplateAvailable(portraitCapabilities, scenarioPortraitProfile.modelTemplate)
+  $: selectedPortraitCapability = portraitCapabilities?.templates.find(
+    ({ template }) => template.id === portraitModelTemplate
+  ) ?? null;
+  $: portraitSelectedModelAvailable = Boolean(
+    selectedPortraitCapability?.available
+    && portraitModelTemplateAvailable(portraitCapabilities, portraitModelTemplate)
+  );
+  $: portraitSelectedModelUsesReference = portraitModelTemplate !== PORTRAIT_TEMPLATE_ID;
+  $: selectedPortraitVideoTemplateCapability = portraitVideoTemplateCapability(
+    portraitVideoCapabilities,
+    portraitVideoModelTemplate
+  );
+  $: selectedPortraitVideoModeCapability = selectedPortraitVideoTemplateCapability?.modes.find(
+    ({ id }) => id === portraitVideoMode
+  ) ?? null;
+  $: portraitVideoSelectedModeAvailable = portraitVideoModeAvailable(
+    portraitVideoCapabilities,
+    portraitVideoMode,
+    portraitVideoModelTemplate
   );
   $: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION
     ? currentExpressionSnapshot(conversationId, messages)
@@ -504,7 +533,9 @@
     expressionCurrent,
     activeCard,
     scenarioPortraitProfile,
-    scenarioPortraitReferenceAvailable,
+    portraitModelTemplate,
+    portraitSelectedModelAvailable,
+    portraitSelectedModelUsesReference,
     portraitSubject,
     portraitSetting,
     portraitAttire,
@@ -520,7 +551,8 @@
     portraitImageSha256,
     portraitAspectRatio,
     portraitVideoMode,
-    portraitVideoDurationSeconds
+    portraitVideoDurationSeconds,
+    portraitVideoModelTemplate
   );
   $: portraitVideoTiming = portraitVideoDimensions(portraitAspectRatio, portraitVideoDurationSeconds);
   $: portraitVideoCurrent = Boolean(
@@ -709,6 +741,11 @@
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
+    const savedPortraitVideoModelTemplate = localStorage.getItem(portraitVideoModelTemplateStorageKey);
+    portraitVideoModelTemplate = savedPortraitVideoModelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
+      || savedPortraitVideoModelTemplate === MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+      ? savedPortraitVideoModelTemplate as PortraitVideoTemplateId
+      : PORTRAIT_VIDEO_TEMPLATE_ID;
     const savedPortraitVideoMode = localStorage.getItem(portraitVideoModeStorageKey);
     portraitVideoMode = PORTRAIT_VIDEO_MODES.some(({ id }) => id === savedPortraitVideoMode)
       ? savedPortraitVideoMode as PortraitVideoMode
@@ -784,6 +821,13 @@
     portraitSetting = localStorage.getItem(portraitSettingStorageKey) ?? '';
     portraitAttire = localStorage.getItem(portraitAttireStorageKey) ?? '';
     portraitLora = localStorage.getItem(portraitLoraStorageKey) ?? '';
+    const savedModelTemplate = localStorage.getItem(portraitModelTemplateStorageKey);
+    portraitModelSelectionPersisted = Boolean(savedModelTemplate);
+    portraitModelTemplate = savedModelTemplate
+      ? savedModelTemplate as PortraitModelTemplate
+      : isScenarioCard(activeCard)
+        ? PORTRAIT_REFERENCE_TEMPLATE_ID
+        : PORTRAIT_TEMPLATE_ID;
     const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       portraitMegapixels = savedMegapixels;
@@ -797,6 +841,18 @@
     if (portraitLora) localStorage.setItem(portraitLoraStorageKey, portraitLora);
     else localStorage.removeItem(portraitLoraStorageKey);
     localStorage.setItem(portraitMegapixelsStorageKey, String(portraitMegapixels));
+    portraitController?.abort();
+    lastPortraitAttemptKey = '';
+    portraitError = '';
+    invalidatePortraitVideoForPortraitChange(true);
+  }
+
+  function persistPortraitModelTemplate() {
+    if (!portraitCapabilities?.templates.some(({ template }) => template.id === portraitModelTemplate)) {
+      portraitModelTemplate = isScenarioCard(activeCard) ? PORTRAIT_REFERENCE_TEMPLATE_ID : PORTRAIT_TEMPLATE_ID;
+    }
+    portraitModelSelectionPersisted = true;
+    localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
     portraitController?.abort();
     lastPortraitAttemptKey = '';
     portraitError = '';
@@ -1714,6 +1770,11 @@
         throw new Error(detail);
       }
       portraitCapabilities = normalizePortraitCapabilities(payload);
+      if (!portraitCapabilities.templates.some(({ template }) => template.id === portraitModelTemplate)) {
+        localStorage.removeItem(portraitModelTemplateStorageKey);
+        portraitModelSelectionPersisted = false;
+        portraitModelTemplate = isScenarioCard(activeCard) ? PORTRAIT_REFERENCE_TEMPLATE_ID : PORTRAIT_TEMPLATE_ID;
+      }
       if (portraitLora && !portraitCapabilities.loras.includes(portraitLora)) {
         portraitLora = '';
         localStorage.removeItem(portraitLoraStorageKey);
@@ -1846,11 +1907,12 @@
     imageSha256: string,
     aspectRatio: PortraitAspectRatio,
     mode: PortraitVideoMode,
-    durationSeconds: PortraitVideoDurationSeconds
+    durationSeconds: PortraitVideoDurationSeconds,
+    modelTemplate: PortraitVideoTemplateId
   ): PortraitVideoRequest | null {
     if (!portrait || !staticCurrent || digestPromptId !== portrait.promptId || !imageSha256) return null;
     try {
-      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256, mode, durationSeconds);
+      return buildPortraitVideoRequest(portrait, aspectRatio, imageSha256, mode, durationSeconds, modelTemplate);
     } catch {
       return null;
     }
@@ -1870,7 +1932,8 @@
       portraitImageSha256,
       portraitAspectRatio,
       portraitVideoMode,
-      portraitVideoDurationSeconds
+      portraitVideoDurationSeconds,
+      portraitVideoModelTemplate
     );
     return !signal?.aborted
       && generation === portraitVideoGeneration
@@ -1891,7 +1954,8 @@
       portraitImageSha256,
       portraitAspectRatio,
       portraitVideoMode,
-      portraitVideoDurationSeconds
+      portraitVideoDurationSeconds,
+      portraitVideoModelTemplate
     );
     const restoredKey = restoredRequest ? portraitVideoRequestKey(restoredRequest) : '';
     try {
@@ -1906,7 +1970,8 @@
             portraitImageSha256,
             portraitAspectRatio,
             portraitVideoMode,
-            portraitVideoDurationSeconds
+            portraitVideoDurationSeconds,
+            portraitVideoModelTemplate
           );
           return generation === portraitVideoGeneration
             && Boolean(restoredRequest && request && portraitVideoRequestKey(request) === restoredKey);
@@ -1936,24 +2001,38 @@
   }
 
   async function verifyPortraitVideoBytes(video: StoredPortraitVideo): Promise<void> {
-      const bytes = new Uint8Array(await video.video.arrayBuffer());
-      if (
-        bytes.length < 12
-        || bytes[4] !== 0x66
-        || bytes[5] !== 0x74
-        || bytes[6] !== 0x79
-        || bytes[7] !== 0x70
-        || await blobSha256(video.video) !== video.videoSha256
-      ) throw new Error('stored portrait motion bytes are invalid');
-      const metadata = validateH264VideoOnlyMp4(bytes, {
+    const bytes = new Uint8Array(await video.video.arrayBuffer());
+    if (await blobSha256(video.video) !== video.videoSha256) {
+      throw new Error('stored portrait motion bytes are invalid');
+    }
+    if (video.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID) {
+      const metadata = validateVp9Webm(bytes, {
         width: video.width,
         height: video.height,
         frames: video.frames,
         fps: video.fps
       });
-      if (metadata.durationSeconds !== video.encodedDurationSeconds) {
+      if (metadata.containerDurationSeconds !== video.encodedDurationSeconds) {
         throw new Error('stored portrait motion duration is invalid');
       }
+      return;
+    }
+    if (
+      bytes.length < 12
+      || bytes[4] !== 0x66
+      || bytes[5] !== 0x74
+      || bytes[6] !== 0x79
+      || bytes[7] !== 0x70
+    ) throw new Error('stored portrait motion bytes are invalid');
+    const metadata = validateH264VideoOnlyMp4(bytes, {
+      width: video.width,
+      height: video.height,
+      frames: video.frames,
+      fps: video.fps
+    });
+    if (metadata.durationSeconds !== video.encodedDurationSeconds) {
+      throw new Error('stored portrait motion duration is invalid');
+    }
   }
 
   async function loadPortraitVideoGenerator() {
@@ -1970,12 +2049,17 @@
         throw new Error(detail);
       }
       portraitVideoCapabilities = normalizePortraitVideoCapabilities(payload);
-      if (!portraitVideoCapabilities.modes.some(({ id }) => id === portraitVideoMode)) {
+      if (!portraitVideoCapabilities.templates.some(({ template }) => template.id === portraitVideoModelTemplate)) {
+        portraitVideoModelTemplate = PORTRAIT_VIDEO_TEMPLATE_ID;
+        localStorage.setItem(portraitVideoModelTemplateStorageKey, portraitVideoModelTemplate);
+      }
+      const selectedTemplate = portraitVideoTemplateCapability(portraitVideoCapabilities, portraitVideoModelTemplate);
+      if (!selectedTemplate?.modes.some(({ id }) => id === portraitVideoMode)) {
         portraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
         localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
       }
-      if (!portraitVideoCapabilities.durations.includes(portraitVideoDurationSeconds)) {
-        portraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
+      if (!selectedTemplate?.durations.includes(portraitVideoDurationSeconds)) {
+        portraitVideoDurationSeconds = selectedTemplate?.durations[0] ?? PORTRAIT_VIDEO_DURATION_SECONDS;
         localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
       }
     } catch (cause) {
@@ -2001,6 +2085,11 @@
       !expressionsOn
       || !enabled
       || !capabilities
+      || !portraitVideoModeAvailable(
+        capabilities,
+        request?.mode ?? portraitVideoMode,
+        request?.modelTemplate ?? portraitVideoModelTemplate
+      )
       || !persistenceReady
       || !persistenceAvailable
       || staticBusy
@@ -2026,7 +2115,11 @@
       !selectedRequest
       || !selectedPortrait
       || !portraitVideoCapabilities
-      || !portraitVideoCapabilities.modes.some(({ id }) => id === selectedRequest.mode)
+      || !portraitVideoModeAvailable(
+        portraitVideoCapabilities,
+        selectedRequest.mode,
+        selectedRequest.modelTemplate
+      )
       || portraitVideoBusy
       || portraitBusy
       || !portraitVideoPersistenceReady
@@ -2062,9 +2155,20 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      if (video.type !== 'video/mp4' || video.size < 12) throw new Error('Portrait-motion generator returned an invalid video.');
+      const expectsWebm = selectedRequest.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
+      const expectedContentType = expectsWebm ? 'video/webm' : 'video/mp4';
+      if (video.type !== expectedContentType || video.size < (expectsWebm ? 32 : 12)) {
+        throw new Error('Portrait-motion generator returned an invalid video.');
+      }
       const videoBytes = new Uint8Array(await video.arrayBuffer());
-      if (
+      if (expectsWebm) {
+        if (
+          videoBytes[0] !== 0x1a
+          || videoBytes[1] !== 0x45
+          || videoBytes[2] !== 0xdf
+          || videoBytes[3] !== 0xa3
+        ) throw new Error('Portrait-motion generator returned an invalid WebM signature.');
+      } else if (
         videoBytes[4] !== 0x66
         || videoBytes[5] !== 0x74
         || videoBytes[6] !== 0x79
@@ -2182,9 +2286,31 @@
     if (portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
   }
 
+  function persistPortraitVideoModelTemplate() {
+    const selectedTemplate = portraitVideoTemplateCapability(portraitVideoCapabilities, portraitVideoModelTemplate);
+    if (!selectedTemplate) {
+      portraitVideoModelTemplate = PORTRAIT_VIDEO_TEMPLATE_ID;
+    }
+    const resolvedTemplate = portraitVideoTemplateCapability(portraitVideoCapabilities, portraitVideoModelTemplate);
+    if (!resolvedTemplate?.durations.includes(portraitVideoDurationSeconds)) {
+      portraitVideoDurationSeconds = resolvedTemplate?.durations[0] ?? PORTRAIT_VIDEO_DURATION_SECONDS;
+    }
+    localStorage.setItem(portraitVideoModelTemplateStorageKey, portraitVideoModelTemplate);
+    localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
+    portraitVideoGeneration += 1;
+    portraitVideoController?.abort();
+    portraitVideoController = null;
+    portraitVideoBusy = false;
+    portraitVideoError = '';
+    lastPortraitVideoAttemptKey = '';
+    removeInstalledPortraitVideo();
+    if (portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
+  }
+
   function persistPortraitVideoDuration() {
-    if (!PORTRAIT_VIDEO_DURATIONS.includes(portraitVideoDurationSeconds)) {
-      portraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
+    const selectedTemplate = portraitVideoTemplateCapability(portraitVideoCapabilities, portraitVideoModelTemplate);
+    if (!selectedTemplate?.durations.includes(portraitVideoDurationSeconds)) {
+      portraitVideoDurationSeconds = selectedTemplate?.durations[0] ?? PORTRAIT_VIDEO_DURATION_SECONDS;
     }
     localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
     portraitVideoGeneration += 1;
@@ -2202,7 +2328,9 @@
     current: boolean,
     card: ImportedCharacterCard | null,
     profile: ScenarioPortraitProfile | null,
-    referenceTemplateAvailable: boolean,
+    modelTemplate: PortraitModelTemplate,
+    modelAvailable: boolean,
+    modelUsesReference: boolean,
     subject: string,
     setting: string,
     attire: string,
@@ -2210,26 +2338,30 @@
     aspectRatio: PortraitAspectRatio,
     megapixels: PortraitMegapixels
   ): PortraitRequest | null {
-    if (!result || !current) return null;
+    if (!result || !current || !modelAvailable) return null;
     try {
       if (isScenarioCard(card)) {
-        if (!profile || !referenceTemplateAvailable) return null;
+        if (!profile) return null;
         return buildPortraitRequest(result, {
-          modelTemplate: profile.modelTemplate,
+          modelTemplate,
           subject: profile.subject,
           setting: profile.setting,
           attire: profile.attire,
           lora: null,
-          referenceImage: profile.referenceImage,
+          referenceImage: modelUsesReference ? profile.referenceImage : null,
           characterId: profile.id,
           profileFingerprint: profile.fingerprint,
-          promptOverride: profile.expressionPrompts[result.output.expression] ?? null,
+          promptOverride: modelUsesReference
+            ? profile.expressionPrompts[result.output.expression] ?? null
+            : null,
           aspectRatio,
           megapixels,
           seed: profile.seed
         });
       }
+      if (modelUsesReference) return null;
       return buildPortraitRequest(result, {
+        modelTemplate,
         subject,
         setting,
         attire,
@@ -2323,7 +2455,9 @@
           expressionCurrent,
           activeCard,
           scenarioPortraitProfile,
-          scenarioPortraitReferenceAvailable,
+          portraitModelTemplate,
+          portraitSelectedModelAvailable,
+          portraitSelectedModelUsesReference,
           portraitSubject,
           portraitSetting,
           portraitAttire,
@@ -3146,6 +3280,7 @@
 
         conversationMode = CONVERSATION_MODE_FICTION;
         activeCard = packaged.card;
+        if (!portraitModelSelectionPersisted) portraitModelTemplate = PORTRAIT_REFERENCE_TEMPLATE_ID;
         cardSourceIdentifier = characterSourceIdentifier(scenario.card);
         portraitDataUrl = '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
@@ -4028,19 +4163,20 @@
         {#if portraitCapabilities}
           <label>
             <span>Image model</span>
-            {#if scenarioPortraitProfile}
-              <select value={scenarioPortraitProfile.modelTemplate} disabled aria-label="Portrait image model">
-                {#if scenarioPortraitReferenceAvailable && portraitCapabilities.referenceTemplate}
-                  <option value={portraitCapabilities.referenceTemplate.id}>{portraitCapabilities.referenceTemplate.label}</option>
-                {:else}
-                  <option value={scenarioPortraitProfile.modelTemplate}>Qwen Image Edit 2511 · unavailable</option>
-                {/if}
-              </select>
-            {:else}
-              <select value={portraitCapabilities.template.id} disabled aria-label="Portrait image model">
-                <option value={portraitCapabilities.template.id}>{portraitCapabilities.template.label}</option>
-              </select>
-            {/if}
+            <select
+              bind:value={portraitModelTemplate}
+              on:change={persistPortraitModelTemplate}
+              disabled={portraitBusy}
+              aria-label="Portrait image model"
+            >
+              {#each portraitCapabilities.templates as capability}
+                <option value={capability.template.id}>
+                  {capability.template.label}{capability.available
+                    ? ''
+                    : ` · unavailable · missing ${capability.missing.join(', ')}`}
+                </option>
+              {/each}
+            </select>
           </label>
           {#if scenarioPortraitProfile}
             <label>
@@ -4049,7 +4185,13 @@
             </label>
             <label>
               <span>Identity</span>
-              <input value="Canonical reference locked" disabled aria-label="Portrait identity source" />
+              <input
+                value={portraitSelectedModelUsesReference
+                  ? `Canonical reference · ${scenarioPortraitProfile.referenceImage.width}×${scenarioPortraitProfile.referenceImage.height} · ${scenarioPortraitProfile.referenceImage.aspectRatio}`
+                  : 'Text prompt · no reference or LoRA'}
+                disabled
+                aria-label="Portrait identity source"
+              />
             </label>
             <label>
               <span>Attire</span>
@@ -4066,7 +4208,7 @@
             </label>
             <label>
               <span>Subject LoRA</span>
-              <select bind:value={portraitLora} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait subject LoRA">
+              <select bind:value={portraitLora} on:change={persistPortraitSettings} disabled={portraitBusy || portraitSelectedModelUsesReference} aria-label="Portrait subject LoRA">
                 <option value="">None</option>
                 {#each portraitCapabilities.loras as lora}
                   <option value={lora}>{lora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}</option>
@@ -4082,20 +4224,22 @@
               <input bind:value={portraitSetting} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait setting" />
             </label>
           {/if}
-          <div class="portrait-grid">
-            <label>
-              <span>Megapixels</span>
-              <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
-                {#each portraitCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
-              </select>
-            </label>
-          </div>
-          {#if scenarioPortraitProfile && !scenarioPortraitReferenceAvailable}
-            <div class="sidecar-error" role="alert">Qwen Image Edit 2511 reference editing is unavailable. No scenario expression portrait will be generated.</div>
-          {:else}
-            <small class="prompt-guide">{scenarioPortraitProfile && portraitCapabilities.referenceTemplate
-              ? portraitCapabilities.referenceTemplate.promptGuide
-              : portraitCapabilities.template.promptGuide}</small>
+          <label>
+            <span>Megapixels</span>
+            <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
+              {#each portraitCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
+            </select>
+          </label>
+          {#if selectedPortraitCapability && !portraitSelectedModelAvailable}
+            <div class="sidecar-error" role="alert">
+              {selectedPortraitCapability.template.label} is unavailable{selectedPortraitCapability.missing.length
+                ? ` · missing ${selectedPortraitCapability.missing.join(', ')}`
+                : ''}.
+            </div>
+          {:else if !scenarioPortraitProfile && portraitSelectedModelUsesReference}
+            <div class="sidecar-error" role="alert">This reference-edit model requires a scenario identity reference.</div>
+          {:else if selectedPortraitCapability}
+            <small class="prompt-guide">{selectedPortraitCapability.template.promptGuide}</small>
           {/if}
           {#if isScenarioCard(activeCard) && !scenarioPortraitProfile}
             <div class="sidecar-error" role="alert">This scenario has no validated portrait identity. No portrait will be generated.</div>
@@ -4137,13 +4281,26 @@
               disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
               aria-label="Portrait video mode"
             >
-              {#each portraitVideoCapabilities.modes as mode}<option value={mode.id}>{mode.label}</option>{/each}
+              {#each selectedPortraitVideoTemplateCapability?.modes ?? [] as mode}
+                <option value={mode.id}>
+                  {mode.label}{mode.available ? '' : ` · unavailable · missing ${mode.missing.join(', ')}`}
+                </option>
+              {/each}
             </select>
           </label>
           <label>
             <span>Video model</span>
-            <select value={portraitVideoCapabilities.template.id} disabled={portraitVideoBusy} aria-label="Portrait video model">
-              <option value={portraitVideoCapabilities.template.id}>{portraitVideoCapabilities.template.label}</option>
+            <select
+              bind:value={portraitVideoModelTemplate}
+              on:change={persistPortraitVideoModelTemplate}
+              disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
+              aria-label="Portrait video model"
+            >
+              {#each portraitVideoCapabilities.templates as capability}
+                <option value={capability.template.id}>
+                  {capability.template.label}{capability.available ? '' : ` · unavailable · missing ${capability.missing.join(', ')}`}
+                </option>
+              {/each}
             </select>
           </label>
           <label>
@@ -4154,10 +4311,10 @@
               disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
               aria-label="Portrait video duration"
             >
-              {#each portraitVideoCapabilities.durations as duration}<option value={duration}>{duration} seconds</option>{/each}
+              {#each selectedPortraitVideoTemplateCapability?.durations ?? [] as duration}<option value={duration}>{duration} seconds</option>{/each}
             </select>
           </label>
-          {#if portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && portraitVideoCapabilities.endFrameTemplate}
+          {#if portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF}
             <label>
               <span>End-frame image model</span>
               <select value={portraitVideoCapabilities.endFrameTemplate.id} disabled={portraitVideoBusy} aria-label="Portrait end-frame image model">
@@ -4165,12 +4322,19 @@
               </select>
             </label>
           {/if}
-          <small>{portraitVideoCapabilities.modes.find(({ id }) => id === portraitVideoMode)?.label} · MiniMax H3 FL2VA · silent · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s encoded H.264 video-only MP4</small>
+          <small>{selectedPortraitVideoModeCapability?.label} · {selectedPortraitVideoTemplateCapability?.template.label} · silent · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s nominal encoded · {portraitVideoModelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID ? 'VP9 video-only WebM' : 'H.264 video-only MP4'}</small>
+          {#if selectedPortraitVideoModeCapability && !portraitVideoSelectedModeAvailable}
+            <div class="sidecar-error" role="alert">
+              {selectedPortraitVideoModeCapability.label} is unavailable{selectedPortraitVideoModeCapability.missing.length
+                ? ` · missing ${selectedPortraitVideoModeCapability.missing.join(', ')}`
+                : ''}.
+            </div>
+          {/if}
           {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded · zero audio tracks</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
           <button
             on:click={() => void generatePortraitVideo()}
-            disabled={portraitVideoBusy || portraitBusy || !portraitVideoRequest || !portraitMotionEnabled || !expressionsEnabled || !portraitVideoPersistenceAvailable}
+            disabled={portraitVideoBusy || portraitBusy || !portraitVideoRequest || !portraitVideoSelectedModeAvailable || !portraitMotionEnabled || !expressionsEnabled || !portraitVideoPersistenceAvailable}
           >
             {portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
           </button>
@@ -4612,7 +4776,7 @@
   .portrait { aspect-ratio: 3 / 4; flex: 0 0 auto; overflow: hidden; display: grid; place-items: center; border: 1px dashed #51493f; border-radius: 16px; color: #71695f; background: linear-gradient(145deg, #24201c, #171513); text-align: center; font-size: 12px; line-height: 1.5; }
   .portrait { position: relative; }
   .portrait.active { border-style: solid; border-color: #5c4b38; }
-  .portrait.generated { aspect-ratio: 2 / 3; border-color: #49614d; }
+  .portrait.generated { aspect-ratio: 9 / 16; border-color: #49614d; }
   .portrait img, .portrait video { width: 100%; height: 100%; object-fit: cover; }
   .portrait-status { position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border: 1px solid rgba(126,184,141,.65); border-radius: 999px; color: #d9efdd; background: rgba(17,29,20,.82); font: 700 9px/1 ui-monospace, monospace; text-transform: capitalize; backdrop-filter: blur(8px); }
   .portrait-status.stale { border-color: rgba(181,135,84,.65); color: #efd0a8; background: rgba(43,31,20,.82); }

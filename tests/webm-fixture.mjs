@@ -59,9 +59,9 @@ function string(value) {
   return new TextEncoder().encode(value);
 }
 
-function block(timestamp) {
+function block(timestamp, trackNumber = 1) {
   const payload = new Uint8Array(5);
-  payload[0] = 0x81;
+  payload[0] = 0x80 | trackNumber;
   new DataView(payload.buffer).setInt16(1, timestamp, false);
   payload[3] = 0x80;
   payload[4] = 0;
@@ -84,7 +84,8 @@ export function buildVp9WebmFixture({
   fps = 24,
   durationUnits = Math.round(frames * 1000 / fps),
   timestamps = Array.from({ length: frames }, (_, index) => Math.round(index * 1000 / fps)),
-  malformedXiphLacing = false
+  malformedXiphLacing = false,
+  includeAudio = false
 } = {}) {
   const ebml = element(0x1a45dfa3, element(0x4282, string('webm')));
   const info = element(0x1549a966, concat([
@@ -102,12 +103,22 @@ export function buildVp9WebmFixture({
     element(0x23e383, unsigned(Math.floor(1_000_000_000 / fps), 4)),
     video
   ]));
-  const tracks = element(0x1654ae6b, track);
+  const audioTrack = element(0xae, concat([
+    element(0xd7, unsigned(2, 1)),
+    element(0x83, unsigned(2, 1)),
+    element(0x86, string('A_OPUS')),
+    element(0xe1, concat([
+      element(0xb5, float64(48_000)),
+      element(0x9f, unsigned(2, 1))
+    ]))
+  ]));
+  const tracks = element(0x1654ae6b, concat([track, ...(includeAudio ? [audioTrack] : [])]));
   const cluster = element(0x1f43b675, concat([
     element(0xe7, unsigned(0, 1)),
     ...(malformedXiphLacing
       ? [malformedXiphLacedBlock(frames)]
-      : timestamps.map((timestamp) => block(timestamp)))
+      : timestamps.map((timestamp) => block(timestamp))),
+    ...(includeAudio ? [block(0, 2)] : [])
   ]));
   return element(0x18538067, concat([info, tracks, cluster]))
     .reduce((parts, byte, index, source) => {

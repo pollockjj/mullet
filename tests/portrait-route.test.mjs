@@ -62,7 +62,7 @@ test('compiled portrait route rejects stale selectable expression contracts befo
   const appBaseUrl = await listen(appServer);
 
   const requestBody = {
-    spec: 'mullet_portrait_request_v4',
+    spec: 'mullet_portrait_request_v5',
     modelTemplate: 'z-image-turbo-v1',
     source: {
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -95,7 +95,7 @@ test('compiled portrait route rejects stale selectable expression contracts befo
       'content-type': 'application/json',
       origin: publicOrigin
     },
-    body: JSON.stringify({ ...requestBody, spec: 'mullet_portrait_request_v3', aspectRatio: '2:3' })
+    body: JSON.stringify({ ...requestBody, spec: 'mullet_portrait_request_v4', aspectRatio: '9:16' })
   });
   assert.equal(legacyResponse.status, 400, await legacyResponse.text());
   assert.equal(comfyCalls, 0);

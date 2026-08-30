@@ -27,6 +27,13 @@ test('rejects WebM bytes with wrong dimensions, frame count, frame rate, or dura
   assert.throws(() => validateVp9Webm(Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3]), expected), /truncated/);
 });
 
+test('rejects a VP9 WebM that also declares and carries an audio track', () => {
+  assert.throws(
+    () => validateVp9Webm(buildVp9WebmFixture({ includeAudio: true }), expected),
+    /must not contain audio or extra non-video media tracks/
+  );
+});
+
 test('rejects duplicate middle timestamps instead of trusting only the endpoints', () => {
   const timestamps = Array.from({ length: 49 }, (_, index) => (
     index === 48 ? 2000 : 0

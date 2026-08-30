@@ -1,0 +1,14 @@
+# CLAUDE.md
+
+## Operator communication and recovery
+
+- Never hand the operator a problem created by an agent and stop. Diagnose it, execute every safe in-scope corrective action, and carry the recovery through to a verified working state.
+- Progress reports must state the solution underway or the verified resolution. Do not merely disgorge a failure and declare that work has stopped.
+- Escalate only when recovery requires new authority or an external action after all safe in-scope remedies are exhausted; include the completed diagnosis and the exact remaining blocker.
+
+## Model artifact rules
+
+- “Additive” means every configured image model and animation mode remains selectable in the UI even when its runtime stack is unavailable. Selection exposes exact missing diagnostics; only execution is blocked.
+- ComfyUI diffusion-model weights for this project use the native INT8 ConvRot artifact when one exists. Do not substitute an official FP8 diffusion weight merely because the original publisher's repository is gated.
+- Search the public ComfyUI-native INT8 ConvRot conversions on Hugging Face before declaring a required model unavailable or gated.
+- The FLUX.2 Klein 9B KV image-edit artifact is `flux-2-klein-9b-kv-int8-convrot.safetensors`, sourced from `wraps/FLUX.2-klein-9B-KV-INT8-ConvRot-ComfyUI` on Hugging Face.

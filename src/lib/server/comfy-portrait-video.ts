@@ -1,12 +1,15 @@
 import {
+  LTX25_PORTRAIT_VIDEO_TEMPLATE,
+  LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
+  MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_VIDEO_CAPABILITIES_SPEC,
   PORTRAIT_VIDEO_DIMENSIONS,
-  PORTRAIT_VIDEO_DURATIONS,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODES,
   FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE,
   buildFlux2Klein9BPortraitEndFrameWorkflow,
+  buildLtx25PortraitVideoWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
   portraitVideoDimensions,
   portraitVideoOutputNode,
@@ -15,12 +18,13 @@ import {
   type PortraitVideoRequest
 } from '../portrait-video.ts';
 import { validateH264VideoOnlyMp4 } from '../mp4.ts';
+import { validateVp9Webm } from '../webm.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ComfyPortraitVideo = {
   bytes: Uint8Array;
-  contentType: 'video/mp4';
+  contentType: 'video/mp4' | 'video/webm';
   promptId: string;
   filename: string;
   sha256: string;
@@ -127,79 +131,177 @@ export async function loadPortraitVideoCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<PortraitVideoCapabilities> {
-  const template = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
-  const pairs = await Promise.all(template.requiredNodes.map(async (nodeName) => {
-    const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
-    const body = await responseJson(response, 'portrait-video capability query');
-    return [nodeName, nodeInfo(body, nodeName)] as const;
-  }));
-  const info = Object.fromEntries(pairs) as Record<string, Record<string, unknown>>;
-  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the MiniMax H3 FL2VA diffusion model');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the MiniMax H3 Qwen3-VL encoder');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'minimax', 'the MiniMax text-encoder mode');
-  const vaes = optionList(info.VAELoader, 'VAELoader', 'vae_name');
-  requireOption(vaes, template.modelFiles.videoVae, 'the MiniMax H3 video VAE');
-  requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.turboLora, 'the MiniMax H3 four-step Turbo LoRA');
-  requireOption(optionList(info.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), template.sampler, 'the res_multistep sampler');
-  requireOption(optionList(info.BasicScheduler, 'BasicScheduler', 'scheduler'), template.scheduler, 'the simple scheduler');
-  requireOption(
-    dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
-    template.format,
-    'the automatic MP4 output format'
-  );
-  requireOption(
-    dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
-    template.codec,
-    'the automatic H.264 output codec'
-  );
-  const firstFrame = inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'first_frame');
-  const lastFrame = inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'last_frame');
-  if (firstFrame[0] !== 'IMAGE' || lastFrame[0] !== 'IMAGE') {
-    throw new Error('ComfyUI MiniMax H3 first/last-frame conditioning is unavailable');
-  }
-  const maximumWidth = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ width }) => width));
-  const maximumHeight = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ height }) => height));
-  requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'width', maximumWidth, template.multiple);
-  requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, template.multiple);
-  for (const durationSeconds of PORTRAIT_VIDEO_DURATIONS) {
-    requireIntegerInput(
-      info.MiniMaxH3ImageToVideo,
-      'MiniMaxH3ImageToVideo',
-      'length',
-      portraitVideoDimensions('2:3', durationSeconds).frames,
-      17
-    );
-  }
-  const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
-  if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('ComfyUI image upload support is unavailable');
-  let endFrameTemplate: typeof FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE | null = null;
-  try {
-    const endFramePairs = await Promise.all(FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes.map(async (nodeName) => {
+  const ltxTemplate = LTX25_PORTRAIT_VIDEO_TEMPLATE;
+  const minimaxTemplate = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
+  const endFrameTemplate = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE;
+  const nodeNames = [...new Set([
+    ...ltxTemplate.requiredNodes,
+    ...minimaxTemplate.requiredNodes,
+    ...endFrameTemplate.requiredNodes
+  ])];
+  const bodies = new Map(await Promise.all(nodeNames.map(async (nodeName): Promise<[string, unknown | null]> => {
+    try {
       const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
-      const body = await responseJson(response, 'portrait end-frame capability query');
-      return [nodeName, nodeInfo(body, nodeName)] as const;
-    }));
-    const endFrameInfo = Object.fromEntries(endFramePairs) as Record<string, Record<string, unknown>>;
-    const template = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE;
-    requireOption(optionList(endFrameInfo.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the FLUX.2 Klein 9B diffusion model');
-    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the FLUX.2 Klein 9B text encoder');
-    requireOption(optionList(endFrameInfo.CLIPLoader, 'CLIPLoader', 'type'), 'flux2', 'the FLUX.2 text-encoder mode');
-    requireOption(optionList(endFrameInfo.VAELoader, 'VAELoader', 'vae_name'), template.modelFiles.vae, 'the FLUX.2 small decoder VAE');
-    requireOption(optionList(endFrameInfo.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), template.sampler, 'the FLUX.2 Klein sampler');
-    endFrameTemplate = template;
-  } catch (cause) {
-    if (signal?.aborted) throw cause;
+      if (!response.ok) return [nodeName, null];
+      return [nodeName, await response.json()];
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return [nodeName, null];
+    }
+  })));
+  const nodeAvailable = (nodeName: string): boolean => {
+    const body = bodies.get(nodeName);
+    return isRecord(body) && isRecord(body[nodeName]);
+  };
+  const info = Object.fromEntries(nodeNames
+    .filter(nodeAvailable)
+    .map((nodeName) => [nodeName, nodeInfo(bodies.get(nodeName), nodeName)])) as Record<string, Record<string, unknown>>;
+  const ltxI2vNodes = new Set(['LTXVImgToVideoInplace']);
+  const ltxFlfNodes = new Set(['LTXVAddGuide', 'LTXVCropGuides']);
+  const ltxCommonMissing = ltxTemplate.requiredNodes
+    .filter((nodeName) => !ltxI2vNodes.has(nodeName) && !ltxFlfNodes.has(nodeName) && !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  const ltxI2vMissing = ltxTemplate.requiredNodes
+    .filter((nodeName) => ltxI2vNodes.has(nodeName) && !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  const ltxFlfMissing = ltxTemplate.requiredNodes
+    .filter((nodeName) => ltxFlfNodes.has(nodeName) && !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  const minimaxCommonMissing = minimaxTemplate.requiredNodes
+    .filter((nodeName) => !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  const minimaxLoopMissing: string[] = [];
+  const endFrameMissing = endFrameTemplate.requiredNodes
+    .filter((nodeName) => !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  const diagnostic = (missing: string[], label: string, check: () => void): void => {
+    try {
+      check();
+    } catch {
+      missing.push(label);
+    }
+  };
+  const modelOption = (
+    missing: string[],
+    nodeName: string,
+    inputName: string,
+    expected: string,
+    label: string
+  ): void => {
+    if (!nodeAvailable(nodeName)) return;
+    diagnostic(missing, label, () => requireOption(optionList(info[nodeName], nodeName, inputName), expected, label));
+  };
+
+  modelOption(ltxCommonMissing, 'UNETLoader', 'unet_name', ltxTemplate.modelFiles.unet, `model:unet:${ltxTemplate.modelFiles.unet}`);
+  modelOption(ltxCommonMissing, 'CLIPLoader', 'clip_name', ltxTemplate.modelFiles.clip, `model:clip:${ltxTemplate.modelFiles.clip}`);
+  modelOption(ltxCommonMissing, 'CLIPLoader', 'type', 'ltxv', 'clip-type:ltxv');
+  modelOption(ltxCommonMissing, 'VAELoader', 'vae_name', ltxTemplate.modelFiles.videoVae, `model:vae:${ltxTemplate.modelFiles.videoVae}`);
+  modelOption(ltxCommonMissing, 'VAELoader', 'vae_name', ltxTemplate.modelFiles.audioVae, `model:vae:${ltxTemplate.modelFiles.audioVae}`);
+  modelOption(
+    ltxCommonMissing,
+    'LatentUpscaleModelLoader',
+    'model_name',
+    ltxTemplate.modelFiles.latentUpscaler,
+    `model:latent-upscaler:${ltxTemplate.modelFiles.latentUpscaler}`
+  );
+  modelOption(ltxCommonMissing, 'KSamplerSelect', 'sampler_name', ltxTemplate.sampler, `sampler:${ltxTemplate.sampler}`);
+  modelOption(ltxCommonMissing, 'SaveWEBM', 'codec', ltxTemplate.codec, `video-codec:${ltxTemplate.codec}`);
+
+  modelOption(minimaxCommonMissing, 'UNETLoader', 'unet_name', minimaxTemplate.modelFiles.unet, `model:unet:${minimaxTemplate.modelFiles.unet}`);
+  modelOption(minimaxCommonMissing, 'CLIPLoader', 'clip_name', minimaxTemplate.modelFiles.clip, `model:clip:${minimaxTemplate.modelFiles.clip}`);
+  modelOption(minimaxCommonMissing, 'CLIPLoader', 'type', 'minimax', 'clip-type:minimax');
+  modelOption(minimaxCommonMissing, 'VAELoader', 'vae_name', minimaxTemplate.modelFiles.videoVae, `model:vae:${minimaxTemplate.modelFiles.videoVae}`);
+  modelOption(minimaxCommonMissing, 'LoraLoaderModelOnly', 'lora_name', minimaxTemplate.modelFiles.turboLora, `model:lora:${minimaxTemplate.modelFiles.turboLora}`);
+  modelOption(minimaxCommonMissing, 'KSamplerSelect', 'sampler_name', minimaxTemplate.sampler, `sampler:${minimaxTemplate.sampler}`);
+  modelOption(minimaxCommonMissing, 'BasicScheduler', 'scheduler', minimaxTemplate.scheduler, `scheduler:${minimaxTemplate.scheduler}`);
+  if (nodeAvailable('SaveVideo')) {
+    diagnostic(minimaxCommonMissing, `video-format:${minimaxTemplate.format}`, () => requireOption(
+      dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+      minimaxTemplate.format,
+      `video-format:${minimaxTemplate.format}`
+    ));
+    diagnostic(minimaxCommonMissing, `video-codec:${minimaxTemplate.codec}`, () => requireOption(
+      dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+      minimaxTemplate.codec,
+      `video-codec:${minimaxTemplate.codec}`
+    ));
   }
-  const modes = endFrameTemplate
-    ? PORTRAIT_VIDEO_MODES
-    : PORTRAIT_VIDEO_MODES.filter(({ id }) => id !== PORTRAIT_VIDEO_MODE_GENERATED_FLF);
+  if (nodeAvailable('MiniMaxH3ImageToVideo')) {
+    diagnostic(minimaxCommonMissing, 'node-input:MiniMaxH3ImageToVideo.first_frame', () => {
+      if (inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'first_frame')[0] !== 'IMAGE') {
+        throw new Error('invalid first-frame input');
+      }
+    });
+    diagnostic(minimaxLoopMissing, 'node-input:MiniMaxH3ImageToVideo.last_frame', () => {
+      if (inputDefinition(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'optional', 'last_frame')[0] !== 'IMAGE') {
+        throw new Error('invalid last-frame input');
+      }
+    });
+    const maximumWidth = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ width }) => width));
+    const maximumHeight = Math.max(...PORTRAIT_VIDEO_DIMENSIONS.map(({ height }) => height));
+    diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.width:${maximumWidth}`, () => {
+      requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'width', maximumWidth, minimaxTemplate.multiple);
+    });
+    diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.height:${maximumHeight}`, () => {
+      requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, minimaxTemplate.multiple);
+    });
+    for (const durationSeconds of minimaxTemplate.durations) {
+      const frames = portraitVideoDimensions('9:16', durationSeconds).frames;
+      diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.length:${frames}`, () => {
+        requireIntegerInput(info.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'length', frames, 17);
+      });
+    }
+  }
+  if (nodeAvailable('LoadImage')) {
+    for (const missing of [ltxCommonMissing, minimaxCommonMissing]) {
+      diagnostic(missing, 'node-input:LoadImage.image_upload', () => {
+        const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
+        if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('upload unavailable');
+      });
+    }
+  }
+
+  modelOption(endFrameMissing, 'UNETLoader', 'unet_name', endFrameTemplate.modelFiles.unet, `model:unet:${endFrameTemplate.modelFiles.unet}`);
+  modelOption(endFrameMissing, 'CLIPLoader', 'clip_name', endFrameTemplate.modelFiles.clip, `model:clip:${endFrameTemplate.modelFiles.clip}`);
+  modelOption(endFrameMissing, 'CLIPLoader', 'type', 'flux2', 'clip-type:flux2');
+  modelOption(endFrameMissing, 'VAELoader', 'vae_name', endFrameTemplate.modelFiles.vae, `model:vae:${endFrameTemplate.modelFiles.vae}`);
+  modelOption(endFrameMissing, 'KSamplerSelect', 'sampler_name', endFrameTemplate.sampler, `sampler:${endFrameTemplate.sampler}`);
+
+  const unique = (items: readonly string[]): string[] => [...new Set(items)];
+  const modes = (
+    commonMissing: readonly string[],
+    i2vMissing: readonly string[],
+    flfMissing: readonly string[]
+  ) => PORTRAIT_VIDEO_MODES.map((mode) => {
+    const missing = mode.id === PORTRAIT_VIDEO_MODE_GENERATED_FLF
+      ? unique([...commonMissing, ...flfMissing, ...endFrameMissing])
+      : mode.id === 'flf2v_loop'
+        ? unique([...commonMissing, ...flfMissing])
+        : unique([...commonMissing, ...i2vMissing]);
+    return { ...mode, available: missing.length === 0, missing };
+  });
+  const ltxMissing = unique(ltxCommonMissing);
+  const minimaxMissing = unique(minimaxCommonMissing);
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
-    template,
+    templates: [
+      {
+        template: ltxTemplate,
+        available: ltxMissing.length === 0,
+        missing: ltxMissing,
+        modes: modes(ltxCommonMissing, ltxI2vMissing, ltxFlfMissing),
+        durations: ltxTemplate.durations
+      },
+      {
+        template: minimaxTemplate,
+        available: minimaxMissing.length === 0,
+        missing: minimaxMissing,
+        modes: modes(minimaxCommonMissing, [], minimaxLoopMissing),
+        durations: minimaxTemplate.durations
+      }
+    ],
     endFrameTemplate,
-    modes,
-    aspectRatios: PORTRAIT_VIDEO_DIMENSIONS,
-    durations: PORTRAIT_VIDEO_DURATIONS
+    aspectRatios: PORTRAIT_VIDEO_DIMENSIONS
   };
 }
 
@@ -295,11 +397,12 @@ function outputVideo(entry: Record<string, unknown>, request: PortraitVideoReque
     throw new Error('ComfyUI portrait-video history did not mark the output animated');
   }
   const video = output.images[0];
+  const ltx = request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
   const filenamePattern = request.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
-    ? /^portrait-motion-generated-flf_\d+_\.mp4$/
+    ? ltx ? /^portrait-motion-generated-flf_\d+_\.webm$/ : /^portrait-motion-generated-flf_\d+_\.mp4$/
     : request.mode === 'flf2v_loop'
-      ? /^portrait-motion-loop-flf_\d+_\.mp4$/
-      : /^portrait-motion_\d+_\.mp4$/;
+      ? ltx ? /^portrait-motion-loop-flf_\d+_\.webm$/ : /^portrait-motion-loop-flf_\d+_\.mp4$/
+      : ltx ? /^portrait-motion_\d+_\.webm$/ : /^portrait-motion_\d+_\.mp4$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait-video filename');
   }
@@ -501,47 +604,63 @@ export async function runComfyPortraitVideo(
   endFrameInput?: PortraitVideoInputReference
 ): Promise<ComfyPortraitVideo> {
   let id = '';
-  let completed = false;
+  let validated = false;
   try {
+    const workflow = request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
+      ? buildLtx25PortraitVideoWorkflow(request, input, seed, endFrameInput)
+      : request.modelTemplate === MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+        ? buildMiniMaxH3PortraitVideoWorkflow(request, input, seed, endFrameInput)
+        : (() => { throw new Error('unsupported portrait-video model template'); })();
     const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildMiniMaxH3PortraitVideoWorkflow(request, input, seed, endFrameInput),
+        prompt: workflow,
         client_id: 'mullet-portrait-video'
       }),
       signal
     });
     id = promptId(await responseJson(queueResponse, 'portrait-video queue submission'));
     const video = await waitForVideo(fetcher, baseUrl, id, request, signal);
-    completed = true;
     const query = new URLSearchParams(video);
     const outputResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
     if (!outputResponse.ok) throw new Error(`ComfyUI portrait-video fetch failed (${outputResponse.status})`);
     const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-    if (contentType !== 'video/mp4') throw new Error('ComfyUI portrait-video output is not MP4');
     const bytes = await readBoundedVideo(outputResponse);
-    if (bytes.byteLength < 12 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
-      throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
-    }
     const dimensions = portraitVideoDimensions(request.aspectRatio, request.durationSeconds);
-    const metadata = validateH264VideoOnlyMp4(bytes, {
+    const expected = {
       width: dimensions.width,
       height: dimensions.height,
       frames: dimensions.frames,
       fps: dimensions.fps
-    });
+    };
+    let durationSeconds: number;
+    let resultContentType: ComfyPortraitVideo['contentType'];
+    if (request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID) {
+      if (contentType !== 'video/webm') throw new Error('ComfyUI portrait-video output is not WebM');
+      durationSeconds = validateVp9Webm(bytes, expected).containerDurationSeconds;
+      resultContentType = 'video/webm';
+    } else {
+      if (contentType !== 'video/mp4') throw new Error('ComfyUI portrait-video output is not MP4');
+      if (bytes.byteLength < 12 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
+        throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
+      }
+      durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
+      resultContentType = 'video/mp4';
+    }
+    const sha256 = await sha256Hex(bytes);
+    validated = true;
     return {
       bytes,
-      contentType: 'video/mp4',
+      contentType: resultContentType,
       promptId: id,
       filename: video.filename,
-      sha256: await sha256Hex(bytes),
-      durationSeconds: metadata.durationSeconds,
-      audioTracks: metadata.audioTrackCount
+      sha256,
+      durationSeconds,
+      audioTracks: 0
     };
   } catch (cause) {
-    if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
+    if (id && !validated) await cancelComfyJob(fetcher, baseUrl, id);
     throw cause;
   }
 }

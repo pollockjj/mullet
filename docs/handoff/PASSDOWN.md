@@ -6,6 +6,21 @@ The operator terminated this implementation effort after fourteen hours of unacc
 
 This passdown records repository state, served state, implementation inventory, failures, host mutations, and the exact conditions a future owner would have to satisfy. It is a handoff record, not a release note.
 
+## 2026-08-29 resumption correction
+
+This historical termination record remains for provenance, but its proposed non-KV FLUX filename is superseded. The operator supplied the exact current artifact:
+
+```text
+Repository: wraps/FLUX.2-klein-9B-KV-INT8-ConvRot-ComfyUI
+File:       flux-2-klein-9b-kv-int8-convrot.safetensors
+```
+
+Current restoration work keeps Z-Image, Qwen Image Edit 2511, FLUX.2 Klein 9B KV INT8 ConvRot, and Mage-Flow additive rather than replacing one with another. Expression output is fixed at 9:16 with a 0.5 MP default; the 400x600 Jenna reference remains 2:3 source material. Firestorm must not download the FLUX artifact; the operator assigned that transfer to Leviathan.
+
+The controlling recovery checklist is `docs/handoff/EXPRESSION_ACCEPTANCE_CHECKLIST.md`. The current candidate supersedes the historical portrait-motion description below: expression animation now defaults to LTX 2.5 Distilled, an exact 2-second 49-frame loop at 24 FPS, identical first and last frames, VP9 WebM, and zero audio or other media tracks. LTX and MiniMax remain additive expression choices. The separate inline main-scene path is unchanged and continues to default to MiniMax H3.
+
+The current candidate has passed 267/267 repository tests, the static check with 0 errors and 0 warnings, and a production build. A read-only live capability probe confirmed the complete LTX stack on Firestorm and both LTX and MiniMax expression choices. These are candidate gates only: the real Qwen Jenna image probe, real LTX loop probe, push, deployment, and served-browser verification remain required before this checkpoint can be called playable or complete.
+
 ## Canonical repository state
 
 | Item | State at handoff |

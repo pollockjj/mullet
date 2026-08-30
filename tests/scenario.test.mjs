@@ -10,6 +10,11 @@ import {
   normalizeScenarioCatalog,
   validateScenarioPackage
 } from '../src/lib/scenario.ts';
+import {
+  PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+} from '../src/lib/portrait.ts';
 
 const asset = (name) => JSON.parse(readFileSync(new URL(`../static/scenarios/${name}`, import.meta.url), 'utf8'));
 
@@ -28,7 +33,7 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   const { catalog, entry } = bundledScenario();
   assert.equal(catalog.spec, 'mullet_scenario_catalog_v1');
   assert.equal(entry.id, 'blakes-7-post-gan');
-  assert.equal(entry.version, '1.0.4');
+  assert.equal(entry.version, '1.0.5');
 
   const duplicate = asset('catalog.json');
   duplicate.scenarios.push(structuredClone(duplicate.scenarios[0]));
@@ -65,10 +70,11 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
     assert.ok(cardRaw.data[field].every((value) => typeof value === 'string'), field);
   });
   assert.equal(typeof cardRaw.data.extensions, 'object');
-  assert.equal(cardRaw.data.character_version, '0.1.3');
+  assert.equal(cardRaw.data.character_version, '0.1.4');
   assert.equal(cardRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(lorebookRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(packaged.portraitCast.defaultProfileId, 'jenna-stannis');
+  assert.equal(packaged.portraitCast.spec, 'mullet_portrait_cast_v2');
   const portraitProfile = defaultScenarioPortraitProfile(packaged.card);
   assert.equal(portraitProfile.id, 'jenna-stannis');
   assert.equal(portraitProfile.displayName, 'Jenna Stannis');
@@ -78,9 +84,12 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   assert.equal(portraitProfile.seed, 19790213);
   assert.match(portraitProfile.expressionPrompts.fear, /fearful, alert facial expression/);
   assert.match(portraitProfile.expressionPrompts.fear, /No text, watermark, modern zipper, or contemporary clothing\.$/);
-  assert.equal(portraitProfile.modelTemplate, 'qwen-image-edit-2511-reference-v1');
+  assert.equal(portraitProfile.modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
   assert.equal(portraitProfile.referenceImage.name, 'jenna-stannis-v1.jpg');
   assert.equal(portraitProfile.referenceImage.sha256, 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8');
+  assert.equal(portraitProfile.referenceImage.width, 400);
+  assert.equal(portraitProfile.referenceImage.height, 600);
+  assert.equal(portraitProfile.referenceImage.aspectRatio, '2:3');
   assert.match(portraitProfile.fingerprint, /^[0-9a-f]{8}$/);
   const protagonist = lorebookRaw.data.entries.find((loreEntry) => loreEntry.id === 1);
   assert.match(protagonist.content, /protagonist is a woman and uses she\/her pronouns/);
@@ -114,8 +123,8 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   assert.throws(() => validateScenarioPackage(entry, duplicateCard, duplicateLore), /entry ids must be unique/);
 
   const duplicateAliasLore = structuredClone(lorebookRaw);
-  duplicateAliasLore.data.extensions.mullet.portrait_cast_v1.profiles.push({
-    ...structuredClone(duplicateAliasLore.data.extensions.mullet.portrait_cast_v1.profiles[0]),
+  duplicateAliasLore.data.extensions.mullet.portrait_cast_v2.profiles.push({
+    ...structuredClone(duplicateAliasLore.data.extensions.mullet.portrait_cast_v2.profiles[0]),
     id: 'duplicate-jenna'
   });
   const duplicateAliasCard = structuredClone(cardRaw);
@@ -123,10 +132,44 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   assert.throws(() => validateScenarioPackage(entry, duplicateAliasCard, duplicateAliasLore), /duplicate scenario portrait alias/);
 
   const missingProfileLore = structuredClone(lorebookRaw);
-  missingProfileLore.data.extensions.mullet.portrait_cast_v1.default_profile_id = 'unknown-character';
+  missingProfileLore.data.extensions.mullet.portrait_cast_v2.default_profile_id = 'unknown-character';
   const missingProfileCard = structuredClone(cardRaw);
   missingProfileCard.data.character_book = structuredClone(missingProfileLore.data);
   assert.throws(() => validateScenarioPackage(entry, missingProfileCard, missingProfileLore), /default profile does not exist/);
+
+  const wrongGeometryLore = structuredClone(lorebookRaw);
+  wrongGeometryLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.reference_image.aspect_ratio = '9:16';
+  const wrongGeometryCard = structuredClone(cardRaw);
+  wrongGeometryCard.data.character_book = structuredClone(wrongGeometryLore.data);
+  assert.throws(
+    () => validateScenarioPackage(entry, wrongGeometryCard, wrongGeometryLore),
+    /aspect_ratio must be the exact GCD-reduced dimensions 2:3/
+  );
+});
+
+test('accepts the canonical identity reference with every additive reference editor', () => {
+  const { entry, cardRaw, lorebookRaw } = bundledScenario();
+  for (const modelTemplate of [
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+  ]) {
+    const lore = structuredClone(lorebookRaw);
+    lore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.model_template = modelTemplate;
+    const card = structuredClone(cardRaw);
+    card.data.character_book = structuredClone(lore.data);
+    const packaged = validateScenarioPackage(entry, card, lore);
+    assert.equal(packaged.portraitCast.profiles[0].modelTemplate, modelTemplate);
+    assert.deepEqual(packaged.portraitCast.profiles[0].referenceImage, {
+      name: 'jenna-stannis-v1.jpg',
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8',
+      width: 400,
+      height: 600,
+      aspectRatio: '2:3'
+    });
+  }
 });
 
 test('keeps validated embedded scenario lore authoritative over same-name imported state', () => {

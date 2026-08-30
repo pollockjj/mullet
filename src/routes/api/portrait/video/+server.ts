@@ -5,7 +5,9 @@ import {
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   normalizePortraitVideoRequest,
   portraitVideoDimensions,
-  portraitVideoEndFrameSeed
+  portraitVideoEndFrameSeed,
+  portraitVideoModeCapability,
+  portraitVideoModeAvailable
 } from '$lib/portrait-video';
 import {
   ComfyPortraitVideoOutputTooLargeError,
@@ -101,8 +103,18 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const signal = AbortSignal.any([request.signal, timeoutSignal]);
   try {
     const capabilities = await loadPortraitVideoCapabilities(fetch, baseUrl, signal);
-    if (!capabilities.modes.some(({ id }) => id === portraitVideoRequest.mode)) {
-      throw error(503, 'The selected portrait-motion mode is unavailable.');
+    if (!portraitVideoModeAvailable(
+      capabilities,
+      portraitVideoRequest.mode,
+      portraitVideoRequest.modelTemplate
+    )) {
+      const mode = portraitVideoModeCapability(
+        capabilities,
+        portraitVideoRequest.mode,
+        portraitVideoRequest.modelTemplate
+      );
+      const diagnostics = mode?.missing.length ? ` Missing: ${mode.missing.join(', ')}.` : '';
+      throw error(503, `The selected portrait-motion mode is unavailable.${diagnostics}`);
     }
     const input = await uploadPortraitVideoInput(fetch, baseUrl, imageBytes, imageSha256, signal);
     let endFrame: Awaited<ReturnType<typeof runComfyPortraitEndFrame>> | null = null;

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LTX25_PORTRAIT_VIDEO_TEMPLATE,
+  LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
+  MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   PORTRAIT_VIDEO_MODE_I2V,
   PORTRAIT_VIDEO_MODE_LOOP_FLF,
@@ -19,6 +22,7 @@ import {
   validatePortraitVideoPng
 } from '../src/lib/server/comfy-portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
+import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const portrait = {
   conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -32,18 +36,35 @@ const portrait = {
   },
   promptId: '11111111-1111-4111-8111-111111111111',
   seed: 41,
-  width: 768,
-  height: 1152,
+  width: 576,
+  height: 1024,
   generatedAt: 17
 };
 
 const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const imageSha256 = await sha256Hex(imageBytes);
 const requests = {
-  i2v: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_I2V),
-  loop: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF),
-  loopFive: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5),
-  generated: buildPortraitVideoRequest(portrait, '2:3', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF)
+  ltxI2v: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_I2V, 2, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
+  ),
+  ltxLoop: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 2, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
+  ),
+  ltxGenerated: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF, 2, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
+  ),
+  i2v: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_I2V, 3, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+  ),
+  loop: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 3, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+  ),
+  loopFive: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+  ),
+  generated: buildPortraitVideoRequest(
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF, 3, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+  )
 };
 const input = {
   name: 'portrait-motion-22222222-2222-4222-8222-222222222222.png',
@@ -58,12 +79,13 @@ const endInput = {
   imageSha256: 'b'.repeat(64)
 };
 const mp4 = buildH264AacMp4Fixture({
-  width: 768,
-  height: 1152,
+  width: 576,
+  height: 1024,
   frames: 73,
   includeAudio: false
 });
-const mp4Five = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 124, includeAudio: false });
+const mp4Five = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 124, includeAudio: false });
+const webm = buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24 });
 
 function standardInfo(node, inputName, options, metadata = {}) {
   return { [node]: { input: { required: { [inputName]: [options, metadata] } } } };
@@ -76,17 +98,22 @@ function dynamicInfo(node, section, inputName, options) {
 }
 
 function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, lengthMaximum = 3600) {
-  const files = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
+  const ltxFiles = LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
+  const minimaxFiles = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const endFiles = FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
-  if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [files.unet, endFiles.unet]);
+  if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [ltxFiles.unet, minimaxFiles.unet, endFiles.unet]);
   if (node === 'CLIPLoader') return { [node]: { input: { required: {
-    clip_name: [[files.clip, endFiles.clip]],
-    type: [['minimax', 'flux2']]
+    clip_name: [[ltxFiles.clip, minimaxFiles.clip, endFiles.clip]],
+    type: [['ltxv', 'minimax', 'flux2']]
   } } } };
-  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [files.videoVae, endFiles.vae]);
-  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [files.turboLora]);
-  if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['res_multistep', 'euler']);
+  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [
+    ltxFiles.videoVae, ltxFiles.audioVae, minimaxFiles.videoVae, endFiles.vae
+  ]);
+  if (node === 'LatentUpscaleModelLoader') return standardInfo(node, 'model_name', [ltxFiles.latentUpscaler]);
+  if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [minimaxFiles.turboLora]);
+  if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['euler_ancestral', 'res_multistep', 'euler']);
   if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
+  if (node === 'SaveWEBM') return standardInfo(node, 'codec', ['vp9']);
   if (node === 'SaveVideo') return { [node]: { input: {
     required: { format: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'mp4' }] }] },
     optional: { codec: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'h264' }] }] }
@@ -106,40 +133,154 @@ function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, leng
   return { [node]: { input: { required: {} } } };
 }
 
-test('requires the exact installed H3 FL2VA stack and native first/last-frame inputs', async () => {
+function templateCapability(capabilities, id) {
+  const capability = capabilities.templates.find(({ template }) => template.id === id);
+  assert.ok(capability, `missing template capability ${id}`);
+  return capability;
+}
+
+test('reports additive LTX and MiniMax capabilities with exact per-template diagnostics', async () => {
   const fetcher = async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node));
   };
   const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://comfy');
-  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v5');
-  assert.equal(capabilities.template.id, 'minimax-h3-fl2va-portrait-v1');
+  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v7');
+  assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
+    LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
+    MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+  ]);
   assert.equal(capabilities.endFrameTemplate?.id, 'flux2-klein-9b-distilled-end-frame-v1');
-  assert.deepEqual(capabilities.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
-  assert.deepEqual(capabilities.durations, [3, 5]);
+  const ltx = templateCapability(capabilities, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
+  const minimax = templateCapability(capabilities, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(ltx.available, true);
+  assert.equal(minimax.available, true);
+  assert.deepEqual(ltx.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
+  assert.deepEqual(ltx.modes.map(({ missing }) => missing), [[], [], []]);
+  assert.deepEqual(minimax.modes.map(({ missing }) => missing), [[], [], []]);
+  assert.deepEqual(ltx.durations, [2]);
+  assert.deepEqual(minimax.durations, [3, 5]);
 
-  await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
+  const withoutLtxUnet = await loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    if (node === 'UNETLoader') return Response.json(standardInfo(node, 'unet_name', [
+      MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet,
+      FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet
+    ]));
+    return Response.json(capabilityResponse(node));
+  }, 'http://comfy');
+  const ltxWithoutUnet = templateCapability(withoutLtxUnet, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(ltxWithoutUnet.available, false);
+  assert.deepEqual(ltxWithoutUnet.missing, [
+    `model:unet:${LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet}`
+  ]);
+  assert.deepEqual(ltxWithoutUnet.modes.map(({ missing }) => missing), [
+    [`model:unet:${LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet}`],
+    [`model:unet:${LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet}`],
+    [`model:unet:${LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet}`]
+  ]);
+  assert.equal(templateCapability(withoutLtxUnet, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).available, true);
+
+  const withoutMinimaxUnet = await loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    if (node === 'UNETLoader') return Response.json(standardInfo(node, 'unet_name', [
+      LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet,
+      FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet
+    ]));
+    return Response.json(capabilityResponse(node));
+  }, 'http://comfy');
+  assert.equal(templateCapability(withoutMinimaxUnet, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID).available, true);
+  assert.deepEqual(templateCapability(withoutMinimaxUnet, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).missing, [
+    `model:unet:${MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet}`
+  ]);
+
+  const withoutLtxI2vNode = await loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    if (node === 'LTXVImgToVideoInplace') return new Response('missing', { status: 404 });
+    return Response.json(capabilityResponse(node));
+  }, 'http://comfy');
+  const ltxWithoutI2vNode = templateCapability(withoutLtxI2vNode, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(ltxWithoutI2vNode.available, true);
+  assert.deepEqual(ltxWithoutI2vNode.modes.map(({ missing }) => missing), [
+    ['node:LTXVImgToVideoInplace'],
+    [],
+    []
+  ]);
+
+  const withoutLtxGuide = await loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    if (node === 'LTXVAddGuide') return new Response('missing', { status: 404 });
+    return Response.json(capabilityResponse(node));
+  }, 'http://comfy');
+  const ltxWithoutGuide = templateCapability(withoutLtxGuide, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(ltxWithoutGuide.available, true);
+  assert.deepEqual(ltxWithoutGuide.modes.map(({ missing }) => missing), [
+    [],
+    ['node:LTXVAddGuide'],
+    ['node:LTXVAddGuide']
+  ]);
+
+  const withoutLastFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, false));
-  }, 'http://comfy'), /last_frame metadata/);
+  }, 'http://comfy');
+  const minimaxWithoutLastFrame = templateCapability(withoutLastFrame, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(minimaxWithoutLastFrame.modes[0].available, true);
+  assert.deepEqual(minimaxWithoutLastFrame.modes[1].missing, ['node-input:MiniMaxH3ImageToVideo.last_frame']);
+  assert.deepEqual(minimaxWithoutLastFrame.modes[2].missing, ['node-input:MiniMaxH3ImageToVideo.last_frame']);
 
-  await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
+  const wrongLengthGrid = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, true, 16));
-  }, 'http://comfy'), /MiniMaxH3ImageToVideo\.length cannot represent 73/);
+  }, 'http://comfy');
+  assert.deepEqual(templateCapability(wrongLengthGrid, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).modes[0].missing, [
+    'node-input:MiniMaxH3ImageToVideo.length:73',
+    'node-input:MiniMaxH3ImageToVideo.length:124'
+  ]);
 
-  await assert.rejects(loadPortraitVideoCapabilities(async (url) => {
+  const missingLongDuration = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     return Response.json(capabilityResponse(node, true, 17, 100));
-  }, 'http://comfy'), /MiniMaxH3ImageToVideo\.length cannot represent 124/);
+  }, 'http://comfy');
+  assert.deepEqual(
+    templateCapability(missingLongDuration, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).modes[0].missing,
+    ['node-input:MiniMaxH3ImageToVideo.length:124']
+  );
 
   const withoutEndFrame = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
     if (node === 'ReferenceLatent') return new Response('missing', { status: 404 });
     return Response.json(capabilityResponse(node));
   }, 'http://comfy');
-  assert.equal(withoutEndFrame.endFrameTemplate, null);
-  assert.deepEqual(withoutEndFrame.modes.map(({ id }) => id), ['i2v', 'flf2v_loop']);
+  assert.equal(withoutEndFrame.endFrameTemplate.id, 'flux2-klein-9b-distilled-end-frame-v1');
+  for (const capability of withoutEndFrame.templates) {
+    assert.equal(capability.modes[0].available, true, capability.template.id);
+    assert.equal(capability.modes[1].available, true, capability.template.id);
+    assert.deepEqual(capability.modes[2], {
+      id: 'flf2v_generated',
+      label: 'Generated second-frame FLF',
+      available: false,
+      missing: ['node:ReferenceLatent']
+    }, capability.template.id);
+  }
+
+  const withoutFluxModel = await loadPortraitVideoCapabilities(async (url) => {
+    const node = decodeURIComponent(String(url).split('/').at(-1));
+    if (node === 'UNETLoader') {
+      return Response.json(standardInfo(node, 'unet_name', [
+        LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet,
+        MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet
+      ]));
+    }
+    return Response.json(capabilityResponse(node));
+  }, 'http://comfy');
+  for (const capability of withoutFluxModel.templates) {
+    assert.equal(capability.modes[0].available, true, capability.template.id);
+    assert.equal(capability.modes[1].available, true, capability.template.id);
+    assert.deepEqual(capability.modes[2].missing, [
+      `model:unet:${FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet}`
+    ], capability.template.id);
+  }
 });
 
 test('uploads only digest-matched PNG bytes to the fixed input location', async () => {
@@ -160,14 +301,18 @@ test('accepts only a PNG with the exact source IHDR dimensions', () => {
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
-  view.setUint32(16, 768, false);
-  view.setUint32(20, 1152, false);
-  assert.doesNotThrow(() => validatePortraitVideoPng(png, 768, 1152));
-  assert.throws(() => validatePortraitVideoPng(png, 768, 1024), /dimensions do not match/);
+  view.setUint32(16, 576, false);
+  view.setUint32(20, 1024, false);
+  assert.doesNotThrow(() => validatePortraitVideoPng(png, 576, 1024));
+  assert.throws(() => validatePortraitVideoPng(png, 576, 768), /dimensions do not match/);
 });
 
-async function runMode(selectedRequest, filename, selectedEndInput, outputBytes = mp4) {
+async function runMode(selectedRequest, filename, selectedEndInput, outputBytes) {
   const observed = [];
+  const ltx = selectedRequest.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
+  const outputNode = ltx && selectedRequest.mode !== PORTRAIT_VIDEO_MODE_I2V ? '35' : ltx ? '31' : '15';
+  const contentType = ltx ? 'video/webm' : 'video/mp4';
+  const selectedOutputBytes = outputBytes ?? (ltx ? webm : mp4);
   const fetcher = async (url, init) => {
     const value = String(url);
     observed.push({ url: value, init });
@@ -175,15 +320,71 @@ async function runMode(selectedRequest, filename, selectedEndInput, outputBytes 
     if (value.includes('/history/')) return Response.json({
       '33333333-3333-4333-8333-333333333333': {
         status: { completed: true, status_str: 'success' },
-        outputs: { '15': { images: [{ filename, subfolder: 'mullet', type: 'output' }], animated: [true] } }
+        outputs: { [outputNode]: { images: [{ filename, subfolder: 'mullet', type: 'output' }], animated: [true] } }
       }
     });
-    if (value.includes('/view?')) return new Response(outputBytes, { headers: { 'content-type': 'video/mp4' } });
+    if (value.includes('/view?')) return new Response(selectedOutputBytes, { headers: { 'content-type': contentType } });
     throw new Error(`unexpected URL ${value}`);
   };
   const result = await runComfyPortraitVideo(fetcher, 'http://comfy/', selectedRequest, input, 42, undefined, selectedEndInput);
   return { result, observed, queued: JSON.parse(observed[0].init.body) };
 }
+
+test('queues and validates fixed two-second LTX 2.5 I2V as silent VP9 WebM', async () => {
+  const { result, observed, queued } = await runMode(requests.ltxI2v, 'portrait-motion_00001_.webm');
+  assert.equal(queued.client_id, 'mullet-portrait-video');
+  assert.equal(queued.prompt['1'].inputs.image, `mullet/motion-inputs/${input.name}`);
+  assert.equal(queued.prompt['3'].inputs.unet_name, LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet);
+  assert.equal(queued.prompt['11'].inputs.length, 49);
+  assert.equal(queued.prompt['16'].inputs.noise_seed, 42);
+  assert.equal(queued.prompt['31'].class_type, 'SaveWEBM');
+  assert.equal(queued.prompt['31'].inputs.codec, 'vp9');
+  assert.equal(Object.hasOwn(queued.prompt['31'].inputs, 'audio'), false);
+  assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion_00001_.webm&subfolder=mullet&type=output');
+  assert.equal(result.contentType, 'video/webm');
+  assert.equal(result.durationSeconds, 2.042);
+  assert.equal(result.audioTracks, 0);
+  assert.deepEqual(result.bytes, webm);
+});
+
+test('dispatches LTX loop and generated-FLF output nodes and filenames independently', async () => {
+  const loop = await runMode(requests.ltxLoop, 'portrait-motion-loop-flf_00001_.webm');
+  assert.equal(loop.queued.prompt['12'].class_type, 'LTXVAddGuide');
+  assert.deepEqual(loop.queued.prompt['13'].inputs.image, ['2', 0]);
+  assert.equal(loop.queued.prompt['35'].inputs.filename_prefix, 'mullet/portrait-motion-loop-flf');
+  assert.equal(loop.observed[2].url, 'http://comfy/view?filename=portrait-motion-loop-flf_00001_.webm&subfolder=mullet&type=output');
+
+  const generated = await runMode(
+    requests.ltxGenerated,
+    'portrait-motion-generated-flf_00001_.webm',
+    endInput
+  );
+  assert.equal(generated.queued.prompt['36'].inputs.image, `mullet/motion-inputs/${endInput.name}`);
+  assert.deepEqual(generated.queued.prompt['13'].inputs.image, ['37', 0]);
+  assert.equal(generated.queued.prompt['35'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
+  assert.equal(generated.result.contentType, 'video/webm');
+});
+
+test('rejects audio-bearing or wrong-contract LTX WebM output', async () => {
+  await assert.rejects(
+    runMode(
+      requests.ltxI2v,
+      'portrait-motion_00002_.webm',
+      undefined,
+      buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24, includeAudio: true })
+    ),
+    /must not contain audio or extra non-video media tracks/
+  );
+  await assert.rejects(
+    runMode(
+      requests.ltxI2v,
+      'portrait-motion_00003_.webm',
+      undefined,
+      buildVp9WebmFixture({ width: 576, height: 1024, frames: 48, fps: 24 })
+    ),
+    /frame count/
+  );
+});
 
 test('queues and validates MiniMax H3 I2V as H.264 video-only MP4', async () => {
   const { result, observed, queued } = await runMode(requests.i2v, 'portrait-motion_00001_.mp4');
@@ -203,14 +404,14 @@ test('queues and validates MiniMax H3 I2V as H.264 video-only MP4', async () => 
 });
 
 test('rejects every audio-bearing portrait MP4', async () => {
-  const audioMp4 = buildH264AacMp4Fixture({ width: 768, height: 1152, frames: 73 });
+  const audioMp4 = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 73 });
   await assert.rejects(
     runMode(requests.i2v, 'portrait-motion_00002_.mp4', undefined, audioMp4),
     /must not contain an audio track/
   );
 });
 
-test('queues the natural loop with the identical first and last H3 frame', async () => {
+test('queues the default three-second natural loop with the identical first and last H3 frame', async () => {
   const { queued, observed } = await runMode(requests.loop, 'portrait-motion-loop-flf_00001_.mp4');
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
@@ -245,8 +446,8 @@ test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   png.set([0x49, 0x48, 0x44, 0x52], 12);
   const view = new DataView(png.buffer);
-  view.setUint32(16, 768, false);
-  view.setUint32(20, 1152, false);
+  view.setUint32(16, 576, false);
+  view.setUint32(20, 1024, false);
   const fetcher = async (url, init) => {
     const value = String(url);
     observed.push({ url: value, init });
@@ -263,11 +464,12 @@ test('queues and validates the exact FLUX.2 Klein portrait end-frame PNG', async
   const result = await runComfyPortraitEndFrame(fetcher, 'http://comfy/', requests.generated, input, 43);
   const queued = JSON.parse(observed[0].init.body);
   assert.equal(queued.client_id, 'mullet-portrait-end-frame');
+  assert.equal(FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
   assert.equal(queued.prompt['1'].inputs.unet_name, FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
   assert.equal(queued.prompt['2'].inputs.type, 'flux2');
   assert.equal(queued.prompt['5'].class_type, 'ImageScaleToTotalPixels');
-  assert.equal(queued.prompt['5'].inputs.megapixels, 0.9);
-  assert.deepEqual(queued.prompt['11'].inputs, { width: 768, height: 1152, batch_size: 1 });
+  assert.equal(queued.prompt['5'].inputs.megapixels, 0.5);
+  assert.deepEqual(queued.prompt['11'].inputs, { width: 576, height: 1024, batch_size: 1 });
   assert.equal(queued.prompt['12'].inputs.noise_seed, 43);
   assert.equal(result.contentType, 'image/png');
   assert.deepEqual(result.bytes, png);

@@ -290,10 +290,15 @@ export function validateVp9Webm(
   const tracksElement = exactlyOne(segmentChildren, TRACKS_ID, 'tracks');
   const trackEntries = elements(bytes, tracksElement.dataStart, tracksElement.dataEnd, budget)
     .filter((entry) => entry.id === TRACK_ENTRY_ID);
-  const videoTracks = trackEntries.map((entry) => {
+  const parsedTracks = trackEntries.map((entry) => {
     const children = elements(bytes, entry.dataStart, entry.dataEnd, budget);
     const trackType = unsignedInteger(bytes, exactlyOne(children, TRACK_TYPE_ID, 'track type'), 'track type');
-    if (trackType !== 1) return null;
+    return { children, trackType };
+  });
+  if (parsedTracks.some(({ trackType }) => trackType !== 1)) {
+    throw new Error('WebM must not contain audio or extra non-video media tracks');
+  }
+  const videoTracks = parsedTracks.map(({ children }) => {
     const video = exactlyOne(children, VIDEO_ID, 'video settings');
     const videoChildren = elements(bytes, video.dataStart, video.dataEnd, budget);
     return {
@@ -307,7 +312,7 @@ export function validateVp9Webm(
       width: unsignedInteger(bytes, exactlyOne(videoChildren, PIXEL_WIDTH_ID, 'pixel width'), 'pixel width'),
       height: unsignedInteger(bytes, exactlyOne(videoChildren, PIXEL_HEIGHT_ID, 'pixel height'), 'pixel height')
     };
-  }).filter((track) => track !== null);
+  });
   if (videoTracks.length !== 1) throw new Error('WebM must contain exactly one video track');
   const videoTrack = videoTracks[0];
   if (videoTrack.codecId !== 'V_VP9') throw new Error('WebM video codec is not VP9');
