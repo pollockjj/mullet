@@ -19,6 +19,7 @@ import { buildVp9WebmFixture } from './webm-fixture.mjs';
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-portrait-video-route');
 const publicOrigin = 'https://mullet.test';
+const deadComfyBaseUrl = 'http://127.0.0.1:1';
 const videoPromptId = '33333333-3333-4333-8333-333333333333';
 const endFramePromptId = '44444444-4444-4444-8444-444444444444';
 const webmBytes = buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24 });
@@ -334,7 +335,9 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     await close(fake.server);
   });
   const comfyBaseUrl = await listen(fake.server);
-  process.env.COMFY_BASE_URL = comfyBaseUrl;
+  process.env.EXPRESSION_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
   process.env.BODY_SIZE_LIMIT = '32M';
   process.env.BUILD_SHA = 'portrait-video-route-test';

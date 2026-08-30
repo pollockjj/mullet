@@ -8,6 +8,7 @@ import test from 'node:test';
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-portrait-route');
 const publicOrigin = 'https://mullet.test';
+const deadComfyBaseUrl = 'http://127.0.0.1:1';
 
 function listen(server) {
   return new Promise((resolveListen, reject) => {
@@ -53,7 +54,9 @@ test('compiled portrait route rejects stale selectable expression contracts befo
     await close(comfyServer);
   });
   const comfyBaseUrl = await listen(comfyServer);
-  process.env.COMFY_BASE_URL = comfyBaseUrl;
+  process.env.EXPRESSION_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
   process.env.BUILD_SHA = 'portrait-route-test';
   process.env.PUBLIC_BUILD_SHA = 'portrait-route-test';

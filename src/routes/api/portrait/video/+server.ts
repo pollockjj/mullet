@@ -22,9 +22,9 @@ import { runtime } from '$lib/server/runtime';
 
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
-function configuredComfyBaseUrl(): string {
-  if (!runtime.comfyBaseUrl) throw error(503, 'Portrait motion is not configured.');
-  return runtime.comfyBaseUrl;
+function configuredExpressionComfyBaseUrl(): string {
+  if (!runtime.expressionComfyBaseUrl) throw error(503, 'Portrait motion is not configured.');
+  return runtime.expressionComfyBaseUrl;
 }
 
 function randomSeed(): number {
@@ -54,7 +54,7 @@ function exactMultipartParts(form: FormData): { requestJson: string; image: Blob
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredExpressionComfyBaseUrl();
   try {
     const capabilities = await loadPortraitVideoCapabilities(
       fetch,
@@ -69,7 +69,7 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
 };
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredExpressionComfyBaseUrl();
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('multipart/form-data')) {
     throw error(400, 'portrait-video request must be multipart form data');
   }

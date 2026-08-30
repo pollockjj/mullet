@@ -18,9 +18,9 @@ import { runtime } from '$lib/server/runtime';
 
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
-function configuredComfyBaseUrl(): string {
-  if (!runtime.comfyBaseUrl) throw error(503, 'Inline scene motion is not configured.');
-  return runtime.comfyBaseUrl;
+function configuredSceneComfyBaseUrl(): string {
+  if (!runtime.sceneComfyBaseUrl) throw error(503, 'Inline scene motion is not configured.');
+  return runtime.sceneComfyBaseUrl;
 }
 
 function randomSeed(): number {
@@ -50,7 +50,7 @@ function exactMultipartParts(form: FormData): { requestJson: string; image: Blob
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredSceneComfyBaseUrl();
   try {
     const capabilities = await loadInlineSceneVideoCapabilities(
       fetch,
@@ -65,7 +65,7 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
 };
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredSceneComfyBaseUrl();
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('multipart/form-data')) {
     throw error(400, 'inline-scene video request must be multipart form data');
   }

@@ -4,9 +4,9 @@ import { INLINE_SCENE_IMAGE_TIMEOUT_MS, inlineSceneDimensions, normalizeInlineSc
 import { ComfyInlineSceneOutputTooLargeError, loadInlineSceneCapabilities, runComfyInlineScene } from '$lib/server/comfy-inline-scene';
 import { runtime } from '$lib/server/runtime';
 
-function configuredComfyBaseUrl(): string {
-  if (!runtime.comfyBaseUrl) throw error(503, 'Inline scene generation is not configured.');
-  return runtime.comfyBaseUrl;
+function configuredSceneComfyBaseUrl(): string {
+  if (!runtime.sceneComfyBaseUrl) throw error(503, 'Inline scene generation is not configured.');
+  return runtime.sceneComfyBaseUrl;
 }
 
 function randomSeed(): number {
@@ -16,7 +16,7 @@ function randomSeed(): number {
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredSceneComfyBaseUrl();
   try {
     const capabilities = await loadInlineSceneCapabilities(
       fetch,
@@ -31,7 +31,7 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
 };
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredSceneComfyBaseUrl();
   const body = await request.json().catch(() => {
     throw error(400, 'request body must be JSON');
   });

@@ -10,9 +10,9 @@ import {
 import { loadPortraitCapabilities, runComfyPortrait } from '$lib/server/comfy-portrait';
 import { runtime } from '$lib/server/runtime';
 
-function configuredComfyBaseUrl(): string {
-  if (!runtime.comfyBaseUrl) throw error(503, 'Portrait generation is not configured.');
-  return runtime.comfyBaseUrl;
+function configuredExpressionComfyBaseUrl(): string {
+  if (!runtime.expressionComfyBaseUrl) throw error(503, 'Portrait generation is not configured.');
+  return runtime.expressionComfyBaseUrl;
 }
 
 function randomSeed(): number {
@@ -22,7 +22,7 @@ function randomSeed(): number {
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredExpressionComfyBaseUrl();
   try {
     const capabilities = await loadPortraitCapabilities(
       fetch,
@@ -37,7 +37,7 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
 };
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  const baseUrl = configuredComfyBaseUrl();
+  const baseUrl = configuredExpressionComfyBaseUrl();
   const body = await request.json().catch(() => {
     throw error(400, 'request body must be JSON');
   });

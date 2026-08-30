@@ -24,6 +24,7 @@ import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-inline-scene-video-route');
 const publicOrigin = 'https://mullet.test';
+const deadComfyBaseUrl = 'http://127.0.0.1:1';
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const comfyPromptId = '33333333-3333-4333-8333-333333333333';
@@ -264,7 +265,9 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     await close(fake.server);
   });
   const comfyBaseUrl = await listen(fake.server);
-  process.env.COMFY_BASE_URL = comfyBaseUrl;
+  process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.SCENE_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
   process.env.BODY_SIZE_LIMIT = '32M';
   process.env.BUILD_SHA = 'inline-scene-video-route-test';
