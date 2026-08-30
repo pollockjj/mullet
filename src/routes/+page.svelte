@@ -3834,10 +3834,25 @@
         <p>Multimodal Universe, Lore, LoRAs, Expressions &amp; Timeline</p>
       </div>
     </div>
-    <div class="runtime" aria-label="Active runtime">
-      <span class:live={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
-      <div><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></div>
-    </div>
+    <details class="runtime">
+      <summary aria-label="Runtime and workspace controls">
+        <span class:live={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
+        <span class="runtime-label"><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></span>
+      </summary>
+      <div class="runtime-menu" aria-label="Conversation mode">
+        <span>Workspace</span>
+        <button
+          class:active={conversationMode === CONVERSATION_MODE_FICTION}
+          on:click={() => void startFictionWorkspace()}
+          disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || conversationMode === CONVERSATION_MODE_FICTION}
+        >Fiction</button>
+        <button
+          class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+          on:click={() => void startPersonalAssistant()}
+          disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+        >Assistant</button>
+      </div>
+    </details>
   </header>
 
   <main>
@@ -3940,21 +3955,6 @@
           </small>
         </section>
       {/if}
-      <section class="mode-picker" aria-label="Conversation mode">
-        <span class="eyebrow">Workspace mode</span>
-        <div>
-          <button
-            class:active={conversationMode === CONVERSATION_MODE_FICTION}
-            on:click={() => void startFictionWorkspace()}
-            disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || conversationMode === CONVERSATION_MODE_FICTION}
-          >Fiction</button>
-          <button
-            class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
-            on:click={() => void startPersonalAssistant()}
-            disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
-          >Assistant</button>
-        </div>
-      </section>
       <input
         class="file-input"
         bind:this={cardInput}
@@ -4587,10 +4587,17 @@
   .mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #19130d; background: #e7aa61; font: 800 21px/1 Georgia, serif; box-shadow: 0 0 32px rgba(231,170,97,.18); }
   h1 { font: 700 18px/1.05 Georgia, serif; letter-spacing: .18em; margin: 0; }
   .brand p { margin: 5px 0 0; color: #8f877d; font-size: 11px; }
-  .runtime { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border: 1px solid #3a352f; border-radius: 10px; background: #181614; }
-  .runtime div { display: grid; }
+  .runtime { position: relative; border: 1px solid #3a352f; border-radius: 10px; background: #181614; }
+  .runtime summary { display: flex; align-items: center; gap: 9px; padding: 8px 12px; cursor: pointer; list-style: none; }
+  .runtime summary::-webkit-details-marker { display: none; }
+  .runtime-label { display: grid; }
   .runtime strong { font-size: 12px; font-weight: 650; }
   .runtime small { color: #817a72; font-family: ui-monospace, monospace; font-size: 10px; }
+  .runtime-menu { position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; width: 150px; display: grid; gap: 6px; padding: 9px; border: 1px solid #494139; border-radius: 9px; background: #181512; box-shadow: 0 14px 36px rgba(0,0,0,.42); }
+  .runtime-menu > span { color: #817970; font-size: 9px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+  .runtime-menu button { padding: 7px 8px; border: 1px solid #494139; border-radius: 7px; color: #a79e94; background: #191613; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .runtime-menu button.active { border-color: #6d966f; color: #d9efdc; background: #1a261c; }
+  .runtime-menu button:disabled { cursor: default; opacity: .55; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #6ebc84; box-shadow: 0 0 10px rgba(110,188,132,.55); }
   .dot.live { background: #e7aa61; animation: pulse 1s infinite alternate; }
   main { min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
@@ -4650,11 +4657,6 @@
   .scenario-picker button { padding: 8px; border: 1px solid #875f39; border-radius: 8px; color: #e8c28e; background: #2a2118; font-size: 10px; font-weight: 700; cursor: pointer; }
   .scenario-picker button:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }
   .scenario-picker button:disabled { opacity: .4; cursor: default; }
-  .mode-picker { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid #34302b; border-bottom: 1px solid #34302b; }
-  .mode-picker > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-  .mode-picker button { padding: 8px; border: 1px solid #494139; border-radius: 8px; color: #a79e94; background: #191613; font-size: 10px; font-weight: 700; cursor: pointer; }
-  .mode-picker button.active { border-color: #6d966f; color: #d9efdc; background: #1a261c; }
-  .mode-picker button:disabled { cursor: default; opacity: 1; }
   .expression-panel { display: grid; gap: 9px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
   .expression-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .expression-heading > div { min-width: 0; display: grid; gap: 4px; }
