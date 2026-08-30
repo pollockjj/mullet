@@ -12,6 +12,8 @@ import {
 } from '../src/lib/inline-scene.ts';
 import {
   buildInlineSceneVideoRequest,
+  inlineSceneVideoDecodeFailureTransition,
+  inlineSceneVideoReconciliationAllowed,
   inlineSceneVideoRequestKey
 } from '../src/lib/inline-scene-video.ts';
 import {
@@ -255,6 +257,7 @@ test('verified persisted motion remains restorable across a playback fallback an
     video: stored()
   };
   let discarded = 0;
+  let replacementPosts = 0;
   const installed = [];
   const restore = () => restoreStoredInlineSceneVideo({
     exclusive: async (operation) => operation(),
@@ -266,10 +269,37 @@ test('verified persisted motion remains restorable across a playback fallback an
   });
 
   const beforePlaybackFallback = await restore();
+  assert.deepEqual(
+    inlineSceneVideoDecodeFailureTransition(true, request()),
+    { action: 'ignore' }
+  );
+  const fallback = inlineSceneVideoDecodeFailureTransition(false, request());
+  assert.equal(fallback.action, 'show-static-fallback');
+  const ready = {
+    scenesEnabled: true,
+    motionEnabled: true,
+    capabilitiesReady: true,
+    persistenceReady: true,
+    persistenceAvailable: true,
+    restorationPending: false,
+    streaming: false,
+    sceneBusy: false,
+    videoBusy: false,
+    videoError: true,
+    requestReady: true,
+    current: false
+  };
+  if (inlineSceneVideoReconciliationAllowed(ready)) replacementPosts += 1;
   const afterPageReload = await restore();
+  if (inlineSceneVideoReconciliationAllowed({ ...ready, videoError: false, current: true })) {
+    replacementPosts += 1;
+  }
 
   assert.equal(beforePlaybackFallback?.promptId, motionPromptId);
   assert.equal(afterPageReload?.promptId, motionPromptId);
   assert.deepEqual(installed, [motionPromptId, motionPromptId]);
   assert.equal(discarded, 0);
+  assert.equal(replacementPosts, 0);
+  assert.equal(persisted.video.promptId, motionPromptId);
+  assert.equal(persisted.video.videoSha256, videoSha256);
 });

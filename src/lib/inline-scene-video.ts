@@ -109,6 +109,14 @@ export type InlineSceneVideoReconciliationConditions = {
   current: boolean;
 };
 
+export type InlineSceneVideoDecodeFailureTransition =
+  | { action: 'ignore' }
+  | {
+      action: 'show-static-fallback';
+      error: string;
+      attemptKey: string | null;
+    };
+
 export type InlineSceneVideoMasterToggleAction = 'abort' | 'restore' | 'none';
 
 export type InlineSceneVideoInputScene = {
@@ -271,6 +279,18 @@ export function inlineSceneVideoReconciliationAllowed(
     && !conditions.videoError
     && conditions.requestReady
     && !conditions.current;
+}
+
+export function inlineSceneVideoDecodeFailureTransition(
+  componentDestroying: boolean,
+  request: InlineSceneVideoRequest | null
+): InlineSceneVideoDecodeFailureTransition {
+  if (componentDestroying) return { action: 'ignore' };
+  return {
+    action: 'show-static-fallback',
+    error: 'The generated scene motion could not be decoded; showing the static scene.',
+    attemptKey: request ? inlineSceneVideoRequestKey(request) : null
+  };
 }
 
 export function inlineSceneVideoMasterToggleAction(

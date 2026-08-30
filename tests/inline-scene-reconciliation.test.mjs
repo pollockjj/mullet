@@ -29,8 +29,21 @@ test('reload holds automatic scene-motion reconciliation until static and motion
 });
 
 test('page teardown and DOM playback errors never delete verified persisted scene motion', () => {
+  const mount = sourceBetween('onMount(() => {', 'function restoreWorkspaceState()');
+  assert.match(mount, /window\.addEventListener\('pagehide', handleInlineSceneVideoPageHide\);/);
+  assert.match(mount, /window\.addEventListener\('pageshow', handleInlineSceneVideoPageShow\);/);
+
+  const pageLifecycle = sourceBetween(
+    'function handleInlineSceneVideoPageHide()',
+    'onMount(() => {'
+  );
+  assert.match(pageLifecycle, /inlineSceneVideoComponentDestroying = true;/);
+  assert.match(pageLifecycle, /inlineSceneVideoComponentDestroying = false;/);
+
   const teardown = sourceBetween('onDestroy(() => {', 'function restorePortraitSettings()');
   assert.match(teardown, /inlineSceneVideoComponentDestroying = true;/);
+  assert.match(teardown, /window\.removeEventListener\('pagehide', handleInlineSceneVideoPageHide\);/);
+  assert.match(teardown, /window\.removeEventListener\('pageshow', handleInlineSceneVideoPageShow\);/);
   assert.ok(
     teardown.indexOf('inlineSceneVideoComponentDestroying = true;')
       < teardown.indexOf('URL.revokeObjectURL(generatedInlineSceneVideoUrl)'),
@@ -41,8 +54,9 @@ test('page teardown and DOM playback errors never delete verified persisted scen
     'function handleInlineSceneVideoDecodeError()',
     'async function loadInlineSceneGenerator()'
   );
-  assert.match(decodeHandler, /if \(inlineSceneVideoComponentDestroying\) return;/);
-  assert.match(decodeHandler, /lastInlineSceneVideoAttemptKey = inlineSceneVideoRequestKey\(inlineSceneVideoRequest\);/);
+  assert.match(decodeHandler, /inlineSceneVideoDecodeFailureTransition\([\s\S]*?inlineSceneVideoComponentDestroying,[\s\S]*?inlineSceneVideoRequest[\s\S]*?\);/);
+  assert.match(decodeHandler, /if \(transition\.action === 'ignore'\) return;/);
+  assert.match(decodeHandler, /lastInlineSceneVideoAttemptKey = transition\.attemptKey;/);
   assert.match(decodeHandler, /removeInstalledInlineSceneVideo\(\);/);
   assert.doesNotMatch(decodeHandler, /clearInlineSceneVideoAtGeneration|clearStoredInlineSceneVideo/);
 });

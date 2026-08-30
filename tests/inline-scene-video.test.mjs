@@ -17,6 +17,7 @@ import {
   buildInlineSceneVideoRequest,
   buildMiniMaxH3InlineSceneVideoWorkflow,
   inlineSceneMasterToggleEnabled,
+  inlineSceneVideoDecodeFailureTransition,
   inlineSceneVideoDimensions,
   inlineSceneVideoMasterToggleAction,
   inlineSceneVideoReconciliationAllowed,
@@ -131,6 +132,28 @@ test('blocks replacement generation until persisted motion restoration finishes'
   };
   assert.equal(inlineSceneVideoReconciliationAllowed(ready), true);
   assert.equal(inlineSceneVideoReconciliationAllowed({ ...ready, restorationPending: true }), false);
+  assert.equal(inlineSceneVideoReconciliationAllowed({ ...ready, videoError: true }), false);
+  assert.equal(inlineSceneVideoReconciliationAllowed({ ...ready, current: true }), false);
+});
+
+test('maps teardown and decode failure to non-generating playback states', () => {
+  const request = buildInlineSceneVideoRequest(staticScene());
+  assert.deepEqual(
+    inlineSceneVideoDecodeFailureTransition(true, request),
+    { action: 'ignore' }
+  );
+  assert.deepEqual(
+    inlineSceneVideoDecodeFailureTransition(false, request),
+    {
+      action: 'show-static-fallback',
+      error: 'The generated scene motion could not be decoded; showing the static scene.',
+      attemptKey: inlineSceneVideoRequestKey(request)
+    }
+  );
+  assert.equal(
+    inlineSceneVideoDecodeFailureTransition(false, null).attemptKey,
+    null
+  );
 });
 
 test('restores persisted motion when the master scene toggle is re-enabled', () => {

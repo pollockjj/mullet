@@ -71,6 +71,7 @@
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     buildInlineSceneVideoRequest,
     inlineSceneMasterToggleEnabled,
+    inlineSceneVideoDecodeFailureTransition,
     inlineSceneVideoMasterToggleAction,
     inlineSceneVideoReconciliationAllowed,
     inlineSceneVideoRequestKey,
@@ -690,7 +691,17 @@
     ? assistantStarters
     : fictionStarters;
 
+  function handleInlineSceneVideoPageHide() {
+    inlineSceneVideoComponentDestroying = true;
+  }
+
+  function handleInlineSceneVideoPageShow() {
+    inlineSceneVideoComponentDestroying = false;
+  }
+
   onMount(() => {
+    window.addEventListener('pagehide', handleInlineSceneVideoPageHide);
+    window.addEventListener('pageshow', handleInlineSceneVideoPageShow);
     const savedAssistantMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
     assistantMemoryId = isSidecarConversationId(savedAssistantMemoryId) ? savedAssistantMemoryId : crypto.randomUUID();
     localStorage.setItem(assistantMemoryIdStorageKey, assistantMemoryId);
@@ -813,6 +824,8 @@
 
   onDestroy(() => {
     inlineSceneVideoComponentDestroying = true;
+    if (browser) window.removeEventListener('pagehide', handleInlineSceneVideoPageHide);
+    if (browser) window.removeEventListener('pageshow', handleInlineSceneVideoPageShow);
     if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
     if (browser) window.removeEventListener('storage', handleAssistantMemoryGenerationChange);
     assistantMemoryGeneration += 1;
@@ -1440,15 +1453,17 @@
   }
 
   function handleInlineSceneVideoDecodeError() {
-    if (inlineSceneVideoComponentDestroying) return;
+    const transition = inlineSceneVideoDecodeFailureTransition(
+      inlineSceneVideoComponentDestroying,
+      inlineSceneVideoRequest
+    );
+    if (transition.action === 'ignore') return;
     inlineSceneVideoGeneration += 1;
     inlineSceneVideoController?.abort();
     inlineSceneVideoController = null;
     inlineSceneVideoBusy = false;
-    inlineSceneVideoError = 'The generated scene motion could not be decoded; showing the static scene.';
-    if (inlineSceneVideoRequest) {
-      lastInlineSceneVideoAttemptKey = inlineSceneVideoRequestKey(inlineSceneVideoRequest);
-    }
+    inlineSceneVideoError = transition.error;
+    if (transition.attemptKey) lastInlineSceneVideoAttemptKey = transition.attemptKey;
     removeInstalledInlineSceneVideo();
   }
 
