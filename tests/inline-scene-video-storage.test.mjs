@@ -247,3 +247,29 @@ test('restores only accepted current motion and installs before releasing the lo
   assert.equal(restored?.request.source.scenePromptId, staticPromptId);
   assert.equal(installedWhileLocked, true);
 });
+
+test('verified persisted motion remains restorable across a playback fallback and page reload', async () => {
+  const persisted = {
+    spec: STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC,
+    writeId: 'writer-a',
+    video: stored()
+  };
+  let discarded = 0;
+  const installed = [];
+  const restore = () => restoreStoredInlineSceneVideo({
+    exclusive: async (operation) => operation(),
+    load: async () => persisted,
+    discardInvalid: async () => { discarded += 1; },
+    isCurrent: () => true,
+    accepts: (video) => video.requestKey === inlineSceneVideoRequestKey(request()),
+    install: (video) => { installed.push(video.promptId); }
+  });
+
+  const beforePlaybackFallback = await restore();
+  const afterPageReload = await restore();
+
+  assert.equal(beforePlaybackFallback?.promptId, motionPromptId);
+  assert.equal(afterPageReload?.promptId, motionPromptId);
+  assert.deepEqual(installed, [motionPromptId, motionPromptId]);
+  assert.equal(discarded, 0);
+});

@@ -400,6 +400,7 @@
   let inlineSceneVideoGeneration = 0;
   let inlineSceneVideoController: AbortController | null = null;
   let lastInlineSceneVideoAttemptKey = '';
+  let inlineSceneVideoComponentDestroying = false;
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let scenarioCatalogSettled = false;
@@ -811,6 +812,7 @@
   }
 
   onDestroy(() => {
+    inlineSceneVideoComponentDestroying = true;
     if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
     if (browser) window.removeEventListener('storage', handleAssistantMemoryGenerationChange);
     assistantMemoryGeneration += 1;
@@ -1438,6 +1440,7 @@
   }
 
   function handleInlineSceneVideoDecodeError() {
+    if (inlineSceneVideoComponentDestroying) return;
     inlineSceneVideoGeneration += 1;
     inlineSceneVideoController?.abort();
     inlineSceneVideoController = null;
@@ -1447,9 +1450,6 @@
       lastInlineSceneVideoAttemptKey = inlineSceneVideoRequestKey(inlineSceneVideoRequest);
     }
     removeInstalledInlineSceneVideo();
-    if (inlineSceneVideoPersistenceAvailable) {
-      void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
-    }
   }
 
   async function loadInlineSceneGenerator() {
