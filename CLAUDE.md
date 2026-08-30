@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+## Definition of done
+
+- If a change is not deployed on the operator's served build, visible in the operator's browser, and available for the operator to playtest, it is not done.
+- Local edits, automated tests, builds, commits, pushes, isolated candidate servers, and agent-only probes are candidate evidence only. Never describe them as done, fixed, restored, delivered, playable, or a completed checkpoint.
+- A checkpoint completes only after the exact passing commit is deployed to the served URL and the operator can test it. Until then, report it explicitly as not deployed and not done.
+
 ## Operator communication and recovery
 
 - Never hand the operator a problem created by an agent and stop. Diagnose it, execute every safe in-scope corrective action, and carry the recovery through to a verified working state.
