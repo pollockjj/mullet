@@ -1,13 +1,27 @@
 {
-  "spec": "mullet_scenario_catalog_v1",
+  "spec": "mullet_scenario_catalog_v2",
   "scenarios": [
     {
       "id": "blakes-7-post-gan",
-      "version": "1.0.7",
+      "version": "1.1.0",
       "title": "Blake's 7 — After the False Control",
-      "summary": "A divergent ensemble continuation aboard the Liberator with a female player-controlled protagonist, beginning immediately after Gan's death and the discovery that Control was a decoy.",
+      "summary": "Three post-Gan openings focused on Jenna, Cally, or Servalan, all backed by the same canon-gated character card and lorebook.",
       "card": "blakes-7-post-gan.card.json",
-      "lorebook": "blakes-7-post-gan.lorebook.json"
+      "lorebook": "blakes-7-post-gan.lorebook.json",
+      "starters": [
+        {
+          "id": "jenna",
+          "label": "Jenna"
+        },
+        {
+          "id": "cally",
+          "label": "Cally"
+        },
+        {
+          "id": "servalan",
+          "label": "Servalan"
+        }
+      ]
     }
   ]
 }

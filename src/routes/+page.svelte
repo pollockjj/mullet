@@ -255,6 +255,8 @@
     isScenarioCard,
     normalizeScenarioCatalog,
     scenarioPortraitGenerationReady,
+    scenarioStarterMessage,
+    scenarioStarterPortraitProfile,
     validateScenarioPackage,
     type ScenarioCatalog,
     type ScenarioCatalogEntry,
@@ -407,6 +409,7 @@
   let scenarioCatalogSettled = false;
   let selectedScenarioId = '';
   let selectedScenario: ScenarioCatalogEntry | null = null;
+  let activeScenarioStarterId = '';
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
   let scenarioLoading = false;
   let conversationId = '';
@@ -447,6 +450,7 @@
   const cardStorageKey = 'mullet.active-character-card';
   const portraitStorageKey = 'mullet.active-character-portrait';
   const cardSourceIdentifierStorageKey = 'mullet.active-character-source';
+  const activeScenarioStarterStorageKey = 'mullet.active-scenario-starter.v1';
   const lorebookStorageKey = 'mullet.active-lorebook';
   const loreEnabledStorageKey = 'mullet.lorebook-enabled';
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
@@ -515,7 +519,7 @@
   );
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
   $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
-    ? defaultScenarioPortraitProfile(activeCard)
+    ? scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)
     : null;
   $: selectedPortraitCapability = portraitCapabilities?.templates.find(
     ({ template }) => template.id === portraitModelTemplate
@@ -709,6 +713,7 @@
     assistantMemoryEpoch = isSidecarConversationId(savedAssistantMemoryEpoch) ? savedAssistantMemoryEpoch : crypto.randomUUID();
     localStorage.setItem(assistantMemoryEpochStorageKey, assistantMemoryEpoch);
     restoreWorkspaceState();
+    activeScenarioStarterId = localStorage.getItem(activeScenarioStarterStorageKey) ?? '';
 
     const savedCard = localStorage.getItem(cardStorageKey);
     if (savedCard) {
@@ -3356,6 +3361,12 @@
         ? activeScenarioId
         : scenarioCatalog.scenarios[0].id;
       const activeScenario = scenarioCatalog.scenarios.find((scenario) => scenario.id === activeScenarioId);
+      if (activeScenario) {
+        activeScenarioStarterId = activeScenario.starters.some((starter) => starter.id === activeScenarioStarterId)
+          ? activeScenarioStarterId
+          : activeScenario.starters[0].id;
+        localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
+      }
       const activeVersion = activeCard?.data.extensions.mullet && typeof activeCard.data.extensions.mullet === 'object'
         ? String((activeCard.data.extensions.mullet as Record<string, unknown>).scenario_version ?? '')
         : '';
@@ -3400,9 +3411,11 @@
     }
   }
 
-  async function startSelectedScenario() {
+  async function startSelectedScenario(starterId: string) {
+    const starterChoice = selectedScenario?.starters.find((starter) => starter.id === starterId) ?? null;
     if (
       !selectedScenario
+      || !starterChoice
       || streaming
       || scenarioLoading
       || assistantTurnBusy
@@ -3418,12 +3431,16 @@
     workspaceBusy = true;
     try {
       const packaged = await loadScenarioPackage(scenario);
+      const starter = packaged.starters.starters.find((candidate) => candidate.id === starterId);
+      if (!starter) throw new Error('Bundled scenario starter failed validation.');
       await runPersonalAssistantTurnExclusive(async () => {
         restoreUnchangedWorkspace(expectedWorkspace);
-        if (hasRealTranscript() && !window.confirm('Replace the current conversation with this scenario opening?')) return;
+        if (hasRealTranscript() && !window.confirm(`Replace the current conversation with the ${starter.label} opening?`)) return;
 
         conversationMode = CONVERSATION_MODE_FICTION;
         activeCard = packaged.card;
+        activeScenarioStarterId = starterId;
+        localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
         if (!portraitModelSelectionPersisted) portraitModelTemplate = PORTRAIT_REFERENCE_TEMPLATE_ID;
         cardSourceIdentifier = characterSourceIdentifier(scenario.card);
         portraitDataUrl = '';
@@ -3439,7 +3456,7 @@
         messages = freshConversation();
         await resetSidecarForConversation();
         persist();
-        noticeMessage = `${scenario.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
+        noticeMessage = `${starter.label} · ${starter.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
         await scrollToLatest();
       });
     } catch (cause) {
@@ -3473,7 +3490,9 @@
 
   function freshConversation(): Message[] {
     if (!activeCard) return [];
-    const greeting = firstCharacterMessage(activeCard);
+    const greeting = isScenarioCard(activeCard)
+      ? scenarioStarterMessage(activeCard, activeScenarioStarterId)
+      : firstCharacterMessage(activeCard);
     return greeting.trim() ? [{ role: 'assistant', content: greeting }] : [];
   }
 
@@ -3529,7 +3548,9 @@
   }
 
   function containsOnlyOpeningGreeting(card: ImportedCharacterCard): boolean {
-    const greeting = firstCharacterMessage(card);
+    const greeting = isScenarioCard(card)
+      ? scenarioStarterMessage(card, activeScenarioStarterId)
+      : firstCharacterMessage(card);
     return messages.length === 1 && messages[0].role === 'assistant' && messages[0].content === greeting;
   }
 
@@ -4254,15 +4275,23 @@
       <section class="scenario-picker" aria-label="Bundled scenarios">
         <span class="eyebrow">Bundled scenarios</span>
         {#if scenarioCatalog}
-          <select bind:value={selectedScenarioId} disabled={streaming || scenarioLoading} aria-label="Select bundled scenario">
-            {#each scenarioCatalog.scenarios as scenario}
-              <option value={scenario.id}>{scenario.title}</option>
-            {/each}
-          </select>
-          {#if selectedScenario}<small>{selectedScenario.summary}</small>{/if}
-          <button on:click={() => void startSelectedScenario()} disabled={streaming || scenarioLoading || !selectedScenario}>
-            {scenarioLoading ? 'Loading…' : 'Start scenario'}
-          </button>
+          {#if selectedScenario}
+            <div class="scenario-starters" role="group" aria-label="Starting scenario">
+              {#each selectedScenario.starters as starter}
+                <button
+                  class="scenario-starter"
+                  class:active={starter.id === activeScenarioStarterId && isScenarioCard(activeCard)}
+                  aria-pressed={starter.id === activeScenarioStarterId && isScenarioCard(activeCard)}
+                  aria-label={`Start the ${starter.label} scenario`}
+                  on:click={() => void startSelectedScenario(starter.id)}
+                  disabled={streaming || scenarioLoading}
+                >
+                  {starter.label}
+                </button>
+              {/each}
+            </div>
+            <small>{scenarioLoading ? 'Starting selected opening…' : selectedScenario.summary}</small>
+          {/if}
         {:else}
           <small>Loading bundled scenarios…</small>
         {/if}
@@ -4968,11 +4997,12 @@
   .card-button.primary:hover:not(:disabled) { color: #21170d; background: #e8b06e; }
   .card-button:disabled { opacity: .35; cursor: default; }
   .scenario-picker { display: grid; gap: 8px; padding: 13px 0 2px; border-top: 1px solid #34302b; }
-  .scenario-picker select { min-width: 0; width: 100%; padding: 8px 9px; border: 1px solid #443d35; border-radius: 8px; color: #d0c7bc; background: #181512; font-size: 10px; }
   .scenario-picker small { color: #7e766e; font-size: 10px; line-height: 1.45; }
-  .scenario-picker button { padding: 8px; border: 1px solid #875f39; border-radius: 8px; color: #e8c28e; background: #2a2118; font-size: 10px; font-weight: 700; cursor: pointer; }
-  .scenario-picker button:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }
-  .scenario-picker button:disabled { opacity: .4; cursor: default; }
+  .scenario-starters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .scenario-starter { min-width: 0; padding: 6px 4px; border: 1px solid #514537; border-radius: 999px; color: #b5a99b; background: #1c1814; font-size: 9px; font-weight: 750; cursor: pointer; }
+  .scenario-starter:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }
+  .scenario-starter.active { border-color: #5d8d65; color: #cbe4cf; background: #18231a; }
+  .scenario-starter:disabled { opacity: .4; cursor: default; }
   .expression-panel { display: grid; gap: 9px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
   .expression-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .expression-heading > div { min-width: 0; display: grid; gap: 4px; }

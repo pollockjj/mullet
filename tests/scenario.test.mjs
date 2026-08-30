@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { compileCharacterMessages } from '../src/lib/character-card.ts';
+import {
+  compileCharacterMessages,
+  firstCharacterMessage,
+  substituteCardMacros
+} from '../src/lib/character-card.ts';
 import { combineLorebooks, injectLoreContext, normalizeLorebook, scanLorebooks } from '../src/lib/lorebook.ts';
 import {
   defaultScenarioPortraitProfile,
   isScenarioCard,
   normalizeScenarioCatalog,
+  scenarioStarterMessage,
+  scenarioStarterPortraitProfile,
+  scenarioStarters,
   scenarioPortraitGenerationReady,
   validateScenarioPackage
 } from '../src/lib/scenario.ts';
@@ -18,23 +25,39 @@ import {
 } from '../src/lib/portrait.ts';
 
 const asset = (name) => JSON.parse(readFileSync(new URL(`../static/scenarios/${name}`, import.meta.url), 'utf8'));
+const starterIds = ['jenna', 'cally', 'servalan'];
+const starterPortraitProfileIds = ['jenna-stannis', 'cally', 'servalan'];
+
+function bundledScenarios() {
+  const catalog = normalizeScenarioCatalog(asset('catalog.json'));
+  return {
+    catalog,
+    scenarios: catalog.scenarios.map((entry) => ({
+      entry,
+      cardRaw: asset(entry.card),
+      lorebookRaw: asset(entry.lorebook)
+    }))
+  };
+}
 
 function bundledScenario() {
-  const catalog = normalizeScenarioCatalog(asset('catalog.json'));
-  const entry = catalog.scenarios[0];
+  const { catalog, scenarios } = bundledScenarios();
+  const { entry, cardRaw, lorebookRaw } = scenarios[0];
   return {
     catalog,
     entry,
-    cardRaw: asset(entry.card),
-    lorebookRaw: asset(entry.lorebook)
+    cardRaw,
+    lorebookRaw
   };
 }
 
 test('validates the generic bundled-scenario catalog and rejects unsafe or duplicate entries', () => {
   const { catalog, entry } = bundledScenario();
-  assert.equal(catalog.spec, 'mullet_scenario_catalog_v1');
+  assert.equal(catalog.spec, 'mullet_scenario_catalog_v2');
   assert.equal(entry.id, 'blakes-7-post-gan');
-  assert.equal(entry.version, '1.0.7');
+  assert.match(entry.version, /^\d+\.\d+\.\d+$/);
+  assert.deepEqual(entry.starters.map((starter) => starter.id), starterIds);
+  assert.deepEqual(entry.starters.map((starter) => starter.label), ['Jenna', 'Cally', 'Servalan']);
 
   const duplicate = asset('catalog.json');
   duplicate.scenarios.push(structuredClone(duplicate.scenarios[0]));
@@ -43,7 +66,74 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   const unsafe = asset('catalog.json');
   unsafe.scenarios[0].card = '../private.json';
   assert.throws(() => normalizeScenarioCatalog(unsafe), /safe JSON filename/);
+
+  const duplicateStarter = asset('catalog.json');
+  duplicateStarter.scenarios[0].starters.push(structuredClone(duplicateStarter.scenarios[0].starters[0]));
+  assert.throws(() => normalizeScenarioCatalog(duplicateStarter), /duplicate.*starter|starter.*duplicate/i);
   assert.throws(() => normalizeScenarioCatalog({ spec: 'wrong', scenarios: [] }), /scenario catalog spec/);
+});
+
+test('validates every bundled package and selects three distinct starter messages and identities', () => {
+  const { catalog, scenarios } = bundledScenarios();
+  assert.equal(scenarios.length, catalog.scenarios.length);
+  assert.ok(scenarios.length > 0);
+
+  for (const { entry, cardRaw, lorebookRaw } of scenarios) {
+    const packaged = validateScenarioPackage(entry, cardRaw, lorebookRaw);
+    const starters = scenarioStarters(packaged.card);
+    assert.deepEqual(packaged.starters, starters);
+    assert.equal(starters.spec, 'mullet_scenario_starters_v1');
+    assert.equal(starters.defaultStarterId, 'jenna');
+    assert.equal(starters.starters.length, 3);
+    assert.deepEqual(starters.starters.map((starter) => starter.id), starterIds);
+    assert.deepEqual(starters.starters.map((starter) => starter.portraitProfileId), starterPortraitProfileIds);
+    assert.deepEqual(
+      starters.starters.map(({ id, label }) => ({ id, label })),
+      entry.starters
+    );
+    assert.equal(new Set(starters.starters.map((starter) => starter.greetingIndex)).size, 3);
+    assert.ok(starters.starters.every((starter) => starter.title.trim() && starter.summary.trim()));
+
+    const messages = starters.starters.map((starter) => {
+      const message = scenarioStarterMessage(packaged.card, starter.id, 'Test Pilot');
+      const sourceMessage = starter.greetingIndex === 0
+        ? packaged.card.data.firstMes
+        : packaged.card.data.alternateGreetings[starter.greetingIndex - 1];
+      assert.equal(
+        message,
+        substituteCardMacros(
+          sourceMessage,
+          packaged.card.data.nickname || packaged.card.data.name,
+          'Test Pilot'
+        )
+      );
+      return message;
+    });
+    assert.equal(messages[0], firstCharacterMessage(packaged.card, 'Test Pilot'));
+    assert.equal(new Set(messages).size, 3);
+    assert.ok(messages.every((message) => message.trim().length > 0));
+
+    const profiles = starters.starters.map((starter) => {
+      const profile = scenarioStarterPortraitProfile(packaged.card, starter.id);
+      assert.ok(profile);
+      assert.equal(profile.id, starter.portraitProfileId);
+      assert.deepEqual(
+        profile,
+        packaged.portraitCast.profiles.find((candidate) => candidate.id === starter.portraitProfileId)
+      );
+      return profile;
+    });
+    assert.equal(new Set(profiles.map((profile) => profile.id)).size, 3);
+    assert.equal(new Set(profiles.map((profile) => profile.fingerprint)).size, 3);
+    assert.equal(new Set(profiles.map((profile) => profile.referenceImage.name)).size, 3);
+    assert.equal(new Set(profiles.map((profile) => profile.referenceImage.sha256)).size, 3);
+
+    assert.equal(cardRaw.data.extensions.mullet.scenario_id, entry.id);
+    assert.equal(cardRaw.data.extensions.mullet.scenario_version, entry.version);
+    assert.equal(lorebookRaw.data.extensions.mullet.scenario_id, entry.id);
+    assert.equal(lorebookRaw.data.extensions.mullet.scenario_version, entry.version);
+    assert.deepEqual(cardRaw.data.character_book, lorebookRaw.data);
+  }
 });
 
 test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3', () => {
@@ -74,7 +164,7 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
     assert.ok(cardRaw.data[field].every((value) => typeof value === 'string'), field);
   });
   assert.equal(typeof cardRaw.data.extensions, 'object');
-  assert.equal(cardRaw.data.character_version, '0.1.6');
+  assert.match(cardRaw.data.character_version, /^\d+\.\d+\.\d+$/);
   assert.equal(cardRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(lorebookRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(packaged.portraitCast.defaultProfileId, 'jenna-stannis');

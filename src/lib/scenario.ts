@@ -1,5 +1,6 @@
 import {
   normalizeCharacterCard,
+  substituteCardMacros,
   type ImportedCharacterCard,
   type JsonObject
 } from './character-card.ts';
@@ -11,7 +12,13 @@ import {
 } from './portrait.ts';
 import { isExpressionLabel, type ExpressionLabel } from './sidecar.ts';
 
-export const SCENARIO_CATALOG_SPEC = 'mullet_scenario_catalog_v1' as const;
+export const SCENARIO_CATALOG_SPEC = 'mullet_scenario_catalog_v2' as const;
+export const SCENARIO_STARTERS_SPEC = 'mullet_scenario_starters_v1' as const;
+
+export type ScenarioCatalogStarter = {
+  id: string;
+  label: string;
+};
 
 export type ScenarioCatalogEntry = {
   id: string;
@@ -20,6 +27,7 @@ export type ScenarioCatalogEntry = {
   summary: string;
   card: string;
   lorebook: string;
+  starters: ScenarioCatalogStarter[];
 };
 
 export type ScenarioCatalog = {
@@ -32,6 +40,22 @@ export type ScenarioPackage = {
   card: ImportedCharacterCard;
   lorebook: ImportedLorebook;
   portraitCast: ScenarioPortraitCast;
+  starters: ScenarioStarters;
+};
+
+export type ScenarioStarter = {
+  id: string;
+  label: string;
+  title: string;
+  summary: string;
+  greetingIndex: number;
+  portraitProfileId: string;
+};
+
+export type ScenarioStarters = {
+  spec: typeof SCENARIO_STARTERS_SPEC;
+  defaultStarterId: string;
+  starters: ScenarioStarter[];
 };
 
 export type ScenarioPortraitProfile = {
@@ -111,6 +135,14 @@ function positiveInteger(value: unknown, field: string): number {
     throw new Error(`${field} must be a positive safe integer`);
   }
   return Number(value);
+}
+
+function starterId(value: unknown, field: string): string {
+  const id = requiredString(value, field, 100);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
+    throw new Error(`${field} must be lowercase kebab-case`);
+  }
+  return id;
 }
 
 export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitCast {
@@ -259,6 +291,109 @@ export function defaultScenarioPortraitProfile(card: ImportedCharacterCard | nul
   return cast?.profiles.find((profile) => profile.id === cast.defaultProfileId) ?? null;
 }
 
+export function normalizeScenarioStarters(
+  value: unknown,
+  portraitCast: ScenarioPortraitCast,
+  greetingCount: number
+): ScenarioStarters {
+  if (!isRecord(value) || value.spec !== SCENARIO_STARTERS_SPEC) {
+    throw new Error(`scenario starters must use ${SCENARIO_STARTERS_SPEC}`);
+  }
+  const defaultStarterId = starterId(value.default_starter_id, 'scenario default starter id');
+  if (!Array.isArray(value.starters) || value.starters.length < 1 || value.starters.length > 20) {
+    throw new Error('scenario starters must contain between 1 and 20 starters');
+  }
+  const ids = new Set<string>();
+  const labels = new Set<string>();
+  const greetingIndexes = new Set<number>();
+  const starters = value.starters.map((candidate, index): ScenarioStarter => {
+    if (!isRecord(candidate)) throw new Error(`scenario starter ${index} must be an object`);
+    const id = starterId(candidate.id, `scenario starter ${index} id`);
+    if (ids.has(id)) throw new Error(`duplicate scenario starter id "${id}"`);
+    ids.add(id);
+    const label = requiredString(candidate.label, `scenario starter ${index} label`, 50);
+    const foldedLabel = label.toLocaleLowerCase('en-US');
+    if (labels.has(foldedLabel)) throw new Error(`duplicate scenario starter label "${label}"`);
+    labels.add(foldedLabel);
+    if (!Number.isSafeInteger(candidate.greeting_index)
+      || Number(candidate.greeting_index) < 0
+      || Number(candidate.greeting_index) >= greetingCount) {
+      throw new Error(`scenario starter ${index} greeting_index must select an available greeting`);
+    }
+    const greetingIndex = Number(candidate.greeting_index);
+    if (greetingIndexes.has(greetingIndex)) {
+      throw new Error(`duplicate scenario starter greeting_index ${greetingIndex}`);
+    }
+    greetingIndexes.add(greetingIndex);
+    const portraitProfileId = starterId(
+      candidate.portrait_profile_id,
+      `scenario starter ${index} portrait_profile_id`
+    );
+    if (!portraitCast.profiles.some((profile) => profile.id === portraitProfileId)) {
+      throw new Error(`scenario starter ${index} portrait profile does not exist`);
+    }
+    return {
+      id,
+      label,
+      title: requiredString(candidate.title, `scenario starter ${index} title`, 200),
+      summary: requiredString(candidate.summary, `scenario starter ${index} summary`, 1_000),
+      greetingIndex,
+      portraitProfileId
+    };
+  });
+  if (!starters.some((starter) => starter.id === defaultStarterId)) {
+    throw new Error('scenario default starter does not exist');
+  }
+  return { spec: SCENARIO_STARTERS_SPEC, defaultStarterId, starters };
+}
+
+export function scenarioStarters(card: ImportedCharacterCard | null): ScenarioStarters | null {
+  if (!card || !isRecord(card.data.extensions.mullet)) return null;
+  const portraitCast = scenarioPortraitCast(card);
+  if (!portraitCast) return null;
+  try {
+    return normalizeScenarioStarters(
+      card.data.extensions.mullet.starters_v1,
+      portraitCast,
+      1 + card.data.alternateGreetings.length
+    );
+  } catch {
+    return null;
+  }
+}
+
+function selectedScenarioStarter(card: ImportedCharacterCard, selectedStarterId: string): ScenarioStarter | null {
+  const starters = scenarioStarters(card);
+  if (!starters) return null;
+  return starters.starters.find((starter) => starter.id === selectedStarterId)
+    ?? starters.starters.find((starter) => starter.id === starters.defaultStarterId)
+    ?? null;
+}
+
+export function scenarioStarterMessage(
+  card: ImportedCharacterCard,
+  selectedStarterId: string,
+  userName = 'You'
+): string {
+  const starter = selectedScenarioStarter(card, selectedStarterId);
+  const greeting = starter?.greetingIndex === 0
+    ? card.data.firstMes
+    : card.data.alternateGreetings[(starter?.greetingIndex ?? 0) - 1] ?? card.data.firstMes;
+  return substituteCardMacros(greeting, card.data.nickname || card.data.name, userName);
+}
+
+export function scenarioStarterPortraitProfile(
+  card: ImportedCharacterCard | null,
+  selectedStarterId: string
+): ScenarioPortraitProfile | null {
+  if (!card) return null;
+  const starter = selectedScenarioStarter(card, selectedStarterId);
+  const cast = scenarioPortraitCast(card);
+  if (!starter || !cast) return defaultScenarioPortraitProfile(card);
+  return cast.profiles.find((profile) => profile.id === starter.portraitProfileId)
+    ?? defaultScenarioPortraitProfile(card);
+}
+
 function scenarioMetadata(value: unknown, field: string): JsonObject {
   if (!isRecord(value) || value.kind !== 'scenario') {
     throw new Error(`${field} must identify a scenario`);
@@ -287,13 +422,30 @@ export function normalizeScenarioCatalog(value: unknown): ScenarioCatalog {
     if (!/^\d+\.\d+\.\d+$/.test(version)) {
       throw new Error(`scenario catalog entry ${index} version must be semantic versioning`);
     }
+    if (!Array.isArray(candidate.starters) || candidate.starters.length < 1 || candidate.starters.length > 20) {
+      throw new Error(`scenario catalog entry ${index} starters must contain between 1 and 20 starters`);
+    }
+    const starterIds = new Set<string>();
+    const starterLabels = new Set<string>();
+    const starters = candidate.starters.map((starter, starterIndex): ScenarioCatalogStarter => {
+      if (!isRecord(starter)) throw new Error(`scenario catalog entry ${index} starter ${starterIndex} must be an object`);
+      const id = starterId(starter.id, `scenario catalog entry ${index} starter ${starterIndex} id`);
+      if (starterIds.has(id)) throw new Error(`duplicate scenario catalog starter id "${id}"`);
+      starterIds.add(id);
+      const label = requiredString(starter.label, `scenario catalog entry ${index} starter ${starterIndex} label`, 50);
+      const foldedLabel = label.toLocaleLowerCase('en-US');
+      if (starterLabels.has(foldedLabel)) throw new Error(`duplicate scenario catalog starter label "${label}"`);
+      starterLabels.add(foldedLabel);
+      return { id, label };
+    });
     return {
       id,
       version,
       title: requiredString(candidate.title, `scenario catalog entry ${index} title`, 200),
       summary: requiredString(candidate.summary, `scenario catalog entry ${index} summary`, 1_000),
       card: scenarioAsset(candidate.card, `scenario catalog entry ${index} card`),
-      lorebook: scenarioAsset(candidate.lorebook, `scenario catalog entry ${index} lorebook`)
+      lorebook: scenarioAsset(candidate.lorebook, `scenario catalog entry ${index} lorebook`),
+      starters
     };
   });
 
@@ -326,6 +478,15 @@ export function validateScenarioPackage(
     throw new Error('lorebook scenario identity does not match the catalog');
   }
   const portraitCast = normalizeScenarioPortraitCast(loreMetadata.portrait_cast_v2);
+  const starters = normalizeScenarioStarters(
+    cardMetadata.starters_v1,
+    portraitCast,
+    1 + card.data.alternateGreetings.length
+  );
+  const packagedStarterCatalog = starters.starters.map(({ id, label }) => ({ id, label }));
+  if (!deepEqualJson(packagedStarterCatalog, entry.starters)) {
+    throw new Error('character card starters do not match the catalog');
+  }
   if (!deepEqualJson(card.data.characterBook, lorebookValue.data)) {
     throw new Error('embedded and standalone scenario lorebooks must be identical');
   }
@@ -335,7 +496,7 @@ export function validateScenarioPackage(
   const entryIds = lorebook.entries.map((loreEntry) => loreEntry.id);
   if (new Set(entryIds).size !== entryIds.length) throw new Error('bundled scenario lorebook entry ids must be unique');
 
-  return { entry, card, lorebook, portraitCast };
+  return { entry, card, lorebook, portraitCast, starters };
 }
 
 export function isScenarioCard(card: ImportedCharacterCard | null): boolean {

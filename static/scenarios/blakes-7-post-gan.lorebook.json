@@ -9,7 +9,7 @@
       "mullet": {
         "kind": "scenario",
         "scenario_id": "blakes-7-post-gan",
-        "scenario_version": "1.0.7",
+        "scenario_version": "1.1.0",
         "canon_gate": "Immediately after Pressure Point",
         "canon_through": "Pressure Point",
         "spoiler_policy": "Later events are neither known nor inevitable.",
@@ -39,6 +39,61 @@
                   "width": 400,
                   "height": 600,
                   "aspect_ratio": "2:3"
+                }
+              }
+            },
+            {
+              "id": "cally",
+              "display_name": "Cally",
+              "aliases": ["Cally", "Cally of Auron", "Auron rebel"],
+              "visual_profile": {
+                "subject": "Jan Chappell portraying Cally in the 1979 BBC television series Blake's 7, a woman in her early thirties with an angular oval face, large grey-green eyes, defined cheekbones, and short softly curled chestnut-brown hair",
+                "attire": "Cally's red and cream Auron resistance tunic with broad asymmetric cream panels and her black teleport bracelet",
+                "setting": "the Liberator flight deck with cream geometric walls, glowing colored control panels, and restrained 1970s BBC retrofuturist production design",
+                "seed": 19790320,
+                "expression_prompts": {
+                  "grief": "Use the supplied canonical Cally reference as the identity source. Preserve the exact same woman, facial structure, eyes, nose, mouth, age, short softly curled chestnut hair, red-and-cream Auron tunic, and black teleport bracelet. Create a photorealistic head-and-chest portrait of Jan Chappell portraying Cally in the 1979 BBC television series Blake's 7. Her expression shows contained grief and alert compassion, without tears or melodrama. Place her on the Liberator flight deck with cream geometric walls and restrained 1970s BBC retrofuturist controls. Preserve her identity; do not substitute another woman. No text, signature, watermark, modern zipper, or contemporary clothing."
+                },
+                "model_template": "qwen-image-edit-2511-reference-v1",
+                "reference_image": {
+                  "name": "cally-v2.jpg",
+                  "subfolder": "mullet/identity",
+                  "type": "input",
+                  "sha256": "8c275a072c451b126393b71d99c72ab778c647818842f13eb6db2a42f493a928",
+                  "width": 400,
+                  "height": 600,
+                  "aspect_ratio": "2:3",
+                  "source_page": "https://www.autographica.co.uk/collections/blakes-7/products/jan-chappell-jenna-in-blakes-7-hand-signed-10-x-8-photo",
+                  "source_url": "https://www.autographica.co.uk/cdn/shop/files/CCF_000138_2048x.jpg?v=1700241525",
+                  "source_crop": "1000x1500+300+0 from 1551x1943, resized to 400x600"
+                }
+              }
+            },
+            {
+              "id": "servalan",
+              "display_name": "Servalan",
+              "aliases": ["Servalan", "Supreme Commander Servalan", "Supreme Commander"],
+              "visual_profile": {
+                "subject": "Jacqueline Pearce portraying Supreme Commander Servalan in the 1979 BBC television series Blake's 7, a woman in her mid-thirties with a long oval face, very large dark eyes, arched brows, sculpted cheekbones, red lips, and extremely short close-cropped black hair",
+                "attire": "Servalan's dramatic black feathered formal command gown with a black sunburst necklace and silver earrings",
+                "setting": "a pale Federation command chamber with severe geometric walls and restrained 1970s BBC retrofuturist production design",
+                "seed": 19790306,
+                "expression_prompts": {
+                  "amusement": "Use the supplied canonical Servalan reference as the identity source. Preserve the exact same woman, facial structure, enormous dark eyes, arched brows, nose, mouth, age, close-cropped black hair, dramatic eye makeup, black feathered command gown, sunburst necklace, and silver earrings. Create a photorealistic head-and-chest portrait of Jacqueline Pearce portraying Supreme Commander Servalan in the 1979 BBC television series Blake's 7. Her expression is composed, calculating amusement: a restrained smile that does not soften her gaze. Place her in a pale Federation command chamber with restrained 1970s BBC retrofuturist design. Preserve her identity; do not substitute another woman. No text, signature, watermark, or contemporary clothing.",
+                  "neutral": "Use the supplied canonical Servalan reference as the identity source. Preserve the exact same woman, facial structure, enormous dark eyes, arched brows, nose, mouth, age, close-cropped black hair, dramatic eye makeup, black feathered command gown, sunburst necklace, and silver earrings. Create a photorealistic head-and-chest portrait of Jacqueline Pearce portraying Supreme Commander Servalan in the 1979 BBC television series Blake's 7. Her expression is poised, unreadable, and controlled. Place her in a pale Federation command chamber with restrained 1970s BBC retrofuturist design. Preserve her identity; do not substitute another woman. No text, signature, watermark, or contemporary clothing."
+                },
+                "model_template": "qwen-image-edit-2511-reference-v1",
+                "reference_image": {
+                  "name": "servalan-v1.png",
+                  "subfolder": "mullet/identity",
+                  "type": "input",
+                  "sha256": "29f6a3877d07140e93bb72e0d7db571572d2fcbaaff368dc851a0b2130674057",
+                  "width": 400,
+                  "height": 600,
+                  "aspect_ratio": "2:3",
+                  "source_page": "https://www.overyourhead.co.uk/2018/09/jacqueline-pearce-rip-best-remembered.html",
+                  "source_url": "https://4.bp.blogspot.com/-IKvHxK_v4A8/W453pSvWM7I/AAAAAAAJaBo/CO28OK4vdO4mO5ZtDCTTCVFZPLEFvivDgCLcBGAs/s1600/Blakes7.png",
+                  "source_crop": "300x450+282+0 from 800x450, resized to 400x600"
                 }
               }
             }
@@ -123,8 +178,7 @@
         "extensions": {
           "mullet": {
             "kind": "character",
-            "timeline": "post-pressure-point",
-            "character_id": "jenna-stannis"
+            "timeline": "post-pressure-point"
           }
         }
       },
