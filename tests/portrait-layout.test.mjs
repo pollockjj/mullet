@@ -39,7 +39,12 @@ test('portrait motion defaults to the bound LTX template and persists a real add
   assert.match(portraitVideoSource, /export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;/);
   assert.match(pageSource, /let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;/);
   assert.match(pageSource, /let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;/);
-  assert.match(pageSource, /portraitVideoModelTemplateStorageKey = 'mullet\.portrait-video-model-template\.v1'/);
+  assert.match(pageSource, /portraitVideoModelTemplateStorageKey = 'mullet\.portrait-video-model-template\.v2'/);
+  assert.match(pageSource, /portraitVideoModeStorageKey = 'mullet\.portrait-video-mode\.v5'/);
+  assert.match(pageSource, /portraitVideoDurationStorageKey = 'mullet\.portrait-video-duration\.v5'/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-video-model-template\.v1/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-video-mode\.v4/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-video-duration\.v4/);
   assert.match(portraitMotionPanel, /bind:value=\{portraitVideoModelTemplate\}/);
   assert.match(portraitMotionPanel, /on:change=\{persistPortraitVideoModelTemplate\}/);
   assert.match(portraitMotionPanel, /aria-label="Portrait video model"/);

@@ -453,9 +453,9 @@
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v4';
   const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v2';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
-  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v1';
-  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
-  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v4';
+  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v2';
+  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v5';
+  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v5';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
