@@ -8,6 +8,7 @@ import {
   PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
   PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+  PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_REQUEST_SPEC,
   PORTRAIT_TEMPLATE_ID,
   PORTRAIT_TEMPLATES,
@@ -193,12 +194,15 @@ test('Qwen center-crops the canonical 400x600 reference before all conditioning 
 });
 
 test('compiles the FLUX.2 Klein 9B Distilled INT8 ConvRot reference workflow additively', () => {
+  assert.equal(PORTRAIT_REFERENCE_TEMPLATE_ID, PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID);
   const graph = buildFlux2Klein9BReferencePortraitWorkflow(referenceRequest({
     modelTemplate: PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
   }), 73);
   assert.equal(graph['1'].inputs.unet_name, 'flux-2-klein-9b-kv-int8-convrot.safetensors');
   assert.equal(graph['1'].inputs.unet_name, FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.clip_name, 'qwen3vl_8b_fp8_scaled.safetensors');
   assert.equal(graph['2'].inputs.type, 'flux2');
+  assert.equal(graph['3'].inputs.vae_name, 'flux2-vae.safetensors');
   assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   assert.equal(graph['9'].class_type, 'ReferenceLatent');
   assert.deepEqual(graph['11'].inputs, { width: 576, height: 1024, batch_size: 1 });

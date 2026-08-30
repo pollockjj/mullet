@@ -451,7 +451,7 @@
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v4';
-  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v1';
+  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v2';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v1';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v4';
@@ -4139,18 +4139,23 @@
             <span>{expressionsEnabled ? 'On' : 'Off'}</span>
           </label>
         </div>
-        {#if expressionResult}
-          <small class:stale={!expressionCurrent}>{expressionCurrent ? 'Current response' : 'Stale · run again'} · {expressionResult.model}</small>
-        {:else}
-          <small>Classifies the latest assistant response on an isolated model branch.</small>
-        {/if}
+        <div class="expression-meta">
+          {#if expressionResult}
+            <small class:stale={!expressionCurrent}>{expressionCurrent ? 'Current response' : 'Stale · updating'} · {expressionResult.model}</small>
+          {:else}
+            <small>{expressionsEnabled ? 'Waiting for the latest assistant response.' : 'Classifies the latest assistant response on an isolated model branch.'}</small>
+          {/if}
+          {#if expressionsEnabled}
+            <button
+              class="expression-redetermine"
+              on:click={() => void determineExpression()}
+              disabled={streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !expressionSnapshot}
+            >
+              {sidecarBusy ? 'Determining…' : 'Redetermine expression'}
+            </button>
+          {/if}
+        </div>
         {#if sidecarError}<div class="sidecar-error" role="alert">{sidecarError}</div>{/if}
-        <button
-          on:click={() => void determineExpression()}
-          disabled={streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !expressionSnapshot}
-        >
-          {sidecarBusy ? 'Determining…' : 'Determine expression'}
-        </button>
       </section>
       <section class="portrait-panel" aria-label="Generated expression portrait">
         <div class="portrait-heading">
@@ -4825,11 +4830,12 @@
   .expression-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .expression-heading > div { min-width: 0; display: grid; gap: 4px; }
   .expression-heading strong { overflow: hidden; color: #d7d0c7; font-size: 12px; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
-  .expression-panel > small { color: #758c78; font-size: 9px; line-height: 1.4; }
-  .expression-panel > small.stale { color: #9b8066; }
-  .expression-panel > button { padding: 8px; border: 1px solid #49614d; border-radius: 8px; color: #b6d3ba; background: #19221b; font-size: 10px; font-weight: 700; cursor: pointer; }
-  .expression-panel > button:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
-  .expression-panel > button:disabled { opacity: .4; cursor: default; }
+  .expression-meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+  .expression-meta > small { min-width: 0; flex: 1 1 auto; color: #758c78; font-size: 9px; line-height: 1.4; }
+  .expression-meta > small.stale { color: #9b8066; }
+  .expression-redetermine { flex: 0 0 auto; width: auto; padding: 3px 6px; border: 1px solid #465348; border-radius: 999px; color: #9fbaa4; background: #171d18; font-size: 8px; font-weight: 700; line-height: 1.2; cursor: pointer; }
+  .expression-redetermine:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
+  .expression-redetermine:disabled { opacity: .4; cursor: default; }
   .sidecar-error { padding: 7px 8px; border: 1px solid #6e3c34; border-radius: 7px; color: #e6b9ae; background: #2c1b18; font-size: 9px; line-height: 1.4; }
   .portrait-panel { display: grid; gap: 8px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
   .portrait-heading { display: flex; align-items: end; justify-content: space-between; gap: 8px; }

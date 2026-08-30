@@ -147,7 +147,7 @@ export type PortraitVideoTemplate = (typeof PORTRAIT_VIDEO_TEMPLATES)[number];
 
 export const FLUX2_KLEIN_9B_PORTRAIT_END_FRAME_TEMPLATE = Object.freeze({
   id: PORTRAIT_END_FRAME_TEMPLATE_ID,
-  label: 'FLUX.2 Klein 9B Distilled',
+  label: 'FLUX.2 Klein 9B KV INT8 ConvRot',
   modelFamily: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFamily,
   modelFiles: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.modelFiles,
   requiredNodes: FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE.requiredNodes,

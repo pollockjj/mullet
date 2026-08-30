@@ -22,7 +22,7 @@ test('generated expression stage is fixed 9:16 at the 0.5 MP default with no asp
 });
 
 test('portrait image models are one additive persisted inventory, not a replacement slot', () => {
-  assert.match(pageSource, /portraitModelTemplateStorageKey = 'mullet\.portrait-model-template\.v1'/);
+  assert.match(pageSource, /portraitModelTemplateStorageKey = 'mullet\.portrait-model-template\.v2'/);
   assert.match(pageSource, /bind:value=\{portraitModelTemplate\}/);
   assert.match(pageSource, /aria-label="Portrait image model"/);
   assert.match(pageSource, /\{#each portraitCapabilities\.templates as capability\}/);

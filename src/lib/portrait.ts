@@ -11,8 +11,8 @@ export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
 export const PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
 export const PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID = 'flux2-klein-9b-distilled-reference-v1' as const;
 export const PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID = 'mage-flow-edit-turbo-reference-v1' as const;
-// Kept as the canonical Qwen ID alias for scenario-card compatibility.
-export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
+// Default reference editor. Qwen and Mage remain additive selectable alternatives.
+export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
@@ -90,13 +90,13 @@ export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
 
 export const FLUX2_KLEIN_9B_EDIT_REFERENCE_TEMPLATE = Object.freeze({
   id: PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID,
-  label: 'FLUX.2 Klein 9B Distilled · identity reference',
+  label: 'FLUX.2 Klein 9B KV INT8 ConvRot · identity reference',
   modelFamily: 'flux2-klein',
   promptGuide: 'preserve the supplied canonical identity exactly; edit only expression, attire, setting, and fixed head-and-chest framing; photorealistic fiction still; no text or watermark',
   modelFiles: {
     unet: 'flux-2-klein-9b-kv-int8-convrot.safetensors',
-    clip: 'qwen_3_8b_fp8mixed.safetensors',
-    vae: 'full_encoder_small_decoder.safetensors'
+    clip: 'qwen3vl_8b_fp8_scaled.safetensors',
+    vae: 'flux2-vae.safetensors'
   },
   requiredNodes: [
     'UNETLoader', 'CLIPLoader', 'VAELoader', 'LoadImage', 'ImageScaleToTotalPixels',
