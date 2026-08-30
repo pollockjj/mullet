@@ -1,0 +1,104 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "mage_flow_edit_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_4b_bf16.safetensors",
+      "type": "mage",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "mage_flow_vae_bf16.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "mullet/identity/cally-v1.jpg"
+    },
+    "is_changed": [
+      "8d61eb6b5218cb76c259f41d848cbc0953500bc133de807e9464db013a0fc962"
+    ]
+  },
+  "5": {
+    "class_type": "TextEncodeMageFlowEdit",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "prompt": "Keep the exact same person, facial structure, eyes, nose, mouth, age, and hairstyle from the supplied canonical reference. Reframe as a head-and-chest portrait of Jan Chappell portraying Cally in the 1979 BBC television series Blake Seven, fear facial expression, wearing a rust-red and deep maroon Liberator tunic, in the Liberator flight deck, preserve the supplied canonical identity exactly; edit only expression, attire, setting, and fixed head-and-chest framing; photorealistic fiction still; no text or watermark. Change only the expression, attire, and setting requested. Preserve identity; do not substitute another person or add modern clothing details.",
+      "negative_prompt": "",
+      "vae": [
+        "3",
+        0
+      ],
+      "images.image_1": [
+        "4",
+        0
+      ],
+      "width": 768,
+      "height": 1152,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "5",
+        1
+      ],
+      "latent_image": [
+        "5",
+        2
+      ],
+      "seed": 19790213,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ],
+      "filename_prefix": "mullet/portrait-reference"
+    }
+  }
+}
