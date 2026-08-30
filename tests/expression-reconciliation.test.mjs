@@ -28,3 +28,30 @@ test('each automatic expression stage receives at most one delayed retry per fai
   assert.match(pageSource, /queuePortraitVideoAutomaticRetry\(key\);/);
   assert.match(pageSource, /automaticExpressionRetryDelayMs = 1_500/);
 });
+
+test('each delayed retry directly wakes its reconciliation scheduler with live state', () => {
+  assert.match(
+    pageSource,
+    /if \(lastExpressionAttemptKey !== key\) return;\s+lastExpressionAttemptKey = '';\s+scheduleExpressionReconciliation\(/
+  );
+  assert.match(
+    pageSource,
+    /if \(lastPortraitAttemptKey !== key\) return;\s+lastPortraitAttemptKey = '';\s+schedulePortraitReconciliation\(/
+  );
+  assert.match(
+    pageSource,
+    /if \(lastPortraitVideoAttemptKey !== key\) return;\s+lastPortraitVideoAttemptKey = '';\s+schedulePortraitVideoReconciliation\(/
+  );
+});
+
+test('static expression portraits use locked restore, commit, rollback, and clear operations', () => {
+  assert.match(
+    pageSource,
+    /await restoreStoredPortrait\(\{\s+exclusive: runStoredPortraitExclusive,[\s\S]*?accepts: \(portrait\) => portrait\.conversationId === restoringConversationId,/
+  );
+  assert.match(
+    pageSource,
+    /const committed = await commitStoredPortrait\(stored, \{\s+exclusive: runStoredPortraitExclusive,\s+save: saveStoredPortrait,\s+isCurrent,\s+rollback: rollbackStoredPortraitWrite,/
+  );
+  assert.match(pageSource, /await runStoredPortraitExclusive\(clearStoredPortrait\);/);
+});

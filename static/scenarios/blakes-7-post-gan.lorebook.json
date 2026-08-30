@@ -9,7 +9,7 @@
       "mullet": {
         "kind": "scenario",
         "scenario_id": "blakes-7-post-gan",
-        "scenario_version": "1.0.6",
+        "scenario_version": "1.0.7",
         "canon_gate": "Immediately after Pressure Point",
         "canon_through": "Pressure Point",
         "spoiler_policy": "Later events are neither known nor inevitable.",
@@ -30,7 +30,7 @@
                 "expression_prompts": {
                   "fear": "Use the supplied canonical Jenna Stannis reference as the identity source. Preserve the exact same woman, facial structure, eyes, nose, mouth, age, voluminous feathered blonde hairstyle, and burgundy-and-silver leather costume. Create a photorealistic head-and-chest portrait of Sally Knyvette portraying Jenna Stannis in the 1979 BBC television series Blake's 7. She has a fearful, alert facial expression. Place her on the Liberator flight deck with cream geometric walls and restrained 1970s BBC retrofuturist controls. Preserve her identity; do not substitute another woman. No text, watermark, modern zipper, or contemporary clothing."
                 },
-                "model_template": "flux2-klein-9b-distilled-reference-v1",
+                "model_template": "qwen-image-edit-2511-reference-v1",
                 "reference_image": {
                   "name": "jenna-stannis-v1.jpg",
                   "subfolder": "mullet/identity",

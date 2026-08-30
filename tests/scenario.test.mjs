@@ -34,7 +34,7 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   const { catalog, entry } = bundledScenario();
   assert.equal(catalog.spec, 'mullet_scenario_catalog_v1');
   assert.equal(entry.id, 'blakes-7-post-gan');
-  assert.equal(entry.version, '1.0.6');
+  assert.equal(entry.version, '1.0.7');
 
   const duplicate = asset('catalog.json');
   duplicate.scenarios.push(structuredClone(duplicate.scenarios[0]));
@@ -74,7 +74,7 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
     assert.ok(cardRaw.data[field].every((value) => typeof value === 'string'), field);
   });
   assert.equal(typeof cardRaw.data.extensions, 'object');
-  assert.equal(cardRaw.data.character_version, '0.1.5');
+  assert.equal(cardRaw.data.character_version, '0.1.6');
   assert.equal(cardRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(lorebookRaw.data.extensions.mullet.user_definition, 'female_she_her');
   assert.equal(packaged.portraitCast.defaultProfileId, 'jenna-stannis');
@@ -88,7 +88,7 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   assert.equal(portraitProfile.seed, 19790213);
   assert.match(portraitProfile.expressionPrompts.fear, /fearful, alert facial expression/);
   assert.match(portraitProfile.expressionPrompts.fear, /No text, watermark, modern zipper, or contemporary clothing\.$/);
-  assert.equal(portraitProfile.modelTemplate, PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID);
+  assert.equal(portraitProfile.modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
   assert.equal(portraitProfile.referenceImage.name, 'jenna-stannis-v1.jpg');
   assert.equal(portraitProfile.referenceImage.sha256, 'c9fb45865a38b8ea71d21b539e74cd9e82fdfc75c2956a40651034ef356970d8');
   assert.equal(portraitProfile.referenceImage.width, 400);

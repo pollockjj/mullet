@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  STORED_PORTRAIT_ENVELOPE_SPEC,
   STORED_PORTRAIT_SPEC,
   commitStoredPortrait,
   loadStoredPortrait,
   normalizeStoredPortrait,
+  restoreStoredPortrait,
+  unwrapStoredPortrait,
   verifyStoredPortrait
 } from '../src/lib/portrait-storage.ts';
 import {
@@ -80,6 +83,24 @@ test('rejects a stored portrait whose PNG IHDR contradicts its fixed-portrait me
   );
 });
 
+test('unwraps raw v5 portraits and writer-owned envelopes while rejecting malformed ownership', () => {
+  const portrait = stored();
+  assert.deepEqual(unwrapStoredPortrait(portrait), portrait);
+  assert.deepEqual(unwrapStoredPortrait({
+    spec: STORED_PORTRAIT_ENVELOPE_SPEC,
+    writeId: 'writer-a',
+    portrait
+  }), portrait);
+  assert.throws(
+    () => unwrapStoredPortrait({ spec: STORED_PORTRAIT_ENVELOPE_SPEC, writeId: '', portrait }),
+    /envelope is invalid/
+  );
+  assert.throws(
+    () => unwrapStoredPortrait({ spec: STORED_PORTRAIT_ENVELOPE_SPEC, writeId: 'writer-a' }),
+    /envelope is invalid/
+  );
+});
+
 test('ignores every legacy portrait envelope, including the superseded 2:3 v4 state', async () => {
   const originalIndexedDb = globalThis.indexedDB;
   try {
@@ -133,21 +154,130 @@ test('ignores every legacy portrait envelope, including the superseded 2:3 v4 st
   }
 });
 
-test('discards a portrait when its conversation becomes stale during the storage write', async () => {
+test('rolls back a portrait when its conversation becomes stale during the storage write', async () => {
   let resolveSave;
   const saveBlocked = new Promise((resolve) => { resolveSave = resolve; });
   let current = true;
   let installed = false;
-  let discardedPromptId = '';
+  let rolledBack = '';
   const committing = commitStoredPortrait(stored(), {
-    save: async () => saveBlocked,
+    exclusive: async (operation) => operation(),
+    save: async () => {
+      await saveBlocked;
+      return { writeId: 'writer-a', previousRaw: null };
+    },
     isCurrent: () => current,
-    discard: async (portrait) => { discardedPromptId = portrait.promptId; },
+    rollback: async (receipt) => { rolledBack = receipt.writeId; },
     install: () => { installed = true; }
   });
   current = false;
   resolveSave();
   assert.equal(await committing, false);
   assert.equal(installed, false);
-  assert.equal(discardedPromptId, '11111111-1111-4111-8111-111111111111');
+  assert.equal(rolledBack, 'writer-a');
+});
+
+test('serializes writers so a later stale portrait restores the valid prior envelope', async () => {
+  let persisted = null;
+  let currentA = true;
+  let installedB = false;
+  let tail = Promise.resolve();
+  const exclusive = async (operation) => {
+    const previous = tail;
+    let release;
+    tail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  };
+  const save = async (portrait, writeId) => {
+    const previousRaw = persisted;
+    persisted = { spec: STORED_PORTRAIT_ENVELOPE_SPEC, writeId, portrait };
+    return { writeId, previousRaw };
+  };
+  const rollback = async (receipt) => {
+    if (persisted?.writeId === receipt.writeId) persisted = receipt.previousRaw;
+  };
+
+  await commitStoredPortrait(stored({ promptId: '22222222-2222-4222-8222-222222222222' }), {
+    exclusive,
+    save: (portrait) => save(portrait, 'writer-b'),
+    isCurrent: () => true,
+    rollback,
+    install: () => { installedB = true; }
+  });
+  const staleA = commitStoredPortrait(stored(), {
+    exclusive,
+    save: async (portrait) => {
+      const receipt = await save(portrait, 'writer-a');
+      currentA = false;
+      return receipt;
+    },
+    isCurrent: () => currentA,
+    rollback,
+    install: () => assert.fail('stale portrait installed')
+  });
+
+  assert.equal(await staleA, false);
+  assert.equal(installedB, true);
+  assert.equal(persisted?.writeId, 'writer-b');
+  assert.equal(persisted?.portrait.promptId, '22222222-2222-4222-8222-222222222222');
+});
+
+test('checks currentness before loading and installs accepted restores inside the lock', async () => {
+  let current = false;
+  let loaded = false;
+  const stale = await restoreStoredPortrait({
+    exclusive: async (operation) => operation(),
+    load: async () => { loaded = true; return stored(); },
+    isCurrent: () => current,
+    accepts: () => true,
+    install: () => assert.fail('stale restore installed')
+  });
+  assert.equal(stale, null);
+  assert.equal(loaded, false);
+
+  let lockHeld = false;
+  let installedWhileLocked = false;
+  current = true;
+  const restored = await restoreStoredPortrait({
+    exclusive: async (operation) => {
+      lockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        lockHeld = false;
+      }
+    },
+    load: async () => stored(),
+    isCurrent: () => current,
+    accepts: () => true,
+    install: async () => {
+      await Promise.resolve();
+      installedWhileLocked = lockHeld;
+    }
+  });
+  assert.equal(restored?.promptId, '11111111-1111-4111-8111-111111111111');
+  assert.equal(installedWhileLocked, true);
+});
+
+test('does not install a valid portrait after the active request changes during restore', async () => {
+  let selectedRequestKey = 'opaque-settings-fingerprint';
+  let installed = false;
+  const restored = await restoreStoredPortrait({
+    exclusive: async (operation) => operation(),
+    load: async () => {
+      const portrait = stored();
+      selectedRequestKey = 'new-settings-fingerprint';
+      return portrait;
+    },
+    isCurrent: () => selectedRequestKey === 'opaque-settings-fingerprint',
+    accepts: (portrait) => portrait.requestKey === selectedRequestKey,
+    install: () => { installed = true; }
+  });
+  assert.equal(restored, null);
+  assert.equal(installed, false);
 });

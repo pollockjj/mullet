@@ -20,6 +20,7 @@ import {
   buildPortraitRequest,
   buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
+  migratePortraitModelTemplateSelection,
   normalizePortraitCapabilities,
   normalizePortraitRequest,
   portraitDimensions,
@@ -120,6 +121,25 @@ test('normalizes and retains all four additive model capabilities, including una
   assert.equal(capabilities.megapixels[0], 0.5);
 });
 
+test('migrates only the rejected saved FLUX default to Qwen while preserving every other explicit selection', () => {
+  assert.equal(
+    migratePortraitModelTemplateSelection(null, PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID),
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+  );
+  for (const selection of [
+    PORTRAIT_TEMPLATE_ID,
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID
+  ]) {
+    assert.equal(migratePortraitModelTemplateSelection(null, selection), selection);
+  }
+  assert.equal(
+    migratePortraitModelTemplateSelection(PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID),
+    PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
+  );
+  assert.equal(migratePortraitModelTemplateSelection('forged', 'also-forged'), null);
+});
+
 test('binds a portrait request only to an expression result fingerprint', () => {
   const built = request();
   assert.equal(built.spec, PORTRAIT_REQUEST_SPEC);
@@ -157,7 +177,8 @@ test('compiles the Z-Image graph at the fixed expression frame and inserts only 
   assert.deepEqual(withLora['6'].inputs.model, ['11', 0]);
 });
 
-test('Qwen center-crops the canonical 400x600 reference before all conditioning and never stretches decoded output', () => {
+test('defaults to revision-matched Qwen Edit 2511 Lightning at four steps without stretching the identity reference', () => {
+  assert.equal(PORTRAIT_REFERENCE_TEMPLATE_ID, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
   const built = referenceRequest();
   assert.equal(built.modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
   assert.equal(built.source.characterId, 'jenna-stannis');
@@ -185,8 +206,15 @@ test('Qwen center-crops the canonical 400x600 reference before all conditioning 
   assert.deepEqual(graph['9'].inputs.image1, ['5', 0]);
   assert.deepEqual(graph['10'].inputs.image1, ['5', 0]);
   assert.deepEqual(graph['11'].inputs.pixels, ['5', 0]);
+  assert.equal(graph['6'].inputs.shift, 3.1);
+  assert.equal(graph['8'].inputs.lora_name, 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors');
+  assert.equal(graph['8'].inputs.strength_model, 1);
   assert.equal(graph['12'].inputs.seed, 19790213);
   assert.equal(graph['12'].inputs.steps, 4);
+  assert.equal(graph['12'].inputs.cfg, 1);
+  assert.equal(graph['12'].inputs.sampler_name, 'euler');
+  assert.equal(graph['12'].inputs.scheduler, 'simple');
+  assert.equal(graph['12'].inputs.denoise, 1);
   assert.deepEqual(graph['14'].inputs.images, ['13', 0]);
   assert.equal(graph['15'], undefined);
   assert.equal(JSON.stringify(graph).includes('"crop":"disabled"'), false);
@@ -194,7 +222,6 @@ test('Qwen center-crops the canonical 400x600 reference before all conditioning 
 });
 
 test('compiles the FLUX.2 Klein 9B Distilled INT8 ConvRot reference workflow additively', () => {
-  assert.equal(PORTRAIT_REFERENCE_TEMPLATE_ID, PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID);
   const graph = buildFlux2Klein9BReferencePortraitWorkflow(referenceRequest({
     modelTemplate: PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
   }), 73);

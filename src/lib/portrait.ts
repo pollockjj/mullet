@@ -11,8 +11,8 @@ export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
 export const PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
 export const PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID = 'flux2-klein-9b-distilled-reference-v1' as const;
 export const PORTRAIT_MAGE_REFERENCE_TEMPLATE_ID = 'mage-flow-edit-turbo-reference-v1' as const;
-// Default reference editor. Qwen and Mage remain additive selectable alternatives.
-export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID;
+// Default reference editor. FLUX.2 Klein and Mage remain additive selectable alternatives.
+export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
@@ -144,6 +144,17 @@ export type PortraitTemplate = (typeof PORTRAIT_TEMPLATES)[number];
 
 export function isPortraitModelTemplate(value: unknown): value is PortraitModelTemplate {
   return typeof value === 'string' && PORTRAIT_TEMPLATES.some((template) => template.id === value);
+}
+
+export function migratePortraitModelTemplateSelection(
+  current: unknown,
+  previous: unknown
+): PortraitModelTemplate | null {
+  if (isPortraitModelTemplate(current)) return current;
+  if (!isPortraitModelTemplate(previous)) return null;
+  return previous === PORTRAIT_FLUX2_REFERENCE_TEMPLATE_ID
+    ? PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+    : previous;
 }
 
 export function isPortraitReferenceTemplateId(value: unknown): value is PortraitReferenceModelTemplate {

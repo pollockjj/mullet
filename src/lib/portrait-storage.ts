@@ -9,6 +9,7 @@ import {
 } from './portrait.ts';
 
 export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v5' as const;
+export const STORED_PORTRAIT_ENVELOPE_SPEC = 'mullet_stored_portrait_envelope_v5' as const;
 
 export type StoredPortrait = {
   spec: typeof STORED_PORTRAIT_SPEC;
@@ -24,11 +25,33 @@ export type StoredPortrait = {
   image: Blob;
 };
 
+type StoredPortraitEnvelope = {
+  spec: typeof STORED_PORTRAIT_ENVELOPE_SPEC;
+  writeId: string;
+  portrait: StoredPortrait;
+};
+
+export type PortraitWriteReceipt = {
+  writeId: string;
+  previousRaw: unknown | null;
+};
+
+export type PortraitExclusiveRunner = <T>(operation: () => Promise<T>) => Promise<T>;
+
 export type PortraitCommitOperations = {
-  save: (portrait: StoredPortrait) => Promise<void>;
+  save: (portrait: StoredPortrait) => Promise<PortraitWriteReceipt>;
   isCurrent: () => boolean;
-  discard: (portrait: StoredPortrait) => Promise<void>;
-  install: (portrait: StoredPortrait) => void;
+  rollback: (receipt: PortraitWriteReceipt) => Promise<void>;
+  install: (portrait: StoredPortrait) => void | Promise<void>;
+  exclusive: PortraitExclusiveRunner;
+};
+
+export type PortraitRestoreOperations = {
+  load: () => Promise<unknown | null>;
+  isCurrent: () => boolean;
+  accepts: (portrait: StoredPortrait) => boolean;
+  install: (portrait: StoredPortrait) => void | Promise<void>;
+  exclusive: PortraitExclusiveRunner;
 };
 
 const DATABASE_NAME = 'mullet-portraits';
@@ -93,6 +116,27 @@ export async function verifyStoredPortrait(value: unknown): Promise<StoredPortra
   return normalized;
 }
 
+export function unwrapStoredPortrait(value: unknown): unknown | null {
+  if (value === null) return null;
+  if (isRecord(value) && (
+    value.spec === 'mullet_stored_portrait_v1'
+    || value.spec === 'mullet_stored_portrait_v2'
+    || value.spec === 'mullet_stored_portrait_v3'
+    || value.spec === 'mullet_stored_portrait_v4'
+  )) return null;
+  if (!isRecord(value) || value.spec !== STORED_PORTRAIT_ENVELOPE_SPEC) return value;
+  if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('portrait' in value)) {
+    throw new Error('stored portrait envelope is invalid');
+  }
+  return value.portrait;
+}
+
+export async function runStoredPortraitExclusive<T>(operation: () => Promise<T>): Promise<T> {
+  const lockManager = globalThis.navigator?.locks;
+  if (!lockManager) throw new Error('browser Web Locks are required for portrait persistence');
+  return lockManager.request('mullet-portrait-state', { mode: 'exclusive' }, operation);
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, 1);
@@ -114,15 +158,7 @@ export async function loadStoredPortrait(): Promise<unknown | null> {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(ACTIVE_PORTRAIT_KEY);
-      request.onsuccess = () => {
-        const value = request.result ?? null;
-        resolve(isRecord(value) && (
-          value.spec === 'mullet_stored_portrait_v1'
-          || value.spec === 'mullet_stored_portrait_v2'
-          || value.spec === 'mullet_stored_portrait_v3'
-          || value.spec === 'mullet_stored_portrait_v4'
-        ) ? null : value);
-      };
+      request.onsuccess = () => resolve(unwrapStoredPortrait(request.result ?? null));
       request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait read aborted'));
     });
@@ -131,16 +167,59 @@ export async function loadStoredPortrait(): Promise<unknown | null> {
   }
 }
 
-export async function saveStoredPortrait(portrait: StoredPortrait): Promise<void> {
+export async function saveStoredPortrait(portrait: StoredPortrait): Promise<PortraitWriteReceipt> {
   const normalized = await verifyStoredPortrait(portrait);
+  const writeId = globalThis.crypto.randomUUID();
+  const envelope: StoredPortraitEnvelope = {
+    spec: STORED_PORTRAIT_ENVELOPE_SPEC,
+    writeId,
+    portrait: normalized
+  };
+  const database = await openDatabase();
+  let previousRaw: unknown | null = null;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(ACTIVE_PORTRAIT_KEY);
+      request.onsuccess = () => {
+        previousRaw = request.result ?? null;
+        store.put(envelope, ACTIVE_PORTRAIT_KEY);
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait previous-state read failed'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB portrait write failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait write aborted'));
+    });
+    return { writeId, previousRaw };
+  } finally {
+    database.close();
+  }
+}
+
+export async function rollbackStoredPortraitWrite(receipt: PortraitWriteReceipt): Promise<void> {
+  if (!receipt.writeId || receipt.writeId.length > 200) throw new Error('portrait write ID is invalid');
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
-      transaction.objectStore(STORE_NAME).put(normalized, ACTIVE_PORTRAIT_KEY);
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(ACTIVE_PORTRAIT_KEY);
+      request.onsuccess = () => {
+        const candidate = request.result;
+        if (
+          isRecord(candidate)
+          && candidate.spec === STORED_PORTRAIT_ENVELOPE_SPEC
+          && candidate.writeId === receipt.writeId
+        ) {
+          if (receipt.previousRaw === null) store.delete(ACTIVE_PORTRAIT_KEY);
+          else store.put(receipt.previousRaw, ACTIVE_PORTRAIT_KEY);
+        }
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait rollback read failed'));
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB portrait write failed'));
-      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait write aborted'));
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB portrait rollback failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait rollback aborted'));
     });
   } finally {
     database.close();
@@ -162,38 +241,33 @@ export async function clearStoredPortrait(): Promise<void> {
   }
 }
 
-export async function clearStoredPortraitIfPromptId(promptId: string): Promise<void> {
-  if (!/^[0-9a-f-]{36}$/i.test(promptId)) throw new Error('portrait prompt ID is invalid');
-  const database = await openDatabase();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(ACTIVE_PORTRAIT_KEY);
-      request.onsuccess = () => {
-        if (isRecord(request.result) && request.result.promptId === promptId) store.delete(ACTIVE_PORTRAIT_KEY);
-      };
-      request.onerror = () => reject(request.error ?? new Error('IndexedDB portrait conditional read failed'));
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB portrait conditional delete failed'));
-      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB portrait conditional delete aborted'));
-    });
-  } finally {
-    database.close();
-  }
-}
-
 export async function commitStoredPortrait(
   portrait: StoredPortrait,
   operations: PortraitCommitOperations
 ): Promise<boolean> {
-  const normalized = normalizeStoredPortrait(portrait);
-  if (!operations.isCurrent()) return false;
-  await operations.save(normalized);
-  if (!operations.isCurrent()) {
-    await operations.discard(normalized);
-    return false;
-  }
-  operations.install(normalized);
-  return true;
+  return operations.exclusive(async () => {
+    const normalized = normalizeStoredPortrait(portrait);
+    if (!operations.isCurrent()) return false;
+    const receipt = await operations.save(normalized);
+    if (!operations.isCurrent()) {
+      await operations.rollback(receipt);
+      return false;
+    }
+    await operations.install(normalized);
+    return true;
+  });
+}
+
+export async function restoreStoredPortrait(
+  operations: PortraitRestoreOperations
+): Promise<StoredPortrait | null> {
+  return operations.exclusive(async () => {
+    if (!operations.isCurrent()) return null;
+    const stored = await operations.load();
+    if (!operations.isCurrent() || stored === null) return null;
+    const verified = await verifyStoredPortrait(stored);
+    if (!operations.accepts(verified) || !operations.isCurrent()) return null;
+    await operations.install(verified);
+    return verified;
+  });
 }

@@ -135,6 +135,7 @@
     PORTRAIT_REFERENCE_TEMPLATE_ID,
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
+    migratePortraitModelTemplateSelection,
     normalizePortraitCapabilities,
     portraitModelTemplateAvailable,
     portraitRequestKey,
@@ -146,13 +147,14 @@
   } from '$lib/portrait';
   import {
     STORED_PORTRAIT_SPEC,
-    clearStoredPortraitIfPromptId,
     commitStoredPortrait,
     clearStoredPortrait,
     loadStoredPortrait,
     normalizeStoredPortrait,
+    restoreStoredPortrait,
+    rollbackStoredPortraitWrite,
+    runStoredPortraitExclusive,
     saveStoredPortrait,
-    verifyStoredPortrait,
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
@@ -459,7 +461,8 @@
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v4';
-  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v2';
+  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v3';
+  const previousPortraitModelTemplateStorageKey = 'mullet.portrait-model-template.v2';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
   const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v2';
   const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v5';
@@ -835,10 +838,18 @@
     portraitSetting = localStorage.getItem(portraitSettingStorageKey) ?? '';
     portraitAttire = localStorage.getItem(portraitAttireStorageKey) ?? '';
     portraitLora = localStorage.getItem(portraitLoraStorageKey) ?? '';
-    const savedModelTemplate = localStorage.getItem(portraitModelTemplateStorageKey);
-    portraitModelSelectionPersisted = Boolean(savedModelTemplate);
+    const currentSavedModelTemplate = localStorage.getItem(portraitModelTemplateStorageKey);
+    const previousSavedModelTemplate = localStorage.getItem(previousPortraitModelTemplateStorageKey);
+    const savedModelTemplate = migratePortraitModelTemplateSelection(
+      currentSavedModelTemplate,
+      previousSavedModelTemplate
+    );
+    if (savedModelTemplate) localStorage.setItem(portraitModelTemplateStorageKey, savedModelTemplate);
+    else localStorage.removeItem(portraitModelTemplateStorageKey);
+    localStorage.removeItem(previousPortraitModelTemplateStorageKey);
+    portraitModelSelectionPersisted = savedModelTemplate !== null;
     portraitModelTemplate = savedModelTemplate
-      ? savedModelTemplate as PortraitModelTemplate
+      ? savedModelTemplate
       : isScenarioCard(activeCard)
         ? PORTRAIT_REFERENCE_TEMPLATE_ID
         : PORTRAIT_TEMPLATE_ID;
@@ -1810,13 +1821,15 @@
   }
 
   async function restoreGeneratedPortrait() {
+    const restoringConversationId = conversationId;
     try {
-      const stored = await loadStoredPortrait();
-      if (stored) {
-        const normalized = await verifyStoredPortrait(stored);
-        if (normalized.conversationId === conversationId) await installGeneratedPortrait(normalized, true);
-        else await clearStoredPortrait();
-      }
+      await restoreStoredPortrait({
+        exclusive: runStoredPortraitExclusive,
+        load: loadStoredPortrait,
+        isCurrent: () => restoringConversationId === conversationId,
+        accepts: (portrait) => portrait.conversationId === restoringConversationId,
+        install: (portrait) => installGeneratedPortrait(portrait, true)
+      });
     } catch (cause) {
       portraitPersistenceAvailable = false;
       portraitError = cause instanceof Error ? cause.message : 'Portrait persistence failed.';
@@ -2123,7 +2136,19 @@
     if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
     portraitVideoRetryTimer = window.setTimeout(() => {
       portraitVideoRetryTimer = null;
-      if (lastPortraitVideoAttemptKey === key) lastPortraitVideoAttemptKey = '';
+      if (lastPortraitVideoAttemptKey !== key) return;
+      lastPortraitVideoAttemptKey = '';
+      schedulePortraitVideoReconciliation(
+        conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+        portraitMotionEnabled,
+        portraitVideoCapabilities,
+        portraitVideoPersistenceReady,
+        portraitVideoPersistenceAvailable,
+        portraitBusy,
+        portraitVideoBusy,
+        portraitVideoRequest,
+        portraitVideoCurrent
+      );
     }, automaticExpressionRetryDelayMs);
   }
 
@@ -2431,7 +2456,19 @@
     if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
     portraitRetryTimer = window.setTimeout(() => {
       portraitRetryTimer = null;
-      if (lastPortraitAttemptKey === key) lastPortraitAttemptKey = '';
+      if (lastPortraitAttemptKey !== key) return;
+      lastPortraitAttemptKey = '';
+      schedulePortraitReconciliation(
+        conversationMode === CONVERSATION_MODE_FICTION
+          && expressionsEnabled
+          && scenarioPortraitGenerationReady(activeCard, scenarioCatalogSettled),
+        portraitCapabilities,
+        portraitPersistenceReady,
+        portraitPersistenceAvailable,
+        portraitBusy,
+        portraitRequest,
+        portraitCurrent
+      );
     }, automaticExpressionRetryDelayMs);
   }
 
@@ -2520,9 +2557,10 @@
           && Boolean(liveRequest && portraitRequestKey(liveRequest) === key);
       };
       const committed = await commitStoredPortrait(stored, {
+        exclusive: runStoredPortraitExclusive,
         save: saveStoredPortrait,
         isCurrent,
-        discard: (stale) => clearStoredPortraitIfPromptId(stale.promptId),
+        rollback: rollbackStoredPortraitWrite,
         install: installGeneratedPortrait
       });
       if (committed) clearPortraitAutomaticRetry(key);
@@ -2563,7 +2601,7 @@
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     generatedPortraitUrl = '';
     try {
-      await clearStoredPortrait();
+      await runStoredPortraitExclusive(clearStoredPortrait);
     } catch (cause) {
       portraitPersistenceAvailable = false;
       portraitError = cause instanceof Error ? cause.message : 'Portrait persistence failed.';
@@ -2869,7 +2907,17 @@
     if (expressionRetryTimer !== null) window.clearTimeout(expressionRetryTimer);
     expressionRetryTimer = window.setTimeout(() => {
       expressionRetryTimer = null;
-      if (lastExpressionAttemptKey === key) lastExpressionAttemptKey = '';
+      if (lastExpressionAttemptKey !== key) return;
+      lastExpressionAttemptKey = '';
+      scheduleExpressionReconciliation(
+        conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+        sidecarPersistenceReady,
+        sidecarPersistenceAvailable,
+        streaming,
+        sidecarBusy,
+        expressionSnapshot,
+        expressionCurrent
+      );
     }, automaticExpressionRetryDelayMs);
   }
 
