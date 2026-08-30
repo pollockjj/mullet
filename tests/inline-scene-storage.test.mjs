@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-import { inlineSceneImageRequestKey } from '../src/lib/inline-scene.ts';
+import {
+  inlineSceneImageRequestKey,
+  inlineSceneSourceForScenarioOpening
+} from '../src/lib/inline-scene.ts';
 import {
   STORED_INLINE_SCENE_ENVELOPE_SPEC,
   STORED_INLINE_SCENE_SPEC,
@@ -26,9 +29,10 @@ const canonicalReference = Object.freeze({
 
 function request(overrides = {}) {
   return {
-    spec: 'mullet_inline_scene_image_request_v2',
+    spec: 'mullet_inline_scene_image_request_v3',
     modelTemplate: 'qwen-image-edit-2511-scene-v1',
     source: {
+      sourceKind: 'completed_turn',
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
       messageCount: 2,
       messageIndex: 1,
@@ -46,6 +50,25 @@ function request(overrides = {}) {
   };
 }
 
+function openingRequest() {
+  const sceneRequest = request();
+  const opening = [{
+    role: 'assistant',
+    content: 'Jenna steadies herself beside the Liberator flight console as the ship emerges from hyperspace.'
+  }];
+  sceneRequest.source = {
+    ...inlineSceneSourceForScenarioOpening(sceneRequest.source.conversationId, opening, {
+      scenarioId: 'blakes-7-after-false-control',
+      scenarioVersion: '3.0',
+      starterId: 'jenna',
+      expectedGreeting: opening[0].content
+    }),
+    sidecarModel: 'gemma-4-ortenzya',
+    promptSha256: sceneRequest.source.promptSha256
+  };
+  return sceneRequest;
+}
+
 function png(width = 864, height = 576) {
   const bytes = new Uint8Array(24);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
@@ -56,9 +79,8 @@ function png(width = 864, height = 576) {
   return bytes;
 }
 
-function stored(overrides = {}) {
+function stored(overrides = {}, sceneRequest = request()) {
   const imageBytes = png();
-  const sceneRequest = request();
   sceneRequest.source.promptSha256 = `sha256:${createHash('sha256').update(sceneRequest.prompt).digest('hex')}`;
   return {
     spec: STORED_INLINE_SCENE_SPEC,
@@ -80,12 +102,23 @@ function stored(overrides = {}) {
 
 test('normalizes and byte-verifies a provenance-bound inline PNG', async () => {
   const scene = normalizeStoredInlineScene(stored());
-  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v2');
-  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v2');
+  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v3');
+  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v3');
   assert.equal(scene.requestKey, inlineSceneImageRequestKey(scene.request));
   assert.deepEqual(scene.request.referenceImage, canonicalReference);
   assert.equal((await verifyStoredInlineScene(scene)).image.type, 'image/png');
   assert.equal(JSON.stringify(scene).includes('transcript'), false);
+});
+
+test('preserves scenario-opening identity through static-scene persistence', async () => {
+  const completed = stored();
+  const opening = normalizeStoredInlineScene(stored({}, openingRequest()));
+  assert.equal(opening.request.source.sourceKind, 'scenario_opening');
+  assert.equal(opening.request.source.scenarioId, 'blakes-7-after-false-control');
+  assert.equal(opening.request.source.scenarioVersion, '3.0');
+  assert.equal(opening.request.source.starterId, 'jenna');
+  assert.notEqual(opening.requestKey, completed.requestKey);
+  await verifyStoredInlineScene(opening);
 });
 
 test('rejects mismatched keys, dimensions, bytes, and hashes', async () => {
@@ -169,4 +202,29 @@ test('discards corrupt bytes inside the original restore lock', async () => {
     (cause) => cause instanceof StoredInlineSceneIntegrityError
   );
   assert.equal(discardedWhileLocked, true);
+});
+
+test('silently discards obsolete v1 and v2 scenes inside the restore lock', async () => {
+  for (const spec of [
+    'mullet_stored_inline_scene_v1',
+    'mullet_stored_inline_scene_envelope_v1',
+    'mullet_stored_inline_scene_v2',
+    'mullet_stored_inline_scene_envelope_v2'
+  ]) {
+    let lockHeld = false;
+    let discardedWhileLocked = false;
+    const restored = await restoreStoredInlineScene({
+      exclusive: async (operation) => {
+        lockHeld = true;
+        try { return await operation(); } finally { lockHeld = false; }
+      },
+      load: async () => ({ spec }),
+      discardInvalid: async () => { discardedWhileLocked = lockHeld; },
+      isCurrent: () => true,
+      accepts: () => true,
+      install: () => assert.fail('obsolete scene installed')
+    });
+    assert.equal(restored, null);
+    assert.equal(discardedWhileLocked, true);
+  }
 });

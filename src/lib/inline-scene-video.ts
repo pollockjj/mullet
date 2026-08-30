@@ -7,7 +7,7 @@ import {
 } from './inline-scene.ts';
 import { sha256Hex } from './sha256.ts';
 
-export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v2' as const;
+export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v3' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-i2v-turbo-v1' as const;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 5 as const;

@@ -6,8 +6,8 @@ import {
   type InlineSceneImageRequest
 } from './inline-scene.ts';
 
-export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v2' as const;
-export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v2' as const;
+export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v3' as const;
+export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v3' as const;
 
 export class StoredInlineSceneIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -63,9 +63,21 @@ const STORE_NAME = 'state';
 const ACTIVE_SCENE_KEY = 'active-inline-scene';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const OBSOLETE_INLINE_SCENE_SPECS = new Set([
+  'mullet_stored_inline_scene_v1',
+  'mullet_stored_inline_scene_envelope_v1',
+  'mullet_stored_inline_scene_v2',
+  'mullet_stored_inline_scene_envelope_v2'
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isObsoleteStoredInlineScene(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.spec === 'string'
+    && OBSOLETE_INLINE_SCENE_SPECS.has(value.spec);
 }
 
 function safeInteger(value: unknown, name: string, minimum: number, maximum: number): number {
@@ -111,6 +123,7 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
 
 export function unwrapStoredInlineScene(value: unknown): unknown | null {
   if (value === null) return null;
+  if (isObsoleteStoredInlineScene(value)) return null;
   if (!isRecord(value) || value.spec !== STORED_INLINE_SCENE_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || !value.writeId || value.writeId.length > 200 || !('scene' in value)) {
     throw new Error('stored inline-scene envelope is invalid');
@@ -171,7 +184,7 @@ export async function loadStoredInlineScene(): Promise<unknown | null> {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(ACTIVE_SCENE_KEY);
-      request.onsuccess = () => resolve(unwrapStoredInlineScene(request.result ?? null));
+      request.onsuccess = () => resolve(request.result ?? null);
       request.onerror = () => reject(request.error ?? new Error('IndexedDB inline-scene read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene read aborted'));
     });
@@ -265,9 +278,13 @@ export async function restoreStoredInlineScene(operations: InlineSceneRestoreOpe
     if (!operations.isCurrent()) return null;
     const stored = await operations.load();
     if (!operations.isCurrent() || stored === null) return null;
+    if (isObsoleteStoredInlineScene(stored)) {
+      await operations.discardInvalid();
+      return null;
+    }
     let verified: StoredInlineScene;
     try {
-      verified = await verifyStoredInlineScene(stored);
+      verified = await verifyStoredInlineScene(unwrapStoredInlineScene(stored));
     } catch (cause) {
       await operations.discardInvalid();
       throw new StoredInlineSceneIntegrityError(cause);

@@ -39,8 +39,6 @@
     livingHistoryResultMatchesMessages,
     livingHistoryResultMatchesRequest,
     livingHistorySourceForMessages,
-    livingHistorySourceMatchesMessages,
-    livingHistorySourcesMatch,
     normalizeLivingHistorySource,
     normalizeLivingHistoryResult,
     type LivingHistoryRequest,
@@ -54,14 +52,21 @@
     buildInlineSceneRequest,
     inlineSceneImageRequestKey,
     inlineSceneResultMatchesRequest,
+    inlineSceneSourceForCompletedTurn,
+    inlineSceneSourceForScenarioOpening,
+    inlineSceneSourceMatchesMessages,
+    inlineSceneSourcesMatch,
     normalizeInlineSceneCapabilities,
     normalizeInlineSceneResult,
+    normalizeInlineSceneSource,
     type InlineSceneAspectRatio,
     type InlineSceneCapabilities,
     type InlineSceneImageRequest,
     type InlineSceneMegapixels,
     type InlineSceneRequest,
-    type InlineSceneResult
+    type InlineSceneResult,
+    type InlineSceneScenarioOpeningIdentity,
+    type InlineSceneSource
   } from '$lib/inline-scene';
   import {
     INLINE_SCENE_VIDEO_DURATION_SECONDS,
@@ -256,6 +261,7 @@
     scenarioPortraitGenerationReady,
     scenarioStarterMessage,
     scenarioStarterPortraitProfile,
+    scenarioStarters,
     validateScenarioPackage,
     type ScenarioCatalog,
     type ScenarioCatalogEntry,
@@ -364,7 +370,7 @@
   let livingHistoryGeneration = 0;
   let livingHistoryEpoch = '';
   let inlineScenesEnabled = false;
-  let finalizedInlineSceneSource: LivingHistorySource | null = null;
+  let finalizedInlineSceneSource: InlineSceneSource | null = null;
   let inlineSceneEpoch = '';
   let inlineSceneCapabilities: InlineSceneCapabilities | null = null;
   let inlineSceneCapabilitiesLoading = false;
@@ -786,6 +792,7 @@
     restorePortraitSettings();
     restoreInlineSceneSettings();
     restoreInlineSceneFinalizedSource();
+    restoreScenarioOpeningInlineSceneSourceIfNeeded();
     void restoreExpressionAndGeneratedMedia();
     void restoreInlineSceneAndMotion();
     void loadPortraitGenerator();
@@ -940,12 +947,27 @@
     try {
       const parsed = JSON.parse(saved);
       if (!parsed || typeof parsed !== 'object' || !isSidecarConversationId(parsed.epoch)) throw new Error('invalid inline-scene epoch');
-      const source = normalizeLivingHistorySource(parsed.source);
-      if (source.conversationId !== conversationId || !livingHistorySourceMatchesMessages(source, conversationId, messages)) {
+      let migratedLegacySource = false;
+      let source: InlineSceneSource;
+      try {
+        source = normalizeInlineSceneSource(parsed.source);
+      } catch {
+        source = inlineSceneSourceForCompletedTurn(normalizeLivingHistorySource(parsed.source));
+        migratedLegacySource = true;
+      }
+      if (source.sourceKind === 'scenario_opening' && !scenarioCatalogSettled) return;
+      if (
+        source.conversationId !== conversationId
+        || !inlineSceneSourceMatchesMessages(source, conversationId, messages)
+        || !inlineSceneSourceMatchesActiveScenario(source)
+      ) {
         throw new Error('inline-scene finalized source does not match this transcript');
       }
       inlineSceneEpoch = parsed.epoch;
       finalizedInlineSceneSource = source;
+      if (migratedLegacySource) {
+        localStorage.setItem(inlineSceneFinalizedStorageKey, JSON.stringify({ epoch: parsed.epoch, source }));
+      }
     } catch {
       inlineSceneEpoch = '';
       finalizedInlineSceneSource = null;
@@ -956,7 +978,7 @@
   function currentInlineSceneSidecarRequest(
     currentConversationId: string,
     currentMessages: readonly Message[],
-    source: LivingHistorySource | null
+    source: InlineSceneSource | null
   ): InlineSceneRequest | null {
     if (!source) return null;
     try {
@@ -968,7 +990,7 @@
 
   function inlineSceneAppliesToTranscript(
     scene: StoredInlineScene | null,
-    source: LivingHistorySource | null,
+    source: InlineSceneSource | null,
     epoch: string,
     currentConversationId: string,
     currentMessages: readonly Message[]
@@ -978,8 +1000,8 @@
       && source
       && scene.epoch === epoch
       && scene.conversationId === currentConversationId
-      && livingHistorySourcesMatch(scene.request.source, source)
-      && livingHistorySourceMatchesMessages(scene.request.source, currentConversationId, currentMessages)
+      && inlineSceneSourcesMatch(scene.request.source, source)
+      && inlineSceneSourceMatchesMessages(scene.request.source, currentConversationId, currentMessages)
     );
   }
 
@@ -1058,12 +1080,12 @@
         discardInvalid: clearStoredInlineScene,
         isCurrent: () => generation === inlineSceneGeneration
           && epoch === inlineSceneEpoch
-          && Boolean(source && finalizedInlineSceneSource && livingHistorySourcesMatch(source, finalizedInlineSceneSource))
+          && Boolean(source && finalizedInlineSceneSource && inlineSceneSourcesMatch(source, finalizedInlineSceneSource))
           && inlineSceneStoredEpochIsCurrent(epoch),
         accepts: (scene) => scene.epoch === epoch
           && scene.conversationId === conversationId
-          && Boolean(source && livingHistorySourcesMatch(scene.request.source, source))
-          && livingHistorySourceMatchesMessages(scene.request.source, conversationId, messages),
+          && Boolean(source && inlineSceneSourcesMatch(scene.request.source, source))
+          && inlineSceneSourceMatchesMessages(scene.request.source, conversationId, messages),
         install: (scene) => installGeneratedInlineScene(scene, true)
       });
     } catch (cause) {
@@ -1546,7 +1568,7 @@
       || !inlineSceneStoredEpochIsCurrent(epoch)
     ) return false;
     const liveSidecar = currentInlineSceneSidecarRequest(conversationId, messages, finalizedInlineSceneSource);
-    if (!liveSidecar || !livingHistorySourcesMatch(liveSidecar.source, sidecarRequest.source)) return false;
+    if (!liveSidecar || !inlineSceneSourcesMatch(liveSidecar.source, sidecarRequest.source)) return false;
     if (!result) return true;
     if (!scenarioPortraitProfile) return false;
     try {
@@ -1697,6 +1719,7 @@
     lastInlineSceneAttemptKey = '';
     inlineSceneVideoError = '';
     lastInlineSceneVideoAttemptKey = '';
+    if (inlineScenesEnabled) restoreScenarioOpeningInlineSceneSourceIfNeeded();
     const videoAction = inlineSceneVideoMasterToggleAction(
       inlineScenesEnabled,
       inlineSceneMotionEnabled,
@@ -1716,8 +1739,8 @@
     }
   }
 
-  function publishFinalizedInlineSceneSource() {
-    const source = livingHistorySourceForMessages(conversationId, messages);
+  function publishFinalizedInlineSceneSource(source: InlineSceneSource) {
+    const normalizedSource = normalizeInlineSceneSource(source);
     const epoch = crypto.randomUUID();
     inlineSceneGeneration += 1;
     inlineSceneController?.abort();
@@ -1727,9 +1750,75 @@
     lastInlineSceneAttemptKey = '';
     invalidateInlineSceneVideoForNewStaticScene();
     removeInstalledInlineScene();
-    finalizedInlineSceneSource = source;
+    finalizedInlineSceneSource = normalizedSource;
     inlineSceneEpoch = epoch;
-    localStorage.setItem(inlineSceneFinalizedStorageKey, JSON.stringify({ epoch, source }));
+    localStorage.setItem(inlineSceneFinalizedStorageKey, JSON.stringify({ epoch, source: normalizedSource }));
+  }
+
+  function scenarioOpeningIdentity(): InlineSceneScenarioOpeningIdentity | null {
+    if (
+      !scenarioCatalogSettled
+      || !scenarioCatalog
+      || !activeCard
+      || !isScenarioCard(activeCard)
+      || !activeScenarioStarterId
+    ) return null;
+    const metadata = activeCard.data.extensions.mullet;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+    const scenarioId = (metadata as Record<string, unknown>).scenario_id;
+    const scenarioVersion = (metadata as Record<string, unknown>).scenario_version;
+    if (typeof scenarioId !== 'string' || typeof scenarioVersion !== 'string') return null;
+    const catalogScenario = scenarioCatalog.scenarios.find((scenario) => scenario.id === scenarioId);
+    const cardStarters = scenarioStarters(activeCard);
+    if (
+      !catalogScenario
+      || catalogScenario.version !== scenarioVersion
+      || !catalogScenario.starters.some((starter) => starter.id === activeScenarioStarterId)
+      || !cardStarters?.starters.some((starter) => starter.id === activeScenarioStarterId)
+    ) return null;
+    const expectedGreeting = scenarioStarterMessage(activeCard, activeScenarioStarterId);
+    if (!expectedGreeting.trim()) return null;
+    return {
+      scenarioId,
+      scenarioVersion,
+      starterId: activeScenarioStarterId,
+      expectedGreeting
+    };
+  }
+
+  function inlineSceneSourceMatchesActiveScenario(source: InlineSceneSource): boolean {
+    if (source.sourceKind === 'completed_turn') return true;
+    const identity = scenarioOpeningIdentity();
+    return Boolean(
+      identity
+      && activeCard
+      && containsOnlyOpeningGreeting(activeCard)
+      && source.scenarioId === identity.scenarioId
+      && source.scenarioVersion === identity.scenarioVersion
+      && source.starterId === identity.starterId
+    );
+  }
+
+  function publishScenarioOpeningInlineSceneSource(): boolean {
+    const identity = scenarioOpeningIdentity();
+    if (!identity || !activeCard || !containsOnlyOpeningGreeting(activeCard)) return false;
+    publishFinalizedInlineSceneSource(
+      inlineSceneSourceForScenarioOpening(conversationId, messages, identity)
+    );
+    return true;
+  }
+
+  function restoreScenarioOpeningInlineSceneSourceIfNeeded() {
+    if (
+      !inlineScenesEnabled
+      || finalizedInlineSceneSource
+      || conversationMode !== CONVERSATION_MODE_FICTION
+    ) return;
+    try {
+      publishScenarioOpeningInlineSceneSource();
+    } catch (cause) {
+      inlineSceneError = cause instanceof Error ? cause.message : 'Scenario-opening scene source could not be restored.';
+    }
   }
 
   async function resetInlineSceneForConversation() {
@@ -3346,10 +3435,7 @@
           : activeScenario.starters[0].id;
         localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
       }
-      const activeVersion = activeCard?.data.extensions.mullet && typeof activeCard.data.extensions.mullet === 'object'
-        ? String((activeCard.data.extensions.mullet as Record<string, unknown>).scenario_version ?? '')
-        : '';
-      if (activeScenario && (activeVersion !== activeScenario.version || !defaultScenarioPortraitProfile(activeCard))) {
+      if (activeScenario) {
         const packaged = await loadScenarioPackage(activeScenario);
         activeCard = packaged.card;
         cardSourceIdentifier = characterSourceIdentifier(activeScenario.card);
@@ -3360,6 +3446,9 @@
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario catalog failed to load.';
     } finally {
       scenarioCatalogSettled = true;
+      restoreInlineSceneFinalizedSource();
+      restoreScenarioOpeningInlineSceneSourceIfNeeded();
+      void restoreInlineSceneAndMotion();
     }
   }
 
@@ -3434,6 +3523,9 @@
         persistLoreEnabled();
         messages = freshConversation();
         await resetSidecarForConversation();
+        if (!publishScenarioOpeningInlineSceneSource()) {
+          throw new Error('Bundled scenario opening could not be bound to inline-scene provenance.');
+        }
         persist();
         noticeMessage = `${starter.label} · ${starter.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
         await scrollToLatest();
@@ -4085,7 +4177,9 @@
       controller = null;
       if (completedResponse && fictionMode) {
         recordFinalizedLivingHistoryBoundary();
-        publishFinalizedInlineSceneSource();
+        publishFinalizedInlineSceneSource(
+          inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, messages))
+        );
       }
       await scrollToLatest();
     }

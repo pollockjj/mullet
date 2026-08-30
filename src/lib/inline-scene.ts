@@ -1,10 +1,10 @@
 import {
   livingHistorySourceMatchesMessages,
-  livingHistorySourcesMatch,
   normalizeLivingHistorySource,
   type LivingHistorySource,
   type TranscriptMessage
 } from './living-history.ts';
+import { isSidecarConversationId } from './sidecar.ts';
 import { sha256Hex } from './sha256.ts';
 import {
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
@@ -12,9 +12,9 @@ import {
   type PortraitReferenceImage
 } from './portrait.ts';
 
-export const INLINE_SCENE_REQUEST_SPEC = 'mullet_inline_scene_request_v1' as const;
-export const INLINE_SCENE_RESULT_SPEC = 'mullet_inline_scene_result_v1' as const;
-export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_request_v2' as const;
+export const INLINE_SCENE_REQUEST_SPEC = 'mullet_inline_scene_request_v2' as const;
+export const INLINE_SCENE_RESULT_SPEC = 'mullet_inline_scene_result_v2' as const;
+export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_request_v3' as const;
 export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v2' as const;
 export const INLINE_SCENE_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
 export const INLINE_SCENE_TIMEOUT_MS = 30_000 as const;
@@ -51,17 +51,47 @@ export const QWEN_IMAGE_EDIT_SCENE_TEMPLATE = Object.freeze({
 export type InlineSceneAspectRatio = (typeof INLINE_SCENE_ASPECT_RATIOS)[number]['id'];
 export type InlineSceneMegapixels = (typeof INLINE_SCENE_MEGAPIXELS)[number];
 
+export type InlineSceneCompletedTurnSource = LivingHistorySource & {
+  sourceKind: 'completed_turn';
+  openingFingerprint?: never;
+  scenarioId?: never;
+  scenarioVersion?: never;
+  starterId?: never;
+};
+
+export type InlineSceneScenarioOpeningSource = {
+  sourceKind: 'scenario_opening';
+  conversationId: string;
+  messageCount: 1;
+  messageIndex: 0;
+  fingerprint: string;
+  turnFingerprint?: never;
+  openingFingerprint: string;
+  scenarioId: string;
+  scenarioVersion: string;
+  starterId: string;
+};
+
+export type InlineSceneSource = InlineSceneCompletedTurnSource | InlineSceneScenarioOpeningSource;
+
+export type InlineSceneScenarioOpeningIdentity = {
+  scenarioId: string;
+  scenarioVersion: string;
+  starterId: string;
+  expectedGreeting: string;
+};
+
 export type InlineSceneRequest = {
   spec: typeof INLINE_SCENE_REQUEST_SPEC;
   kind: 'inline_scene';
-  source: LivingHistorySource;
+  source: InlineSceneSource;
   turns: TranscriptMessage[];
 };
 
 export type InlineSceneResult = {
   spec: typeof INLINE_SCENE_RESULT_SPEC;
   kind: 'inline_scene';
-  source: LivingHistorySource;
+  source: InlineSceneSource;
   model: string;
   output: { prompt: string };
 };
@@ -71,7 +101,7 @@ export type InlineSceneLora = { path: string; trigger: string; modelHash: string
 export type InlineSceneImageRequest = {
   spec: typeof INLINE_SCENE_IMAGE_REQUEST_SPEC;
   modelTemplate: typeof INLINE_SCENE_TEMPLATE_ID;
-  source: LivingHistorySource & {
+  source: InlineSceneSource & {
     sidecarModel: string;
     promptSha256: string;
   };
@@ -94,6 +124,8 @@ export type InlineSceneCapabilities = {
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const RAW_SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const REFERENCE_IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i;
+const SCENARIO_COMPONENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+const INLINE_SCENE_TRANSCRIPT_SEED = `sha256:${sha256Hex('mullet-living-history-transcript-v1')}`;
 const aspectMap = new Map(INLINE_SCENE_ASPECT_RATIOS.map((ratio) => [ratio.id, ratio]));
 const megapixelSet = new Set<number>(INLINE_SCENE_MEGAPIXELS);
 
@@ -108,24 +140,190 @@ function integer(value: unknown, name: string, minimum: number, maximum: number)
   return Number(value);
 }
 
+function scenarioComponent(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !SCENARIO_COMPONENT_PATTERN.test(value.trim())) {
+    throw new Error(`${name} is invalid`);
+  }
+  return value.trim();
+}
+
+function normalizedTurn(value: unknown, index: number): TranscriptMessage {
+  if (!isRecord(value) || (value.role !== 'user' && value.role !== 'assistant') || typeof value.content !== 'string') {
+    throw new Error(`inline-scene turn ${index} is invalid`);
+  }
+  const content = value.content.trim();
+  if (!content || content.length > 100_000) throw new Error(`inline-scene turn ${index} is invalid`);
+  return { role: value.role, content };
+}
+
+function assertInlineSceneInputSize(turns: readonly TranscriptMessage[]): void {
+  if (turns.reduce((total, turn) => total + turn.role.length + turn.content.length, 0) > INLINE_SCENE_MAX_INPUT_CHARS) {
+    throw new Error(`inline-scene turns exceed ${INLINE_SCENE_MAX_INPUT_CHARS} characters`);
+  }
+}
+
+function inlineSceneTranscriptFingerprint(turns: readonly TranscriptMessage[]): string {
+  return turns.reduce(
+    (fingerprint, turn) => `sha256:${sha256Hex(JSON.stringify([fingerprint, turn.role, turn.content]))}`,
+    INLINE_SCENE_TRANSCRIPT_SEED
+  );
+}
+
+function openingIdentity(value: unknown): Omit<InlineSceneScenarioOpeningIdentity, 'expectedGreeting'> {
+  if (!isRecord(value)) throw new Error('inline-scene opening identity is invalid');
+  return {
+    scenarioId: scenarioComponent(value.scenarioId, 'inline-scene scenario ID'),
+    scenarioVersion: scenarioComponent(value.scenarioVersion, 'inline-scene scenario version'),
+    starterId: scenarioComponent(value.starterId, 'inline-scene starter ID')
+  };
+}
+
+export function inlineSceneOpeningFingerprint(
+  identity: Omit<InlineSceneScenarioOpeningIdentity, 'expectedGreeting'>,
+  content: string
+): string {
+  const normalizedIdentity = openingIdentity(identity);
+  if (typeof content !== 'string' || !content.trim() || content.trim().length > 100_000) {
+    throw new Error('inline-scene opening content is invalid');
+  }
+  return `sha256:${sha256Hex(JSON.stringify([
+    'scenario_opening',
+    normalizedIdentity.scenarioId,
+    normalizedIdentity.scenarioVersion,
+    normalizedIdentity.starterId,
+    content.trim()
+  ]))}`;
+}
+
+export function inlineSceneSourceForCompletedTurn(source: LivingHistorySource): InlineSceneCompletedTurnSource {
+  return { sourceKind: 'completed_turn', ...normalizeLivingHistorySource(source) };
+}
+
+function normalizedOpeningTurns(value: unknown): [TranscriptMessage] {
+  if (!Array.isArray(value) || value.length !== 1) {
+    throw new Error('inline-scene scenario opening must contain exactly one assistant message');
+  }
+  const opening = normalizedTurn(value[0], 0);
+  if (opening.role !== 'assistant') {
+    throw new Error('inline-scene scenario opening must contain exactly one assistant message');
+  }
+  assertInlineSceneInputSize([opening]);
+  return [opening];
+}
+
+export function inlineSceneSourceForScenarioOpening(
+  conversationId: string,
+  messages: readonly TranscriptMessage[],
+  identity: InlineSceneScenarioOpeningIdentity
+): InlineSceneScenarioOpeningSource {
+  if (!isSidecarConversationId(conversationId)) throw new Error('conversationId must be a UUID');
+  const [opening] = normalizedOpeningTurns(messages);
+  const normalizedIdentity = openingIdentity(identity);
+  if (typeof identity.expectedGreeting !== 'string' || opening.content !== identity.expectedGreeting.trim()) {
+    throw new Error('inline-scene scenario opening must match the canonical starter greeting');
+  }
+  return {
+    sourceKind: 'scenario_opening',
+    conversationId,
+    messageCount: 1,
+    messageIndex: 0,
+    fingerprint: inlineSceneTranscriptFingerprint([opening]),
+    openingFingerprint: inlineSceneOpeningFingerprint(normalizedIdentity, opening.content),
+    ...normalizedIdentity
+  };
+}
+
+export function normalizeInlineSceneSource(value: unknown): InlineSceneSource {
+  if (!isRecord(value)) throw new Error('inline-scene source is invalid');
+  if (value.sourceKind === 'completed_turn') return inlineSceneSourceForCompletedTurn(value as LivingHistorySource);
+  if (value.sourceKind !== 'scenario_opening' || !isSidecarConversationId(value.conversationId)) {
+    throw new Error('inline-scene source is invalid');
+  }
+  if (
+    value.messageCount !== 1
+    || value.messageIndex !== 0
+    || typeof value.fingerprint !== 'string'
+    || !SHA256_PATTERN.test(value.fingerprint)
+    || typeof value.openingFingerprint !== 'string'
+    || !SHA256_PATTERN.test(value.openingFingerprint)
+  ) throw new Error('inline-scene scenario-opening source is invalid');
+  const normalizedIdentity = openingIdentity(value);
+  return {
+    sourceKind: 'scenario_opening',
+    conversationId: value.conversationId,
+    messageCount: 1,
+    messageIndex: 0,
+    fingerprint: value.fingerprint,
+    openingFingerprint: value.openingFingerprint,
+    ...normalizedIdentity
+  };
+}
+
+export function inlineSceneSourceKey(source: unknown): string {
+  const normalized = normalizeInlineSceneSource(source);
+  return normalized.sourceKind === 'completed_turn'
+    ? [
+        normalized.sourceKind,
+        normalized.conversationId,
+        normalized.messageCount,
+        normalized.messageIndex,
+        normalized.fingerprint,
+        normalized.turnFingerprint
+      ].join('\u001f')
+    : [
+        normalized.sourceKind,
+        normalized.conversationId,
+        normalized.messageCount,
+        normalized.messageIndex,
+        normalized.fingerprint,
+        normalized.openingFingerprint,
+        normalized.scenarioId,
+        normalized.scenarioVersion,
+        normalized.starterId
+      ].join('\u001f');
+}
+
+export function inlineSceneSourcesMatch(left: unknown, right: unknown): boolean {
+  try {
+    return inlineSceneSourceKey(left) === inlineSceneSourceKey(right);
+  } catch {
+    return false;
+  }
+}
+
+export function inlineSceneSourceMatchesMessages(
+  source: unknown,
+  conversationId: string,
+  messages: readonly TranscriptMessage[]
+): boolean {
+  let normalized: InlineSceneSource;
+  try {
+    normalized = normalizeInlineSceneSource(source);
+  } catch {
+    return false;
+  }
+  if (normalized.conversationId !== conversationId || normalized.messageCount > messages.length) return false;
+  if (normalized.sourceKind === 'completed_turn') {
+    return livingHistorySourceMatchesMessages(normalized, conversationId, messages);
+  }
+  try {
+    const [opening] = normalizedOpeningTurns(messages.slice(0, normalized.messageCount));
+    return normalized.fingerprint === inlineSceneTranscriptFingerprint([opening])
+      && normalized.openingFingerprint === inlineSceneOpeningFingerprint(normalized, opening.content);
+  } catch {
+    return false;
+  }
+}
+
 function normalizedTurns(value: unknown): TranscriptMessage[] {
   if (!Array.isArray(value) || value.length < 2 || value.length > INLINE_SCENE_MAX_TURNS) {
     throw new Error(`inline-scene turns must contain between 2 and ${INLINE_SCENE_MAX_TURNS} messages`);
   }
-  const turns = value.map((turn, index) => {
-    if (!isRecord(turn) || (turn.role !== 'user' && turn.role !== 'assistant') || typeof turn.content !== 'string') {
-      throw new Error(`inline-scene turn ${index} is invalid`);
-    }
-    const content = turn.content.trim();
-    if (!content || content.length > 100_000) throw new Error(`inline-scene turn ${index} is invalid`);
-    return { role: turn.role, content };
-  });
+  const turns = value.map((turn, index) => normalizedTurn(turn, index));
   if (turns.at(-2)?.role !== 'user' || turns.at(-1)?.role !== 'assistant') {
     throw new Error('inline-scene turns must end with one completed user-and-assistant turn');
   }
-  if (turns.reduce((total, turn) => total + turn.role.length + turn.content.length, 0) > INLINE_SCENE_MAX_INPUT_CHARS) {
-    throw new Error(`inline-scene turns exceed ${INLINE_SCENE_MAX_INPUT_CHARS} characters`);
-  }
+  assertInlineSceneInputSize(turns);
   return turns;
 }
 
@@ -156,13 +354,17 @@ function inlineSceneTurnFingerprint(turns: readonly TranscriptMessage[]): string
 export function buildInlineSceneRequest(
   conversationId: string,
   messages: readonly TranscriptMessage[],
-  finalizedSource: LivingHistorySource
+  finalizedSource: LivingHistorySource | InlineSceneSource
 ): InlineSceneRequest {
-  const source = normalizeLivingHistorySource(finalizedSource);
-  if (!livingHistorySourceMatchesMessages(source, conversationId, messages) || source.messageCount !== messages.length) {
+  const source = isRecord(finalizedSource) && 'sourceKind' in finalizedSource
+    ? normalizeInlineSceneSource(finalizedSource)
+    : inlineSceneSourceForCompletedTurn(finalizedSource as LivingHistorySource);
+  if (!inlineSceneSourceMatchesMessages(source, conversationId, messages) || source.messageCount !== messages.length) {
     throw new Error('inline-scene source must identify the latest finalized response');
   }
-  const turns = boundedInlineSceneTurns(messages.slice(0, source.messageCount));
+  const turns = source.sourceKind === 'completed_turn'
+    ? boundedInlineSceneTurns(messages.slice(0, source.messageCount))
+    : normalizedOpeningTurns(messages.slice(0, source.messageCount));
   return { spec: INLINE_SCENE_REQUEST_SPEC, kind: 'inline_scene', source, turns };
 }
 
@@ -170,10 +372,20 @@ export function normalizeInlineSceneRequest(value: unknown): InlineSceneRequest 
   if (!isRecord(value) || value.spec !== INLINE_SCENE_REQUEST_SPEC || value.kind !== 'inline_scene') {
     throw new Error('invalid inline-scene request spec');
   }
-  const source = normalizeLivingHistorySource(value.source);
-  const turns = normalizedTurns(value.turns);
-  if (source.turnFingerprint !== inlineSceneTurnFingerprint(turns)) {
-    throw new Error('inline-scene source turn fingerprint does not match its supplied turns');
+  const source = normalizeInlineSceneSource(value.source);
+  const turns = source.sourceKind === 'completed_turn'
+    ? normalizedTurns(value.turns)
+    : normalizedOpeningTurns(value.turns);
+  if (source.sourceKind === 'completed_turn') {
+    if (source.turnFingerprint !== inlineSceneTurnFingerprint(turns)) {
+      throw new Error('inline-scene source turn fingerprint does not match its supplied turns');
+    }
+  } else {
+    const [opening] = turns;
+    if (
+      source.fingerprint !== inlineSceneTranscriptFingerprint(turns)
+      || source.openingFingerprint !== inlineSceneOpeningFingerprint(source, opening.content)
+    ) throw new Error('inline-scene scenario-opening fingerprint does not match its supplied message');
   }
   return { spec: INLINE_SCENE_REQUEST_SPEC, kind: 'inline_scene', source, turns };
 }
@@ -222,7 +434,7 @@ export function normalizeInlineSceneResult(value: unknown): InlineSceneResult {
   if (!isRecord(value) || value.spec !== INLINE_SCENE_RESULT_SPEC || value.kind !== 'inline_scene') {
     throw new Error('invalid inline-scene result spec');
   }
-  const source = normalizeLivingHistorySource(value.source);
+  const source = normalizeInlineSceneSource(value.source);
   if (typeof value.model !== 'string' || !value.model.trim() || value.model.length > 200) throw new Error('inline-scene model is invalid');
   const prompt = parseInlineSceneResponse(JSON.stringify({ prompt: isRecord(value.output) ? value.output.prompt : '' }));
   return {
@@ -235,7 +447,7 @@ export function normalizeInlineSceneResult(value: unknown): InlineSceneResult {
 }
 
 export function inlineSceneResultMatchesRequest(result: InlineSceneResult, request: InlineSceneRequest): boolean {
-  return livingHistorySourcesMatch(result.source, request.source);
+  return inlineSceneSourcesMatch(result.source, request.source);
 }
 
 export function inlineSceneDimensions(
@@ -274,7 +486,7 @@ export function buildInlineSceneImageRequest(
 export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneImageRequest {
   if (!isRecord(value) || value.spec !== INLINE_SCENE_IMAGE_REQUEST_SPEC) throw new Error('invalid inline-scene image request spec');
   if (value.modelTemplate !== INLINE_SCENE_TEMPLATE_ID) throw new Error('unsupported inline-scene model template');
-  const source = normalizeLivingHistorySource(value.source);
+  const source = normalizeInlineSceneSource(value.source);
   if (!isRecord(value.source) || typeof value.source.sidecarModel !== 'string' || !value.source.sidecarModel.trim() || value.source.sidecarModel.length > 200) {
     throw new Error('inline-scene source model is invalid');
   }
@@ -334,11 +546,7 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
 export function inlineSceneImageRequestKey(request: InlineSceneImageRequest): string {
   const normalized = normalizeInlineSceneImageRequest(request);
   return [
-    normalized.source.conversationId,
-    normalized.source.messageCount,
-    normalized.source.messageIndex,
-    normalized.source.fingerprint,
-    normalized.source.turnFingerprint,
+    inlineSceneSourceKey(normalized.source),
     normalized.source.sidecarModel,
     normalized.source.promptSha256,
     normalized.prompt,

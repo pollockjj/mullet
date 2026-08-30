@@ -7,7 +7,8 @@ import {
   buildInlineSceneRequest,
   createInlineSceneResult,
   inlineSceneDimensions,
-  inlineSceneImageRequestKey
+  inlineSceneImageRequestKey,
+  inlineSceneSourceForScenarioOpening
 } from '../src/lib/inline-scene.ts';
 import {
   INLINE_SCENE_VIDEO_DIMENSIONS,
@@ -73,9 +74,48 @@ function staticScene(aspectRatio = '16:9', megapixels = 1) {
   };
 }
 
+function openingStaticScene(aspectRatio = '16:9', megapixels = 1) {
+  const opening = [{
+    role: 'assistant',
+    content: 'Jenna steadies herself beside the Liberator flight console as the ship emerges from hyperspace.'
+  }];
+  const source = inlineSceneSourceForScenarioOpening(conversationId, opening, {
+    scenarioId: 'blakes-7-after-false-control',
+    scenarioVersion: '3.0',
+    starterId: 'jenna',
+    expectedGreeting: opening[0].content
+  });
+  const result = createInlineSceneResult({
+    spec: 'mullet_inline_scene_request_v2',
+    kind: 'inline_scene',
+    source,
+    turns: opening
+  }, 'gemma-4-ortenzya', prompt);
+  const request = buildInlineSceneImageRequest(result, {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio,
+    megapixels
+  });
+  const dimensions = inlineSceneDimensions(aspectRatio, megapixels);
+  return {
+    conversationId,
+    epoch,
+    requestKey: inlineSceneImageRequestKey(request),
+    request,
+    promptId,
+    seed: 42,
+    width: dimensions.width,
+    height: dimensions.height,
+    generatedAt: 123456789,
+    imageSha256: 'a'.repeat(64)
+  };
+}
+
 test('binds motion to every static-scene provenance field', () => {
   const scene = staticScene();
   const request = buildInlineSceneVideoRequest(scene);
+  assert.equal(request.spec, 'mullet_inline_scene_video_request_v3');
   assert.equal(request.source.sceneRequestKey, scene.requestKey);
   assert.equal(request.source.sceneSeed, 42);
   assert.equal(request.source.sceneRequest.source.promptSha256, scene.request.source.promptSha256);
@@ -107,6 +147,29 @@ test('binds motion to every static-scene provenance field', () => {
   assert.notEqual(
     inlineSceneVideoRequestKey(request),
     inlineSceneVideoRequestKey({ ...request, source: { ...request.source, sceneSeed: 43 } })
+  );
+});
+
+test('binds scenario-opening identity into the motion request key', () => {
+  const completed = buildInlineSceneVideoRequest(staticScene());
+  const opening = buildInlineSceneVideoRequest(openingStaticScene());
+  assert.equal(opening.source.sceneRequest.source.sourceKind, 'scenario_opening');
+  assert.equal(opening.source.sceneRequest.source.scenarioId, 'blakes-7-after-false-control');
+  assert.equal(opening.source.sceneRequest.source.scenarioVersion, '3.0');
+  assert.equal(opening.source.sceneRequest.source.starterId, 'jenna');
+  assert.notEqual(inlineSceneVideoRequestKey(opening), inlineSceneVideoRequestKey(completed));
+  assert.throws(
+    () => normalizeInlineSceneVideoRequest({
+      ...opening,
+      source: {
+        ...opening.source,
+        sceneRequest: {
+          ...opening.source.sceneRequest,
+          source: { ...opening.source.sceneRequest.source, starterId: 'cally' }
+        }
+      }
+    }),
+    /source provenance/
   );
 });
 

@@ -3,6 +3,9 @@ import test from 'node:test';
 
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
+  INLINE_SCENE_IMAGE_REQUEST_SPEC,
+  INLINE_SCENE_REQUEST_SPEC,
+  INLINE_SCENE_RESULT_SPEC,
   INLINE_SCENE_SYSTEM_PROMPT,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
   buildInlineSceneImageRequest,
@@ -11,8 +14,14 @@ import {
   createInlineSceneResult,
   inlineSceneDimensions,
   inlineSceneImageRequestKey,
+  inlineSceneSourceForCompletedTurn,
+  inlineSceneSourceForScenarioOpening,
+  inlineSceneSourceKey,
+  inlineSceneSourceMatchesMessages,
+  inlineSceneSourcesMatch,
   inlineSceneResultMatchesRequest,
   normalizeInlineSceneImageRequest,
+  normalizeInlineSceneRequest,
   parseInlineSceneResponse
 } from '../src/lib/inline-scene.ts';
 
@@ -21,6 +30,15 @@ const messages = Object.freeze([
   Object.freeze({ role: 'user', content: 'What is happening on the flight deck?' }),
   Object.freeze({ role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' })
 ]);
+const openingMessages = Object.freeze([
+  Object.freeze({ role: 'assistant', content: 'Jenna grips the flight console as pursuit ships close on the Liberator.' })
+]);
+const openingIdentity = Object.freeze({
+  scenarioId: 'blakes-7-post-gan',
+  scenarioVersion: '1.1.0',
+  starterId: 'jenna',
+  expectedGreeting: openingMessages[0].content
+});
 const visualPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const canonicalReference = Object.freeze({
   name: 'jenna-stannis-v1.jpg',
@@ -46,6 +64,107 @@ test('builds a finalized-response sidecar request without mutating the transcrip
   assert.equal(JSON.stringify(messages), before);
   assert.match(INLINE_SCENE_SYSTEM_PROMPT, /untrusted story data/);
   assert.throws(() => buildInlineSceneRequest(conversationId, [...messages, { role: 'assistant', content: 'partial' }], source), /latest finalized/);
+});
+
+test('represents a canonical assistant-only scenario opening without weakening completed-turn provenance', () => {
+  const before = JSON.stringify(openingMessages);
+  const source = inlineSceneSourceForScenarioOpening(conversationId, openingMessages, openingIdentity);
+  const request = buildInlineSceneRequest(conversationId, openingMessages, source);
+  assert.equal(INLINE_SCENE_REQUEST_SPEC, 'mullet_inline_scene_request_v2');
+  assert.equal(INLINE_SCENE_RESULT_SPEC, 'mullet_inline_scene_result_v2');
+  assert.equal(INLINE_SCENE_IMAGE_REQUEST_SPEC, 'mullet_inline_scene_image_request_v3');
+  assert.equal(source.sourceKind, 'scenario_opening');
+  assert.equal(source.messageCount, 1);
+  assert.equal(source.messageIndex, 0);
+  assert.equal(source.scenarioId, openingIdentity.scenarioId);
+  assert.equal(source.scenarioVersion, openingIdentity.scenarioVersion);
+  assert.equal(source.starterId, openingIdentity.starterId);
+  assert.match(source.fingerprint, /^sha256:[0-9a-f]{64}$/);
+  assert.match(source.openingFingerprint, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(request.turns, openingMessages);
+  assert.deepEqual(normalizeInlineSceneRequest(request), request);
+  assert.equal(inlineSceneSourceMatchesMessages(source, conversationId, openingMessages), true);
+  assert.equal(inlineSceneSourceMatchesMessages(source, conversationId, [...openingMessages, { role: 'user', content: 'What now?' }]), true);
+  assert.equal(JSON.stringify(openingMessages), before);
+
+  const openingResult = createInlineSceneResult(request, 'gemma-4-ortenzya', visualPrompt);
+  assert.equal(inlineSceneResultMatchesRequest(openingResult, request), true);
+  const openingImageRequest = buildInlineSceneImageRequest(openingResult, {
+    referenceImage: canonicalReference,
+    lora: null,
+    aspectRatio: '16:9',
+    megapixels: 1
+  });
+  assert.equal(openingImageRequest.source.sourceKind, 'scenario_opening');
+  assert.equal(openingImageRequest.source.openingFingerprint, source.openingFingerprint);
+  assert.deepEqual(normalizeInlineSceneImageRequest(openingImageRequest), openingImageRequest);
+
+  const otherSource = inlineSceneSourceForScenarioOpening(conversationId, openingMessages, {
+    ...openingIdentity,
+    starterId: 'cally'
+  });
+  const otherImageRequest = buildInlineSceneImageRequest(
+    createInlineSceneResult(
+      buildInlineSceneRequest(conversationId, openingMessages, otherSource),
+      'gemma-4-ortenzya',
+      visualPrompt
+    ),
+    { referenceImage: canonicalReference, lora: null, aspectRatio: '16:9', megapixels: 1 }
+  );
+  assert.notEqual(inlineSceneImageRequestKey(openingImageRequest), inlineSceneImageRequestKey(otherImageRequest));
+
+  const completed = inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, messages));
+  assert.equal(completed.sourceKind, 'completed_turn');
+  assert.equal(inlineSceneSourcesMatch(source, completed), false);
+  assert.notEqual(inlineSceneSourceKey(source), inlineSceneSourceKey(completed));
+  assert.throws(
+    () => buildInlineSceneRequest(conversationId, [...openingMessages, { role: 'user', content: 'What now?' }], source),
+    /latest finalized/
+  );
+});
+
+test('rejects non-canonical, partial, and forged scenario-opening sources', () => {
+  assert.throws(
+    () => inlineSceneSourceForScenarioOpening(conversationId, openingMessages, {
+      ...openingIdentity,
+      expectedGreeting: 'A different opening.'
+    }),
+    /canonical starter greeting/
+  );
+  assert.throws(
+    () => inlineSceneSourceForScenarioOpening(conversationId, [{ role: 'user', content: openingMessages[0].content }], openingIdentity),
+    /exactly one assistant message/
+  );
+  assert.throws(
+    () => inlineSceneSourceForScenarioOpening(conversationId, [...openingMessages, { role: 'assistant', content: 'partial' }], openingIdentity),
+    /exactly one assistant message/
+  );
+
+  const source = inlineSceneSourceForScenarioOpening(conversationId, openingMessages, openingIdentity);
+  const request = buildInlineSceneRequest(conversationId, openingMessages, source);
+  assert.throws(
+    () => normalizeInlineSceneRequest({
+      ...request,
+      turns: [{ role: 'assistant', content: 'Changed after provenance was recorded.' }]
+    }),
+    /fingerprint/
+  );
+  assert.throws(
+    () => normalizeInlineSceneRequest({
+      ...request,
+      source: { ...request.source, starterId: 'cally' }
+    }),
+    /fingerprint/
+  );
+  assert.throws(
+    () => normalizeInlineSceneRequest({
+      ...request,
+      source: { ...request.source, openingFingerprint: `sha256:${'0'.repeat(64)}` }
+    }),
+    /fingerprint/
+  );
+  assert.equal(inlineSceneSourceMatchesMessages(source, conversationId, [{ role: 'assistant', content: 'Changed.' }]), false);
+  assert.equal(inlineSceneSourceMatchesMessages(source, '748b08b7-20bb-4138-a402-0188cc04d2ea', openingMessages), false);
 });
 
 test('shrinks an oversized context tail while retaining the exact finalized pair', () => {

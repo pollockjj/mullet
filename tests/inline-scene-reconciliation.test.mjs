@@ -77,3 +77,98 @@ test('installing a genuinely new static scene still invalidates its predecessor 
   assert.match(suspension, /inlineSceneVideoError = '';/);
   assert.match(suspension, /lastInlineSceneVideoAttemptKey = '';/);
 });
+
+test('restores or republishes a packaged opening source without inventing a user turn', () => {
+  const mount = sourceBetween('onMount(() => {', 'function restoreWorkspaceState()');
+  assert.match(mount, /restoreInlineSceneFinalizedSource\(\);/);
+  assert.match(mount, /restoreScenarioOpeningInlineSceneSourceIfNeeded\(\);/);
+  assert.ok(
+    mount.indexOf('restoreInlineSceneFinalizedSource();')
+      < mount.indexOf('restoreScenarioOpeningInlineSceneSourceIfNeeded();'),
+    'a valid persisted source must be restored before considering an opening-source replacement'
+  );
+
+  const sourceRestoration = sourceBetween(
+    'function restoreInlineSceneFinalizedSource()',
+    'function removeInstalledInlineScene()'
+  );
+  assert.match(sourceRestoration, /normalizeInlineSceneSource\(parsed\.source\)/);
+  assert.match(
+    sourceRestoration,
+    /inlineSceneSourceForCompletedTurn\(normalizeLivingHistorySource\(parsed\.source\)\)/
+  );
+  assert.match(sourceRestoration, /if \(source\.sourceKind === 'scenario_opening' && !scenarioCatalogSettled\) return;/);
+  assert.match(sourceRestoration, /inlineSceneSourceMatchesMessages\(source, conversationId, messages\)/);
+  assert.match(sourceRestoration, /inlineSceneSourceMatchesActiveScenario\(source\)/);
+  assert.match(
+    sourceRestoration,
+    /localStorage\.setItem\(inlineSceneFinalizedStorageKey, JSON\.stringify\(\{ epoch: parsed\.epoch, source \}\)\)/
+  );
+
+  const enabling = sourceBetween(
+    'function persistInlineScenesEnabled()',
+    'function publishFinalizedInlineSceneSource('
+  );
+  assert.match(enabling, /if \(inlineScenesEnabled\) restoreScenarioOpeningInlineSceneSourceIfNeeded\(\);/);
+
+  const openingPublication = sourceBetween(
+    'function scenarioOpeningIdentity()',
+    'async function resetInlineSceneForConversation()'
+  );
+  assert.match(openingPublication, /containsOnlyOpeningGreeting\(activeCard\)/);
+  assert.match(openingPublication, /inlineSceneSourceForScenarioOpening\(conversationId, messages, identity\)/);
+  assert.doesNotMatch(openingPublication, /role:\s*'user'/);
+});
+
+test('catalog settlement repairs a missing starter before restoring or publishing opening provenance', () => {
+  const catalogLoad = sourceBetween(
+    'async function loadScenarioCatalog()',
+    'async function loadScenarioPackage('
+  );
+  assert.match(catalogLoad, /scenarioCatalogSettled = true;/);
+  assert.match(catalogLoad, /if \(activeScenario\) \{\s*const packaged = await loadScenarioPackage\(activeScenario\);/);
+  assert.match(catalogLoad, /activeCard = packaged\.card;/);
+  assert.match(catalogLoad, /restoreInlineSceneFinalizedSource\(\);/);
+  assert.match(catalogLoad, /restoreScenarioOpeningInlineSceneSourceIfNeeded\(\);/);
+  assert.ok(
+    catalogLoad.indexOf('scenarioCatalogSettled = true;')
+      < catalogLoad.indexOf('restoreInlineSceneFinalizedSource();'),
+    'opening restoration must wait for catalog validation and starter repair'
+  );
+
+  const openingIdentity = sourceBetween(
+    'function scenarioOpeningIdentity()',
+    'function publishScenarioOpeningInlineSceneSource()'
+  );
+  assert.match(openingIdentity, /!scenarioCatalogSettled/);
+  assert.match(openingIdentity, /catalogScenario\.version !== scenarioVersion/);
+  assert.match(openingIdentity, /catalogScenario\.starters\.some\(\(starter\) => starter\.id === activeScenarioStarterId\)/);
+  assert.match(openingIdentity, /cardStarters\?\.starters\.some\(\(starter\) => starter\.id === activeScenarioStarterId\)/);
+
+  const activeMatch = sourceBetween(
+    'function inlineSceneSourceMatchesActiveScenario(',
+    'function publishScenarioOpeningInlineSceneSource()'
+  );
+  assert.match(activeMatch, /source\.scenarioId === identity\.scenarioId/);
+  assert.match(activeMatch, /source\.scenarioVersion === identity\.scenarioVersion/);
+  assert.match(activeMatch, /source\.starterId === identity\.starterId/);
+  assert.match(activeMatch, /containsOnlyOpeningGreeting\(activeCard\)/);
+});
+
+test('completed responses retain completed-turn provenance while an opening can render at message zero', () => {
+  const sendTurn = sourceBetween('async function sendChatTurn(', 'function composerKeydown(');
+  assert.match(
+    sendTurn,
+    /inlineSceneSourceForCompletedTurn\(livingHistorySourceForMessages\(conversationId, messages\)\)/
+  );
+
+  assert.match(
+    pageSource,
+    /finalizedInlineSceneSource\?\.messageIndex === messageIndex/
+  );
+  assert.match(pageSource, /inlineSceneSourcesMatch\(scene\.request\.source, source\)/);
+  assert.match(
+    pageSource,
+    /inlineSceneSourceMatchesMessages\(scene\.request\.source, currentConversationId, currentMessages\)/
+  );
+});

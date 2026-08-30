@@ -8,7 +8,8 @@ import {
   buildInlineSceneRequest,
   createInlineSceneResult,
   inlineSceneDimensions,
-  inlineSceneImageRequestKey
+  inlineSceneImageRequestKey,
+  inlineSceneSourceForScenarioOpening
 } from '../src/lib/inline-scene.ts';
 import {
   buildInlineSceneVideoRequest,
@@ -45,12 +46,29 @@ const canonicalReference = Object.freeze({
   aspectRatio: '2:3'
 });
 
-function request() {
-  const messages = [
-    { role: 'user', content: 'What is happening on the flight deck?' },
-    { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
-  ];
-  const sidecar = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
+function request(sourceKind = 'completed_turn') {
+  const messages = sourceKind === 'scenario_opening'
+    ? [{
+        role: 'assistant',
+        content: 'Jenna steadies herself beside the Liberator flight console as the ship emerges from hyperspace.'
+      }]
+    : [
+        { role: 'user', content: 'What is happening on the flight deck?' },
+        { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
+      ];
+  const sidecar = sourceKind === 'scenario_opening'
+    ? {
+        spec: 'mullet_inline_scene_request_v2',
+        kind: 'inline_scene',
+        source: inlineSceneSourceForScenarioOpening(conversationId, messages, {
+          scenarioId: 'blakes-7-after-false-control',
+          scenarioVersion: '3.0',
+          starterId: 'jenna',
+          expectedGreeting: messages[0].content
+        }),
+        turns: messages
+      }
+    : buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', prompt);
   const sceneRequest = buildInlineSceneImageRequest(result, {
     referenceImage: canonicalReference,
@@ -73,8 +91,7 @@ function request() {
   });
 }
 
-function stored(overrides = {}) {
-  const motionRequest = request();
+function stored(overrides = {}, motionRequest = request()) {
   return {
     spec: STORED_INLINE_SCENE_VIDEO_SPEC,
     conversationId,
@@ -100,11 +117,22 @@ function stored(overrides = {}) {
 
 test('normalizes and byte-verifies a static-scene-bound H.264/AAC MP4', async () => {
   const normalized = normalizeStoredInlineSceneVideo(stored());
-  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v4');
-  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v4');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v5');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v5');
   assert.equal(normalized.requestKey, inlineSceneVideoRequestKey(normalized.request));
   assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/mp4');
   assert.equal(normalized.request.source.scenePromptId, staticPromptId);
+});
+
+test('preserves scenario-opening identity through motion persistence', async () => {
+  const completed = stored();
+  const opening = normalizeStoredInlineSceneVideo(stored({}, request('scenario_opening')));
+  assert.equal(opening.request.source.sceneRequest.source.sourceKind, 'scenario_opening');
+  assert.equal(opening.request.source.sceneRequest.source.scenarioId, 'blakes-7-after-false-control');
+  assert.equal(opening.request.source.sceneRequest.source.scenarioVersion, '3.0');
+  assert.equal(opening.request.source.sceneRequest.source.starterId, 'jenna');
+  assert.notEqual(opening.requestKey, completed.requestKey);
+  await verifyStoredInlineSceneVideo(opening);
 });
 
 test('rejects mismatched source, key, dimensions, timing, hashes, and blobs', async () => {
@@ -215,14 +243,16 @@ test('discards a malformed writer envelope inside its restore lock', async () =>
   assert.equal(discardedInsideLock, true);
 });
 
-test('silently discards obsolete v1 through v3 motion inside the restore lock', async () => {
+test('silently discards obsolete v1 through v4 motion inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_video_v1',
     'mullet_stored_inline_scene_video_envelope_v1',
     'mullet_stored_inline_scene_video_v2',
     'mullet_stored_inline_scene_video_envelope_v2',
     'mullet_stored_inline_scene_video_v3',
-    'mullet_stored_inline_scene_video_envelope_v3'
+    'mullet_stored_inline_scene_video_envelope_v3',
+    'mullet_stored_inline_scene_video_v4',
+    'mullet_stored_inline_scene_video_envelope_v4'
   ]) {
     let lockHeld = false;
     let discardedInsideLock = false;

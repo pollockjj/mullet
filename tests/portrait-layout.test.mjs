@@ -73,7 +73,10 @@ test('selected portrait-video template controls modes and durations without hidi
 test('a scenario uses the selected available model and supplies identity only to reference editors', () => {
   assert.match(pageSource, /let scenarioCatalogSettled = false;/);
   assert.match(pageSource, /scenarioPortraitGenerationReady\(activeCard, scenarioCatalogSettled\)/);
-  assert.match(pageSource, /async function loadScenarioCatalog\(\)[\s\S]*?finally \{\s*scenarioCatalogSettled = true;\s*\}/);
+  assert.match(
+    pageSource,
+    /async function loadScenarioCatalog\(\)[\s\S]*?finally \{\s*scenarioCatalogSettled = true;\s*restoreInlineSceneFinalizedSource\(\);\s*restoreScenarioOpeningInlineSceneSourceIfNeeded\(\);/
+  );
   assert.match(pageSource, /if \(!result \|\| !current \|\| !modelAvailable\) return null;/);
   assert.match(pageSource, /portraitModelTemplateAvailable\(portraitCapabilities, portraitModelTemplate\)/);
   assert.match(pageSource, /referenceImage: modelUsesReference \? profile\.referenceImage : null/);

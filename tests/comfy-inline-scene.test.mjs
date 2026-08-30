@@ -3,7 +3,13 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
-import { QWEN_IMAGE_EDIT_SCENE_TEMPLATE, buildInlineSceneImageRequest, createInlineSceneResult } from '../src/lib/inline-scene.ts';
+import {
+  QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+  buildInlineSceneImageRequest,
+  buildInlineSceneRequest,
+  createInlineSceneResult,
+  inlineSceneSourceForCompletedTurn
+} from '../src/lib/inline-scene.ts';
 import { loadInlineSceneCapabilities, runComfyInlineScene, validateInlineScenePng } from '../src/lib/server/comfy-inline-scene.ts';
 
 const promptId = '33333333-3333-4333-8333-333333333333';
@@ -27,13 +33,14 @@ const canonicalReference = Object.freeze({
 });
 
 function request() {
+  const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
   const turns = [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }];
-  const result = createInlineSceneResult({
-    spec: 'mullet_inline_scene_request_v1',
-    kind: 'inline_scene',
-    source: livingHistorySourceForMessages('8d78c151-83f0-4c72-9b9b-1ab957adca78', turns),
-    turns
-  }, 'gemma-4-ortenzya', visualPrompt);
+  const source = inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, turns));
+  const result = createInlineSceneResult(
+    buildInlineSceneRequest(conversationId, turns, source),
+    'gemma-4-ortenzya',
+    visualPrompt
+  );
   return buildInlineSceneImageRequest(result, {
     referenceImage: canonicalReference,
     lora: null,
