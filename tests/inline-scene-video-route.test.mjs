@@ -160,10 +160,12 @@ function capabilityResponse(nodeName) {
   if (nodeName === 'MiniMaxH3ReferenceToVideo') {
     required.ref_image_size = [['match', 'max'], {}];
     optional.ref_images = ['COMFY_AUTOGROW_V3', {
-      template: { input: { required: { ref_image: ['IMAGE', {}] } } },
-      prefix: 'ref_image_',
-      min: 0,
-      max: 9
+      template: {
+        input: { required: { ref_image: ['IMAGE', {}] } },
+        prefix: 'ref_image_',
+        min: 0,
+        max: 9
+      }
     }];
   }
   if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler], {}];

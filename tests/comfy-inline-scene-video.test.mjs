@@ -153,10 +153,12 @@ function capabilityInfo(nodeName) {
   if (nodeName === 'MiniMaxH3ReferenceToVideo') {
     required.ref_image_size = [['match', 'max'], {}];
     optional.ref_images = ['COMFY_AUTOGROW_V3', {
-      template: { input: { required: { ref_image: ['IMAGE', {}] } } },
-      prefix: 'ref_image_',
-      min: 0,
-      max: 9
+      template: {
+        input: { required: { ref_image: ['IMAGE', {}] } },
+        prefix: 'ref_image_',
+        min: 0,
+        max: 9
+      }
     }];
   }
   if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler], {}];
@@ -182,11 +184,11 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
   assert.deepEqual(capabilities.durations, [5]);
   const degradationCases = [
     {
-      mutate(info) { info.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].max = 8; },
+      mutate(info) { info.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].template.max = 8; },
       diagnostic: 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9'
     },
     {
-      mutate(info) { info.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].prefix = 'image_'; },
+      mutate(info) { info.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].template.prefix = 'image_'; },
       diagnostic: 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9'
     },
     {

@@ -120,9 +120,9 @@ function requireExactAutogrowDefinition(
   }
   const required = template.input.required;
   if (
-    metadata.prefix !== prefix
-    || metadata.min !== 0
-    || metadata.max !== maximum
+    template.prefix !== prefix
+    || template.min !== 0
+    || template.max !== maximum
     || !Array.isArray(required.ref_image)
     || required.ref_image[0] !== 'IMAGE'
   ) {
