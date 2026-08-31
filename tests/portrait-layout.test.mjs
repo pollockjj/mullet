@@ -4,6 +4,9 @@ import test from 'node:test';
 
 const pageSource = readFileSync(new URL('../src/routes/+page.svelte', import.meta.url), 'utf8');
 const portraitVideoSource = readFileSync(new URL('../src/lib/portrait-video.ts', import.meta.url), 'utf8');
+const portraitImagePanel = pageSource.match(
+  /<section class="portrait-panel" aria-label="Generated expression portrait">[\s\S]*?<\/section>/
+)?.[0] ?? '';
 const portraitMotionPanel = pageSource.match(
   /<section class="portrait-panel motion-panel" aria-label="Generated portrait motion">[\s\S]*?<\/section>/
 )?.[0] ?? '';
@@ -29,7 +32,7 @@ test('portrait image models are one additive persisted inventory, not a replacem
   assert.match(pageSource, /aria-label="Portrait image model"/);
   assert.match(pageSource, /\{#each portraitCapabilities\.templates as capability\}/);
   assert.match(pageSource, /<option value=\{capability\.template\.id\}>/);
-  assert.doesNotMatch(pageSource, /value=\{capability\.template\.id\} disabled=/);
+  assert.doesNotMatch(portraitImagePanel, /value=\{capability\.template\.id\} disabled=/);
   assert.match(pageSource, /` · unavailable · missing \$\{capability\.missing\.join\(', '\)\}`/);
   assert.match(pageSource, /missing \$\{selectedPortraitCapability\.missing\.join\(', '\)\}/);
   assert.match(pageSource, /localStorage\.setItem\(portraitModelTemplateStorageKey, portraitModelTemplate\)/);
@@ -41,9 +44,12 @@ test('portrait motion defaults to the bound LTX template and persists a real add
   assert.match(portraitVideoSource, /export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;/);
   assert.match(pageSource, /let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;/);
   assert.match(pageSource, /let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;/);
-  assert.match(pageSource, /portraitVideoModelTemplateStorageKey = 'mullet\.portrait-video-model-template\.v2'/);
-  assert.match(pageSource, /portraitVideoModeStorageKey = 'mullet\.portrait-video-mode\.v5'/);
-  assert.match(pageSource, /portraitVideoDurationStorageKey = 'mullet\.portrait-video-duration\.v5'/);
+  assert.match(pageSource, /portraitVideoModelTemplateStorageKey = 'mullet\.portrait-video-model-template\.v3'/);
+  assert.match(pageSource, /portraitVideoModeStorageKey = 'mullet\.portrait-video-mode\.v6'/);
+  assert.match(pageSource, /portraitVideoDurationStorageKey = 'mullet\.portrait-video-duration\.v6'/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-video-model-template\.v2/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-video-mode\.v5/);
+  assert.doesNotMatch(pageSource, /mullet\.portrait-video-duration\.v5/);
   assert.doesNotMatch(pageSource, /mullet\.portrait-video-model-template\.v1/);
   assert.doesNotMatch(pageSource, /mullet\.portrait-video-mode\.v4/);
   assert.doesNotMatch(pageSource, /mullet\.portrait-video-duration\.v4/);
@@ -54,6 +60,25 @@ test('portrait motion defaults to the bound LTX template and persists a real add
   assert.match(portraitMotionPanel, /<option value=\{capability\.template\.id\}>/);
   assert.doesNotMatch(portraitMotionPanel, /value=\{capability\.template\.id\} disabled=/);
   assert.match(pageSource, /localStorage\.setItem\(portraitVideoModelTemplateStorageKey, portraitVideoModelTemplate\)/);
+});
+
+test('scene motion visibly defaults to LTX after refresh while retaining additive MiniMax selection', () => {
+  assert.match(pageSource, /let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
+  assert.match(pageSource, /inlineSceneVideoModelTemplateStorageKey = 'mullet\.inline-scene-video-model-template\.v1'/);
+  assert.doesNotMatch(pageSource, /mullet\.inline-scene-video-model-template(?:'|\.v0)/);
+  assert.match(pageSource, /savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
+  assert.match(pageSource, /savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
+  assert.match(pageSource, /: INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
+  assert.match(pageSource, /localStorage\.setItem\(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate\)/);
+  assert.match(pageSource, /bind:value=\{inlineSceneVideoModelTemplate\}/);
+  assert.match(pageSource, /on:change=\{persistInlineSceneVideoModelTemplate\}/);
+  assert.match(pageSource, /\{#each inlineSceneVideoCapabilities\.templates as capability\}/);
+  assert.doesNotMatch(pageSource, /value=\{capability\.template\.id\} disabled=/);
+  assert.match(pageSource, /buildInlineSceneVideoRequest\(scene, modelTemplate\)/);
+  assert.match(pageSource, /LTX 2\.5 Distilled · silent/);
+  assert.match(pageSource, /MiniMax H3 FL2VA Turbo · native audio/);
+  assert.match(pageSource, /!inlineSceneVideoSelectedModelAvailable\}[\s\S]*?Retry scene motion models/);
+  assert.match(pageSource, /on:click=\{\(\) => void loadInlineSceneVideoGenerator\(\)\}/);
 });
 
 test('selected portrait-video template controls modes and durations without hiding unavailable options', () => {

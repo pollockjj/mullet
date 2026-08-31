@@ -22,6 +22,28 @@
           "label": "Servalan"
         }
       ]
+    },
+    {
+      "id": "summer-cabin-weekend",
+      "version": "1.0.0",
+      "title": "Summer Weekend at the Cabin",
+      "summary": "A contemporary family weekend at a log cabin with separate Jan, Kristi, and Angela openings backed by the supplied SillyTavern lore and identity references.",
+      "card": "summer-cabin-weekend.card.json",
+      "lorebook": "summer-cabin-weekend.lorebook.json",
+      "starters": [
+        {
+          "id": "jan",
+          "label": "Jan"
+        },
+        {
+          "id": "kristi",
+          "label": "Kristi"
+        },
+        {
+          "id": "angela",
+          "label": "Angela"
+        }
+      ]
     }
   ]
 }

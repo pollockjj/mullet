@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -23,8 +24,18 @@ import {
 } from '../src/lib/portrait.ts';
 
 const asset = (name) => JSON.parse(readFileSync(new URL(`../static/scenarios/${name}`, import.meta.url), 'utf8'));
-const starterIds = ['jenna', 'cally', 'servalan'];
-const starterPortraitProfileIds = ['jenna-stannis', 'cally', 'servalan'];
+const scenarioExpectations = new Map([
+  ['blakes-7-post-gan', {
+    defaultStarterId: 'jenna',
+    starterIds: ['jenna', 'cally', 'servalan'],
+    portraitProfileIds: ['jenna-stannis', 'cally', 'servalan']
+  }],
+  ['summer-cabin-weekend', {
+    defaultStarterId: 'jan',
+    starterIds: ['jan', 'kristi', 'angela'],
+    portraitProfileIds: ['jan-pollock', 'kristi-bentler', 'angela-pollock']
+  }]
+]);
 
 function bundledScenarios() {
   const catalog = normalizeScenarioCatalog(asset('catalog.json'));
@@ -39,8 +50,14 @@ function bundledScenarios() {
 }
 
 function bundledScenario() {
+  return bundledScenarioById('blakes-7-post-gan');
+}
+
+function bundledScenarioById(id) {
   const { catalog, scenarios } = bundledScenarios();
-  const { entry, cardRaw, lorebookRaw } = scenarios[0];
+  const selected = scenarios.find(({ entry }) => entry.id === id);
+  assert.ok(selected, `missing bundled scenario ${id}`);
+  const { entry, cardRaw, lorebookRaw } = selected;
   return {
     catalog,
     entry,
@@ -54,7 +71,7 @@ test('validates the generic bundled-scenario catalog and rejects unsafe or dupli
   assert.equal(catalog.spec, 'mullet_scenario_catalog_v2');
   assert.equal(entry.id, 'blakes-7-post-gan');
   assert.match(entry.version, /^\d+\.\d+\.\d+$/);
-  assert.deepEqual(entry.starters.map((starter) => starter.id), starterIds);
+  assert.deepEqual(entry.starters.map((starter) => starter.id), ['jenna', 'cally', 'servalan']);
   assert.deepEqual(entry.starters.map((starter) => starter.label), ['Jenna', 'Cally', 'Servalan']);
 
   const duplicate = asset('catalog.json');
@@ -77,14 +94,16 @@ test('validates every bundled package and selects three distinct starter message
   assert.ok(scenarios.length > 0);
 
   for (const { entry, cardRaw, lorebookRaw } of scenarios) {
+    const expectation = scenarioExpectations.get(entry.id);
+    assert.ok(expectation, `missing test expectation for ${entry.id}`);
     const packaged = validateScenarioPackage(entry, cardRaw, lorebookRaw);
     const starters = scenarioStarters(packaged.card);
     assert.deepEqual(packaged.starters, starters);
     assert.equal(starters.spec, 'mullet_scenario_starters_v1');
-    assert.equal(starters.defaultStarterId, 'jenna');
+    assert.equal(starters.defaultStarterId, expectation.defaultStarterId);
     assert.equal(starters.starters.length, 3);
-    assert.deepEqual(starters.starters.map((starter) => starter.id), starterIds);
-    assert.deepEqual(starters.starters.map((starter) => starter.portraitProfileId), starterPortraitProfileIds);
+    assert.deepEqual(starters.starters.map((starter) => starter.id), expectation.starterIds);
+    assert.deepEqual(starters.starters.map((starter) => starter.portraitProfileId), expectation.portraitProfileIds);
     assert.deepEqual(
       starters.starters.map(({ id, label }) => ({ id, label })),
       entry.starters
@@ -195,6 +214,87 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
       assert.ok(Object.hasOwn(loreEntry, field), `${loreEntry.id}.${field}`);
     }
   });
+});
+
+test('ships the private cabin lore with three byte-exact Qwen identity references', () => {
+  const { entry, cardRaw, lorebookRaw } = bundledScenarioById('summer-cabin-weekend');
+  const packaged = validateScenarioPackage(entry, cardRaw, lorebookRaw);
+
+  assert.equal(packaged.card.spec, 'chara_card_v3');
+  assert.equal(packaged.card.specVersion, '3.0');
+  assert.equal(lorebookRaw.spec, 'lorebook_v3');
+  assert.deepEqual(cardRaw.data.character_book, lorebookRaw.data);
+  assert.equal(packaged.lorebook.entries.length, 7);
+  assert.deepEqual(packaged.lorebook.diagnostics, []);
+  assert.equal(lorebookRaw.data.extensions.mullet.source_format, 'sillytavern_world_info');
+  assert.equal(
+    lorebookRaw.data.extensions.mullet.source_sha256,
+    'b63f72e576bbd954292d99c35b180674728dd358584ef79f05d981909970ec81'
+  );
+  assert.equal(packaged.starters.defaultStarterId, 'jan');
+  assert.deepEqual(
+    packaged.starters.starters.map(({ id, portraitProfileId }) => ({ id, portraitProfileId })),
+    [
+      { id: 'jan', portraitProfileId: 'jan-pollock' },
+      { id: 'kristi', portraitProfileId: 'kristi-bentler' },
+      { id: 'angela', portraitProfileId: 'angela-pollock' }
+    ]
+  );
+
+  const references = new Map([
+    ['jan-pollock', {
+      name: 'cabin-jan-v1.png',
+      sha256: '5fb84b3a0a3a2cff07488e3799d89e5a3539e90bd01932c7bb44e58fad4a832f',
+      width: 1024,
+      height: 1024
+    }],
+    ['kristi-bentler', {
+      name: 'cabin-kristi-v1.png',
+      sha256: 'faea3ae4289d2443a9bd22b8d3c329972470d97b9488c2c7f549431a0159f4ea',
+      width: 2048,
+      height: 2048
+    }],
+    ['angela-pollock', {
+      name: 'cabin-angela-v1.png',
+      sha256: '73615e29527ff93f93f4371e614decbc66dfb07d35b1f420cfe5f4d4ef40fcf3',
+      width: 1024,
+      height: 1024
+    }]
+  ]);
+  for (const profile of packaged.portraitCast.profiles) {
+    const expected = references.get(profile.id);
+    assert.ok(expected, `unexpected cabin portrait profile ${profile.id}`);
+    assert.equal(profile.modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
+    assert.deepEqual(profile.referenceImage, {
+      name: expected.name,
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: expected.sha256,
+      width: expected.width,
+      height: expected.height,
+      aspectRatio: '1:1'
+    });
+
+    const bytes = readFileSync(
+      new URL(`../static/scenarios/summer-cabin-weekend.references/${expected.name}`, import.meta.url)
+    );
+    assert.equal(bytes.subarray(1, 4).toString('ascii'), 'PNG');
+    assert.equal(bytes.readUInt32BE(16), expected.width);
+    assert.equal(bytes.readUInt32BE(20), expected.height);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), expected.sha256);
+  }
+
+  const serialized = JSON.stringify({ cardRaw, lorebookRaw });
+  assert.doesNotMatch(serialized, /clearly sexually active/i);
+  const kristi = lorebookRaw.data.entries.find(({ id }) => id === 2);
+  assert.match(kristi.content, /adopted 13-year-old daughter, Celia/);
+  assert.doesNotMatch(kristi.content, /sexual/i);
+  const minerva = lorebookRaw.data.entries.find(({ id }) => id === 4);
+  assert.equal(minerva.enabled, false);
+  assert.equal(packaged.lorebook.entries.find(({ id }) => id === '4').enabled, false);
+  const angela = lorebookRaw.data.entries.find(({ id }) => id === 6);
+  assert.match(angela.content, /adult niece and works for the VA/);
+  assert.match(angela.content, /no other biographical or personality facts/);
 });
 
 test('rejects mismatched or malformed scenario packages before activation', () => {

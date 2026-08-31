@@ -15,11 +15,15 @@ import {
   inlineSceneImageRequestKey
 } from '../src/lib/inline-scene.ts';
 import {
+  INLINE_SCENE_VIDEO_TEMPLATES,
+  LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
   buildInlineSceneVideoRequest,
   inlineSceneVideoSourceRequestSha256
 } from '../src/lib/inline-scene-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
+import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-inline-scene-video-route');
@@ -30,6 +34,7 @@ const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const comfyPromptId = '33333333-3333-4333-8333-333333333333';
 const staticPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const mp4Bytes = buildH264AacMp4Fixture();
+const webmBytes = buildVp9WebmFixture({ width: 1344, height: 768, frames: 121, fps: 24 });
 const canonicalReference = Object.freeze({
   name: 'jenna-stannis-v1.jpg',
   subfolder: 'mullet/identity',
@@ -54,7 +59,7 @@ function png(width, height) {
   return bytes;
 }
 
-function motionRequest(imageSha256) {
+function motionRequest(imageSha256, modelTemplate) {
   const messages = [
     { role: 'user', content: 'What is happening on the flight deck?' },
     { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
@@ -72,7 +77,7 @@ function motionRequest(imageSha256) {
     megapixels: 1
   });
   const dimensions = inlineSceneDimensions('16:9', 1);
-  return buildInlineSceneVideoRequest({
+  const scene = {
     conversationId,
     epoch: '11111111-1111-4111-8111-111111111111',
     requestKey: inlineSceneImageRequestKey(sceneRequest),
@@ -83,25 +88,29 @@ function motionRequest(imageSha256) {
     height: dimensions.height,
     generatedAt: 17,
     imageSha256
-  });
+  };
+  return modelTemplate ? buildInlineSceneVideoRequest(scene, modelTemplate) : buildInlineSceneVideoRequest(scene);
 }
 
 function capabilityResponse(nodeName) {
-  const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const ltx = LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
+  const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
   const required = {};
   const optional = {};
-  if (nodeName === 'UNETLoader') required.unet_name = [[template.modelFiles.unet], {}];
+  if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet], {}];
   if (nodeName === 'CLIPLoader') {
-    required.clip_name = [[template.modelFiles.clip], {}];
-    required.type = [['minimax'], {}];
+    required.clip_name = [[ltx.modelFiles.clip, minimax.modelFiles.clip], {}];
+    required.type = [['ltxv', 'minimax'], {}];
   }
   if (nodeName === 'VAELoader') {
-    required.vae_name = [[template.modelFiles.videoVae, template.modelFiles.audioVae], {}];
+    required.vae_name = [[ltx.modelFiles.videoVae, ltx.modelFiles.audioVae, minimax.modelFiles.videoVae, minimax.modelFiles.audioVae], {}];
   }
-  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[template.modelFiles.turboLora], {}];
-  if (nodeName === 'KSamplerSelect') required.sampler_name = [[template.sampler], {}];
-  if (nodeName === 'BasicScheduler') required.scheduler = [[template.scheduler], {}];
+  if (nodeName === 'LatentUpscaleModelLoader') required.model_name = [[ltx.modelFiles.latentUpscaler], {}];
+  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[minimax.modelFiles.turboLora], {}];
+  if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler], {}];
+  if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler], {}];
   if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
+  if (nodeName === 'SaveWEBM') required.codec = [[ltx.codec], {}];
   if (nodeName === 'SaveVideo') {
     required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }] }];
     optional.codec = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }] }];
@@ -134,12 +143,13 @@ function webHeaders(request) {
 }
 
 function fakeComfy() {
-  const state = { mode: 'happy', calls: [], uploads: [], prompts: [] };
+  const state = { mode: 'happy', calls: [], uploads: [], prompts: [], selectedModel: 'ltx' };
   const reset = (mode = 'happy') => {
     state.mode = mode;
     state.calls = [];
     state.uploads = [];
     state.prompts = [];
+    state.selectedModel = 'ltx';
   };
   const server = createServer(async (request, response) => {
     try {
@@ -176,7 +186,9 @@ function fakeComfy() {
         return;
       }
       if (url.pathname === '/prompt' && request.method === 'POST') {
-        state.prompts.push(JSON.parse((await requestBytes(request)).toString('utf8')));
+        const queued = JSON.parse((await requestBytes(request)).toString('utf8'));
+        state.prompts.push(queued);
+        state.selectedModel = queued.prompt['35'] ? 'ltx' : 'minimax';
         responseJson(response, 200, { prompt_id: comfyPromptId, node_errors: {} });
         return;
       }
@@ -187,12 +199,17 @@ function fakeComfy() {
           });
           return;
         }
+        const isLtx = state.selectedModel === 'ltx';
         responseJson(response, 200, {
           [comfyPromptId]: {
             status: { completed: true, status_str: 'success' },
             outputs: {
-              '15': {
-                images: [{ filename: 'scene-motion_00001_.mp4', subfolder: 'mullet', type: 'output' }],
+              [isLtx ? '35' : '15']: {
+                images: [{
+                  filename: isLtx ? 'scene-motion-loop-flf_00001_.webm' : 'scene-motion_00001_.mp4',
+                  subfolder: 'mullet',
+                  type: 'output'
+                }],
                 animated: [true]
               }
             }
@@ -201,19 +218,22 @@ function fakeComfy() {
         return;
       }
       if (url.pathname === '/view') {
+        const isLtx = state.selectedModel === 'ltx';
+        const bytes = isLtx ? webmBytes : mp4Bytes;
+        const contentType = isLtx ? 'video/webm' : 'video/mp4';
         if (state.mode === 'oversized') {
           response.writeHead(200, {
-            'content-type': 'video/mp4',
+            'content-type': contentType,
             'content-length': String(64 * 1024 * 1024 + 1)
           });
           response.end();
           return;
         }
         response.writeHead(200, {
-          'content-type': 'video/mp4',
-          'content-length': String(mp4Bytes.byteLength)
+          'content-type': contentType,
+          'content-length': String(bytes.byteLength)
         });
-        response.end(mp4Bytes);
+        response.end(bytes);
         return;
       }
       if (url.pathname === `/api/jobs/${comfyPromptId}/cancel` && request.method === 'POST') {
@@ -257,7 +277,7 @@ function formFor(request, imageBytes, includeExtra = false) {
   return form;
 }
 
-test('compiled inline-scene-video route enforces the MiniMax H3 contract', { timeout: 120_000 }, async (context) => {
+test('compiled inline-scene-video route enforces the additive LTX-default and MiniMax contracts', { timeout: 120_000 }, async (context) => {
   execFileSync(process.execPath, [resolve(repositoryRoot, 'node_modules/vite/bin/vite.js'), 'build'], {
     cwd: repositoryRoot,
     env: {
@@ -297,15 +317,18 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     body
   });
 
-  await context.test('GET returns exact installed MiniMax H3 capabilities', async () => {
+  await context.test('GET returns exact installed LTX and MiniMax capabilities', async () => {
     fake.reset();
     const response = await fetch(routeUrl);
     const responseText = await response.text();
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v2');
-    assert.equal(capabilities.template.id, 'minimax-h3-fl2va-i2v-turbo-v1');
+    assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v3');
+    assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
+      ['ltx-2.5-distilled-scene-v1', true],
+      ['minimax-h3-fl2va-i2v-turbo-v1', true]
+    ]);
     assert.deepEqual(capabilities.aspectRatios, [
       { aspectRatio: '3:2', width: 1152, height: 768 },
       { aspectRatio: '4:3', width: 1024, height: 768 },
@@ -314,33 +337,35 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     ]);
     assert.deepEqual(capabilities.durations, [5]);
     const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
-    assert.deepEqual(new Set(queriedNodes), new Set(MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.requiredNodes));
-    assert.equal(queriedNodes.length, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.requiredNodes.length);
+    const expectedNodes = new Set(INLINE_SCENE_VIDEO_TEMPLATES.flatMap(({ requiredNodes }) => requiredNodes));
+    assert.deepEqual(new Set(queriedNodes), expectedNodes);
+    assert.equal(queriedNodes.length, expectedNodes.size);
   });
 
-  await context.test('POST uploads exact scene bytes and proxies H.264/AAC MP4 with provenance', async () => {
+  await context.test('POST defaults to exact silent LTX first/last-frame VP9 WebM with provenance', async () => {
     fake.reset();
     const response = await post(formFor(request, imageBytes));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
     assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, mp4Bytes);
-    assert.equal(response.headers.get('content-type'), 'video/mp4');
+    assert.deepEqual(responseBytes, webmBytes);
+    assert.equal(response.headers.get('content-type'), 'video/webm');
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-mullet-prompt-id'), comfyPromptId);
     assert.equal(response.headers.get('x-mullet-width'), '1344');
     assert.equal(response.headers.get('x-mullet-height'), '768');
-    assert.equal(response.headers.get('x-mullet-frames'), '124');
+    assert.equal(response.headers.get('x-mullet-frames'), '121');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
     assert.equal(request.durationSeconds, 5);
-    assert.equal(response.headers.get('x-mullet-duration-seconds'), String(124 / 24));
-    assert.equal(response.headers.get('x-mullet-model-template'), 'minimax-h3-fl2va-i2v-turbo-v1');
-    assert.equal(response.headers.get('x-mullet-video-mode'), 'i2v');
+    assert.equal(response.headers.get('x-mullet-duration-seconds'), String(Math.round(121 * 1000 / 24) / 1000));
+    assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
+    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-scene-v1');
+    assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_loop');
     assert.equal(response.headers.get('x-mullet-source-prompt-id'), staticPromptId);
     assert.equal(response.headers.get('x-mullet-source-seed'), '42');
     assert.equal(response.headers.get('x-mullet-source-request-sha256'), inlineSceneVideoSourceRequestSha256(request));
     assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
-    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(mp4Bytes));
+    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(webmBytes));
 
     assert.equal(fake.state.uploads.length, 1);
     const upload = fake.state.uploads[0];
@@ -355,16 +380,38 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     const seed = Number(response.headers.get('x-mullet-seed'));
     assert.equal(Number.isSafeInteger(seed), true);
     assert.equal(queued.client_id, 'mullet-inline-scene-video');
+    assert.equal(queued.prompt['3'].inputs.unet_name, LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.unet);
+    assert.equal(queued.prompt['1'].inputs.image, `mullet/motion-inputs/${upload.name}`);
+    assert.equal(queued.prompt['11'].inputs.width, 672);
+    assert.equal(queued.prompt['11'].inputs.height, 384);
+    assert.equal(queued.prompt['11'].inputs.length, 121);
+    assert.equal(queued.prompt['17'].inputs.noise_seed, seed);
+    assert.equal(queued.prompt['12'].inputs.frame_idx, 0);
+    assert.equal(queued.prompt['13'].inputs.frame_idx, -1);
+    assert.equal(queued.prompt['24'].inputs.frame_idx, 0);
+    assert.equal(queued.prompt['25'].inputs.frame_idx, -1);
+    assert.equal(queued.prompt['35'].inputs.fps, 24);
+    assert.equal(queued.prompt['35'].inputs.codec, 'vp9');
+    assert.equal('audio' in queued.prompt['35'].inputs, false);
+  });
+
+  await context.test('POST keeps MiniMax H3 as a selectable native-audio MP4', async () => {
+    fake.reset();
+    const minimaxRequest = motionRequest(imageSha256, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    const response = await post(formFor(minimaxRequest, imageBytes));
+    const responseBytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
+    assert.deepEqual(responseBytes, mp4Bytes);
+    assert.equal(response.headers.get('content-type'), 'video/mp4');
+    assert.equal(response.headers.get('x-mullet-model-template'), MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    assert.equal(response.headers.get('x-mullet-video-mode'), 'i2v');
+    assert.equal(response.headers.get('x-mullet-frames'), '124');
+    assert.equal(response.headers.get('x-mullet-audio-tracks'), '1');
+    assert.equal(response.headers.get('x-mullet-duration-seconds'), String(124 / 24));
+    const queued = fake.state.prompts[0];
     assert.equal(queued.prompt['1'].inputs.unet_name, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.unet);
-    assert.equal(queued.prompt['5'].inputs.image, `mullet/motion-inputs/${upload.name}`);
-    assert.equal(queued.prompt['6'].inputs.width, 1344);
-    assert.equal(queued.prompt['6'].inputs.height, 768);
     assert.equal(queued.prompt['6'].inputs.length, 124);
-    assert.equal(queued.prompt['10'].inputs.noise_seed, seed);
     assert.deepEqual(queued.prompt['14'].inputs.audio, ['13', 0]);
-    assert.equal(queued.prompt['14'].inputs.fps, 24);
-    assert.equal(queued.prompt['15'].inputs.format, 'auto');
-    assert.equal(queued.prompt['15'].inputs.codec, 'auto');
   });
 
   await context.test('POST rejects hash, IHDR, and multipart mismatch before ComfyUI', async () => {
@@ -393,11 +440,11 @@ test('compiled inline-scene-video route enforces the MiniMax H3 contract', { tim
     assert.equal(fake.state.calls.some(({ path }) => path === '/interrupt'), false);
   });
 
-  await context.test('declared oversized MP4 maps to 413 without allocating its body', async () => {
+  await context.test('declared oversized output maps to 413 without allocating its body', async () => {
     fake.reset('oversized');
     const response = await post(formFor(request, imageBytes));
     assert.equal(response.status, 413, await response.text());
     assert.equal(fake.state.calls.some(({ path }) => path.startsWith('/view?')), true);
-    assert.equal(fake.state.calls.some(({ path }) => path.includes('/cancel')), false);
+    assert.equal(fake.state.calls.some(({ path }) => path.includes('/cancel')), true);
   });
 });

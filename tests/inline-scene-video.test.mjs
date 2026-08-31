@@ -13,7 +13,11 @@ import {
 import {
   INLINE_SCENE_VIDEO_DIMENSIONS,
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
+  LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
+  LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  buildLtx25InlineSceneVideoWorkflow,
   buildInlineSceneVideoPrompt,
   buildInlineSceneVideoRequest,
   buildMiniMaxH3InlineSceneVideoWorkflow,
@@ -115,7 +119,9 @@ function openingStaticScene(aspectRatio = '16:9', megapixels = 1) {
 test('binds motion to every static-scene provenance field', () => {
   const scene = staticScene();
   const request = buildInlineSceneVideoRequest(scene);
-  assert.equal(request.spec, 'mullet_inline_scene_video_request_v3');
+  assert.equal(request.spec, 'mullet_inline_scene_video_request_v4');
+  assert.equal(request.modelTemplate, LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+  assert.equal(request.mode, 'flf2v_loop');
   assert.equal(request.source.sceneRequestKey, scene.requestKey);
   assert.equal(request.source.sceneSeed, 42);
   assert.equal(request.source.sceneRequest.source.promptSha256, scene.request.source.promptSha256);
@@ -173,7 +179,7 @@ test('binds scenario-opening identity into the motion request key', () => {
   );
 });
 
-test('uses the fixed live-tested landscape video envelope', () => {
+test('uses the fixed live-tested landscape envelopes with LTX as the default', () => {
   assert.deepEqual(INLINE_SCENE_VIDEO_DIMENSIONS, [
     { aspectRatio: '3:2', width: 1152, height: 768 },
     { aspectRatio: '4:3', width: 1024, height: 768 },
@@ -184,11 +190,14 @@ test('uses the fixed live-tested landscape video envelope', () => {
     const dimensions = inlineSceneVideoDimensions(entry.aspectRatio);
     assert.equal(dimensions.width, entry.width);
     assert.equal(dimensions.height, entry.height);
-    assert.equal(dimensions.width % MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
-    assert.equal(dimensions.height % MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
+    assert.equal(dimensions.width % LTX25_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
+    assert.equal(dimensions.height % LTX25_INLINE_SCENE_VIDEO_TEMPLATE.multiple, 0);
     assert.ok(dimensions.width * dimensions.height <= MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.maxPixels);
-    assert.equal(dimensions.frames, 124);
+    assert.equal(dimensions.frames, 121);
     assert.equal(dimensions.fps, 24);
+    const minimax = inlineSceneVideoDimensions(entry.aspectRatio, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    assert.equal(minimax.frames, 124);
+    assert.equal(minimax.fps, 24);
   }
 });
 
@@ -270,7 +279,10 @@ test('accepts only a canonical finite encoded-duration header', () => {
 });
 
 test('builds the pinned MiniMax H3 FL2VA I2V graph with native audio', () => {
-  const request = buildInlineSceneVideoRequest(staticScene('3:2', 0.5));
+  const request = buildInlineSceneVideoRequest(
+    staticScene('3:2', 0.5),
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  );
   const input = {
     name: 'scene-motion-33333333-3333-4333-8333-333333333333.png',
     subfolder: 'mullet/motion-inputs',
@@ -297,4 +309,29 @@ test('builds the pinned MiniMax H3 FL2VA I2V graph with native audio', () => {
     () => buildMiniMaxH3InlineSceneVideoWorkflow(request, { ...input, imageSha256: 'b'.repeat(64) }, 42),
     /input reference/
   );
+});
+
+test('builds the pinned two-pass LTX FLF graph with identical supplied first and last frames and no output audio', () => {
+  const request = buildInlineSceneVideoRequest(staticScene('16:9', 0.5));
+  const input = {
+    name: 'scene-motion-33333333-3333-4333-8333-333333333333.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: request.source.sceneImageSha256
+  };
+  const graph = buildLtx25InlineSceneVideoWorkflow(request, input, 42);
+  assert.equal(graph['3'].inputs.unet_name, LTX25_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['4'].inputs.type, 'ltxv');
+  assert.equal(graph['11'].inputs.length, 121);
+  assert.deepEqual(graph['12'].inputs.image, ['2', 0]);
+  assert.deepEqual(graph['24'].inputs.image, ['2', 0]);
+  assert.equal(graph['12'].inputs.frame_idx, 0);
+  assert.equal(graph['13'].inputs.frame_idx, -1);
+  assert.equal(graph['24'].inputs.frame_idx, 0);
+  assert.equal(graph['25'].inputs.frame_idx, -1);
+  assert.equal(graph['35'].class_type, 'SaveWEBM');
+  assert.equal(graph['35'].inputs.codec, 'vp9');
+  assert.equal('audio' in graph['35'].inputs, false);
+  assert.match(buildInlineSceneVideoPrompt(request), /Silent video only/);
+  assert.match(buildInlineSceneVideoPrompt(request), /no talking, no lip or mouth movement/);
 });

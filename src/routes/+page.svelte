@@ -71,20 +71,26 @@
   import {
     INLINE_SCENE_VIDEO_DURATION_SECONDS,
     INLINE_SCENE_VIDEO_FPS,
-    INLINE_SCENE_VIDEO_FRAMES,
+    INLINE_SCENE_VIDEO_TEMPLATE_ID,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
+    LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     buildInlineSceneVideoRequest,
     inlineSceneMasterToggleEnabled,
     inlineSceneVideoDecodeFailureTransition,
+    inlineSceneVideoDimensions,
     inlineSceneVideoMasterToggleAction,
     inlineSceneVideoReconciliationAllowed,
     inlineSceneVideoRequestKey,
     inlineSceneVideoSourceRequestSha256,
+    inlineSceneVideoTemplateAvailable,
+    inlineSceneVideoTemplateCapability,
     normalizeInlineSceneVideoCapabilities,
     parseInlineSceneVideoIntegerHeader,
     parseInlineSceneVideoNumberHeader,
     type InlineSceneVideoCapabilities,
-    type InlineSceneVideoRequest
+    type InlineSceneVideoRequest,
+    type InlineSceneVideoTemplateId
   } from '$lib/inline-scene-video';
   import {
     STORED_INLINE_SCENE_VIDEO_SPEC,
@@ -408,6 +414,8 @@
   let inlineSceneVideoController: AbortController | null = null;
   let lastInlineSceneVideoAttemptKey = '';
   let inlineSceneVideoComponentDestroying = false;
+  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;
+  let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let scenarioCatalogSettled = false;
@@ -455,6 +463,7 @@
   const portraitStorageKey = 'mullet.active-character-portrait';
   const cardSourceIdentifierStorageKey = 'mullet.active-character-source';
   const activeScenarioStarterStorageKey = 'mullet.active-scenario-starter.v1';
+  const selectedScenarioStorageKey = 'mullet.selected-scenario.v1';
   const lorebookStorageKey = 'mullet.active-lorebook';
   const loreEnabledStorageKey = 'mullet.lorebook-enabled';
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
@@ -474,14 +483,15 @@
   const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v3';
   const previousPortraitModelTemplateStorageKey = 'mullet.portrait-model-template.v2';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
-  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v2';
-  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v5';
-  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v5';
+  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v3';
+  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v6';
+  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v6';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
   const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
+  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v1';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
   const automaticExpressionRetryDelayMs = 1_500;
 
@@ -576,6 +586,15 @@
     portraitVideoModelTemplate
   );
   $: portraitVideoTiming = portraitVideoDimensions(portraitAspectRatio, portraitVideoDurationSeconds);
+  $: selectedInlineSceneVideoTemplateCapability = inlineSceneVideoTemplateCapability(
+    inlineSceneVideoCapabilities,
+    inlineSceneVideoModelTemplate
+  );
+  $: inlineSceneVideoSelectedModelAvailable = inlineSceneVideoTemplateAvailable(
+    inlineSceneVideoCapabilities,
+    inlineSceneVideoModelTemplate
+  );
+  $: inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   $: portraitVideoCurrent = Boolean(
     generatedPortraitVideo
     && portraitVideoRequest
@@ -601,7 +620,11 @@
     inlineSceneMegapixels,
     scenarioPortraitProfile
   );
-  $: inlineSceneVideoRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
+  $: inlineSceneVideoRequest = currentInlineSceneVideoRequest(
+    generatedInlineScene,
+    inlineSceneCurrent,
+    inlineSceneVideoModelTemplate
+  );
   $: inlineSceneVideoCurrent = Boolean(
     generatedInlineSceneVideo
     && inlineSceneVideoRequest
@@ -787,8 +810,17 @@
     portraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATIONS.includes(savedPortraitVideoDuration as PortraitVideoDurationSeconds)
       ? savedPortraitVideoDuration as PortraitVideoDurationSeconds
       : PORTRAIT_VIDEO_DURATION_SECONDS;
+    localStorage.setItem(portraitVideoModelTemplateStorageKey, portraitVideoModelTemplate);
+    localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
+    localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
+    const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
+    inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
+      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+      ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
+      : INLINE_SCENE_VIDEO_TEMPLATE_ID;
+    localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     restorePortraitSettings();
     restoreInlineSceneSettings();
     restoreInlineSceneFinalizedSource();
@@ -1108,11 +1140,12 @@
 
   function currentInlineSceneVideoRequest(
     scene: StoredInlineScene | null,
-    current: boolean
+    current: boolean,
+    modelTemplate: InlineSceneVideoTemplateId
   ): InlineSceneVideoRequest | null {
     if (!scene || !current) return null;
     try {
-      return buildInlineSceneVideoRequest(scene);
+      return buildInlineSceneVideoRequest(scene, modelTemplate);
     } catch {
       return null;
     }
@@ -1208,12 +1241,20 @@
       || !inlineSceneCurrent
       || !inlineSceneStoredEpochIsCurrent(request.source.epoch)
     ) return false;
-    const liveRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
+    const liveRequest = currentInlineSceneVideoRequest(
+      generatedInlineScene,
+      inlineSceneCurrent,
+      inlineSceneVideoModelTemplate
+    );
     return Boolean(liveRequest && inlineSceneVideoRequestKey(liveRequest) === key);
   }
 
   async function restoreGeneratedInlineSceneVideo() {
-    const selectedRequest = currentInlineSceneVideoRequest(generatedInlineScene, inlineSceneCurrent);
+    const selectedRequest = currentInlineSceneVideoRequest(
+      generatedInlineScene,
+      inlineSceneCurrent,
+      inlineSceneVideoModelTemplate
+    );
     if (!selectedRequest) {
       inlineSceneVideoPersistenceReady = true;
       return;
@@ -1255,6 +1296,10 @@
         throw new Error(detail);
       }
       inlineSceneVideoCapabilities = normalizeInlineSceneVideoCapabilities(payload);
+      if (!inlineSceneVideoCapabilities.templates.some(({ template }) => template.id === inlineSceneVideoModelTemplate)) {
+        inlineSceneVideoModelTemplate = INLINE_SCENE_VIDEO_TEMPLATE_ID;
+        localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
+      }
     } catch (cause) {
       inlineSceneVideoCapabilities = null;
       inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline-scene motion generator is unavailable.';
@@ -1281,7 +1326,7 @@
     if (!inlineSceneVideoReconciliationAllowed({
       scenesEnabled,
       motionEnabled,
-      capabilitiesReady: Boolean(capabilities),
+      capabilitiesReady: inlineSceneVideoTemplateAvailable(capabilities, request.modelTemplate),
       persistenceReady,
       persistenceAvailable,
       restorationPending,
@@ -1332,6 +1377,7 @@
       || !inlineScenesEnabled
       || !inlineSceneMotionEnabled
       || !inlineSceneVideoCapabilities
+      || !inlineSceneVideoTemplateAvailable(inlineSceneVideoCapabilities, selectedRequest.modelTemplate)
       || inlineSceneBusy
       || inlineSceneVideoBusy
       || !inlineSceneVideoPersistenceReady
@@ -1367,11 +1413,21 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      if (video.type !== 'video/mp4' || video.size < 12) {
+      const expectsWebm = selectedRequest.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      const expectedContentType = expectsWebm ? 'video/webm' : 'video/mp4';
+      const minimumBytes = expectsWebm ? 32 : 12;
+      if (video.type !== expectedContentType || video.size < minimumBytes) {
         throw new Error('Inline-scene motion generator returned an invalid video.');
       }
-      const signature = new Uint8Array(await video.slice(0, 12).arrayBuffer());
-      if (
+      const signature = new Uint8Array(await video.slice(0, minimumBytes).arrayBuffer());
+      if (expectsWebm) {
+        if (
+          signature[0] !== 0x1a
+          || signature[1] !== 0x45
+          || signature[2] !== 0xdf
+          || signature[3] !== 0xa3
+        ) throw new Error('Inline-scene motion generator returned an invalid WebM signature.');
+      } else if (
         signature[4] !== 0x66
         || signature[5] !== 0x74
         || signature[6] !== 0x79
@@ -1383,9 +1439,12 @@
       const sourceSeed = inlineSceneVideoHeaderInteger(response, 'x-mullet-source-seed', 0, Number.MAX_SAFE_INTEGER);
       const sourceRequestSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-source-request-sha256');
       const inputImageSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-input-sha256');
+      const audioTracks = inlineSceneVideoHeaderInteger(response, 'x-mullet-audio-tracks', 0, 1);
+      const expectedAudioTracks = expectsWebm ? 0 : 1;
       if (
         modelTemplate !== selectedRequest.modelTemplate
         || mode !== selectedRequest.mode
+        || audioTracks !== expectedAudioTracks
         || sourcePromptId !== selectedRequest.source.scenePromptId
         || sourceSeed !== selectedRequest.source.sceneSeed
         || sourceRequestSha256 !== inlineSceneVideoSourceRequestSha256(selectedRequest)
@@ -1410,6 +1469,7 @@
         frames: inlineSceneVideoHeaderInteger(response, 'x-mullet-frames', 1, 10_000),
         fps: inlineSceneVideoHeaderInteger(response, 'x-mullet-fps', 1, 1_000),
         durationSeconds: inlineSceneVideoHeaderNumber(response, 'x-mullet-duration-seconds', 0.001, 3_600),
+        audioTracks,
         generatedAt: Date.now(),
         inputImageSha256,
         videoSha256,
@@ -1460,6 +1520,23 @@
       inlineSceneVideoBusy = false;
     } else {
       void runInlineSceneVideoRestoration(restoreGeneratedInlineSceneVideo);
+    }
+  }
+
+  function persistInlineSceneVideoModelTemplate() {
+    if (!inlineSceneVideoTemplateCapability(inlineSceneVideoCapabilities, inlineSceneVideoModelTemplate)) {
+      inlineSceneVideoModelTemplate = INLINE_SCENE_VIDEO_TEMPLATE_ID;
+    }
+    localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
+    inlineSceneVideoGeneration += 1;
+    inlineSceneVideoController?.abort();
+    inlineSceneVideoController = null;
+    inlineSceneVideoBusy = false;
+    inlineSceneVideoError = '';
+    lastInlineSceneVideoAttemptKey = '';
+    removeInstalledInlineSceneVideo();
+    if (inlineSceneVideoPersistenceAvailable) {
+      void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
     }
   }
 
@@ -3425,9 +3502,12 @@
       const activeScenarioId = activeCard?.data.extensions.mullet && typeof activeCard.data.extensions.mullet === 'object'
         ? String((activeCard.data.extensions.mullet as Record<string, unknown>).scenario_id ?? '')
         : '';
-      selectedScenarioId = scenarioCatalog.scenarios.some((scenario) => scenario.id === activeScenarioId)
-        ? activeScenarioId
-        : scenarioCatalog.scenarios[0].id;
+      const savedScenarioId = localStorage.getItem(selectedScenarioStorageKey) ?? '';
+      selectedScenarioId = scenarioCatalog.scenarios.some((scenario) => scenario.id === savedScenarioId)
+        ? savedScenarioId
+        : scenarioCatalog.scenarios.some((scenario) => scenario.id === activeScenarioId)
+          ? activeScenarioId
+          : scenarioCatalog.scenarios[0].id;
       const activeScenario = scenarioCatalog.scenarios.find((scenario) => scenario.id === activeScenarioId);
       if (activeScenario) {
         activeScenarioStarterId = activeScenario.starters.some((starter) => starter.id === activeScenarioStarterId)
@@ -3450,6 +3530,11 @@
       restoreScenarioOpeningInlineSceneSourceIfNeeded();
       void restoreInlineSceneAndMotion();
     }
+  }
+
+  function persistSelectedScenarioSelection() {
+    if (!scenarioCatalog?.scenarios.some((scenario) => scenario.id === selectedScenarioId)) return;
+    localStorage.setItem(selectedScenarioStorageKey, selectedScenarioId);
   }
 
   async function loadScenarioPackage(entry: ScenarioCatalogEntry): Promise<ScenarioPackage> {
@@ -3507,6 +3592,8 @@
 
         conversationMode = CONVERSATION_MODE_FICTION;
         activeCard = packaged.card;
+        selectedScenarioId = scenario.id;
+        localStorage.setItem(selectedScenarioStorageKey, selectedScenarioId);
         activeScenarioStarterId = starterId;
         localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
         if (!portraitModelSelectionPersisted) portraitModelTemplate = PORTRAIT_REFERENCE_TEMPLATE_ID;
@@ -4349,12 +4436,25 @@
         <span class="eyebrow">Bundled scenarios</span>
         {#if scenarioCatalog}
           {#if selectedScenario}
+            <label class="scenario-select">
+              <span>Scenario</span>
+              <select
+                bind:value={selectedScenarioId}
+                on:change={persistSelectedScenarioSelection}
+                disabled={streaming || scenarioLoading}
+                aria-label="Bundled scenario"
+              >
+                {#each scenarioCatalog.scenarios as scenario}
+                  <option value={scenario.id}>{scenario.title}</option>
+                {/each}
+              </select>
+            </label>
             <div class="scenario-starters" role="group" aria-label="Starting scenario">
               {#each selectedScenario.starters as starter}
                 <button
                   class="scenario-starter"
-                  class:active={starter.id === activeScenarioStarterId && isScenarioCard(activeCard)}
-                  aria-pressed={starter.id === activeScenarioStarterId && isScenarioCard(activeCard)}
+                  class:active={starter.id === activeScenarioStarterId && cardSourceIdentifier === characterSourceIdentifier(selectedScenario.card)}
+                  aria-pressed={starter.id === activeScenarioStarterId && cardSourceIdentifier === characterSourceIdentifier(selectedScenario.card)}
                   aria-label={`Start the ${starter.label} scenario`}
                   on:click={() => void startSelectedScenario(starter.id)}
                   disabled={streaming || scenarioLoading}
@@ -4673,16 +4773,38 @@
             {#if inlineSceneVideoCapabilities}
               <label>
                 <span>Video model</span>
-                <select value={inlineSceneVideoCapabilities.template.id} disabled={inlineSceneVideoBusy} aria-label="Inline scene video model">
-                  <option value={inlineSceneVideoCapabilities.template.id}>{inlineSceneVideoCapabilities.template.label}</option>
+                <select
+                  bind:value={inlineSceneVideoModelTemplate}
+                  on:change={persistInlineSceneVideoModelTemplate}
+                  disabled={inlineSceneVideoBusy}
+                  aria-label="Inline scene video model"
+                >
+                  {#each inlineSceneVideoCapabilities.templates as capability}
+                    <option value={capability.template.id}>
+                      {capability.template.label}{capability.available ? '' : ' (unavailable)'}
+                    </option>
+                  {/each}
                 </select>
               </label>
-              <small>Replay loop · MiniMax H3 FL2VA · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {INLINE_SCENE_VIDEO_FRAMES} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(INLINE_SCENE_VIDEO_FRAMES / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
+              {#if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
+                <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · VP9 video-only WebM</small>
+              {:else}
+                <small>Image-to-video replay · MiniMax H3 FL2VA Turbo · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
+              {/if}
+              {#if selectedInlineSceneVideoTemplateCapability && !inlineSceneVideoSelectedModelAvailable}
+                <small class="prompt-guide">Unavailable: {selectedInlineSceneVideoTemplateCapability.missing.join('; ')}</small>
+                <button
+                  on:click={() => void loadInlineSceneVideoGenerator()}
+                  disabled={inlineSceneVideoCapabilitiesLoading || inlineSceneVideoBusy}
+                >
+                  {inlineSceneVideoCapabilitiesLoading ? 'Checking…' : 'Retry scene motion models'}
+                </button>
+              {/if}
               {#if generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.frames} frames</small>{/if}
               {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
               <button
                 on:click={() => void generateInlineSceneVideo()}
-                disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable}
+                disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable || !inlineSceneVideoSelectedModelAvailable}
               >
                 {inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
               </button>
@@ -4932,8 +5054,8 @@
                     </div>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible ? 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Qwen Image Edit') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
-                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
+                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Qwen Image Edit') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded · {generatedInlineSceneVideo.audioTracks === 0 ? 'silent' : 'native audio'}</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>
               {/if}
@@ -5063,6 +5185,10 @@
   .card-button:disabled { opacity: .35; cursor: default; }
   .scenario-picker { display: grid; gap: 8px; padding: 13px 0 2px; border-top: 1px solid #34302b; }
   .scenario-picker small { color: #7e766e; font-size: 10px; line-height: 1.45; }
+  .scenario-select { display: grid; gap: 4px; }
+  .scenario-select > span { color: #7e766e; font-size: 9px; }
+  .scenario-select select { width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid #443c34; border-radius: 8px; color: #c7b9aa; background: #181512; font-size: 10px; }
+  .scenario-select select:disabled { opacity: .45; }
   .scenario-starters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .scenario-starter { min-width: 0; padding: 6px 4px; border: 1px solid #514537; border-radius: 999px; color: #b5a99b; background: #1c1814; font-size: 9px; font-weight: 750; cursor: pointer; }
   .scenario-starter:hover:not(:disabled) { border-color: #d49a56; color: #fff0dc; }

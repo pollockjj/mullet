@@ -4,6 +4,8 @@ import {
   INLINE_SCENE_VIDEO_TIMEOUT_MS,
   inlineSceneVideoDimensions,
   inlineSceneVideoSourceRequestSha256,
+  inlineSceneVideoTemplateAvailable,
+  inlineSceneVideoTemplateCapability,
   normalizeInlineSceneVideoRequest
 } from '$lib/inline-scene-video';
 import {
@@ -97,10 +99,15 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const timeoutSignal = AbortSignal.timeout(INLINE_SCENE_VIDEO_TIMEOUT_MS);
   const signal = AbortSignal.any([request.signal, timeoutSignal]);
   try {
-    await loadInlineSceneVideoCapabilities(fetch, baseUrl, signal);
+    const capabilities = await loadInlineSceneVideoCapabilities(fetch, baseUrl, signal);
+    if (!inlineSceneVideoTemplateAvailable(capabilities, videoRequest.modelTemplate)) {
+      const capability = inlineSceneVideoTemplateCapability(capabilities, videoRequest.modelTemplate);
+      const diagnostics = capability?.missing.length ? ` Missing: ${capability.missing.join(', ')}.` : '';
+      throw error(503, `The selected inline-scene motion model is unavailable.${diagnostics}`);
+    }
     const input = await uploadInlineSceneVideoInput(fetch, baseUrl, imageBytes, imageSha256, signal);
     const result = await runComfyInlineSceneVideo(fetch, baseUrl, videoRequest, input, seed, signal);
-    const dimensions = inlineSceneVideoDimensions(videoRequest.aspectRatio);
+    const dimensions = inlineSceneVideoDimensions(videoRequest.aspectRatio, videoRequest.modelTemplate);
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
       headers: {
         'content-type': result.contentType,
@@ -113,6 +120,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         'x-mullet-frames': String(dimensions.frames),
         'x-mullet-fps': String(dimensions.fps),
         'x-mullet-duration-seconds': String(result.durationSeconds),
+        'x-mullet-audio-tracks': String(result.audioTracks),
         'x-mullet-model-template': videoRequest.modelTemplate,
         'x-mullet-video-mode': videoRequest.mode,
         'x-mullet-source-prompt-id': videoRequest.source.scenePromptId,

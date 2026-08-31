@@ -1,18 +1,19 @@
 import {
-  INLINE_SCENE_VIDEO_DURATION_SECONDS,
   INLINE_SCENE_VIDEO_FPS,
-  INLINE_SCENE_VIDEO_FRAMES,
-  INLINE_SCENE_VIDEO_MODE,
-  INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   inlineSceneVideoDimensions,
   inlineSceneVideoRequestKey,
   normalizeInlineSceneVideoRequest,
-  type InlineSceneVideoRequest
+  type InlineSceneVideoMode,
+  type InlineSceneVideoRequest,
+  type InlineSceneVideoTemplateId
 } from './inline-scene-video.ts';
 import { validateH264AacMp4 } from './mp4.ts';
+import { validateVp9Webm } from './webm.ts';
 
-export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v5' as const;
-export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v5' as const;
+export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v6' as const;
+export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v6' as const;
 
 export class StoredInlineSceneVideoIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -27,15 +28,16 @@ export type StoredInlineSceneVideo = {
   epoch: string;
   requestKey: string;
   request: InlineSceneVideoRequest;
-  modelTemplate: typeof INLINE_SCENE_VIDEO_TEMPLATE_ID;
-  mode: typeof INLINE_SCENE_VIDEO_MODE;
+  modelTemplate: InlineSceneVideoTemplateId;
+  mode: InlineSceneVideoMode;
   promptId: string;
   seed: number;
   width: number;
   height: number;
-  frames: typeof INLINE_SCENE_VIDEO_FRAMES;
+  frames: number;
   fps: typeof INLINE_SCENE_VIDEO_FPS;
   durationSeconds: number;
+  audioTracks: 0 | 1;
   generatedAt: number;
   inputImageSha256: string;
   videoSha256: string;
@@ -77,6 +79,7 @@ const STORE_NAME = 'state';
 const ACTIVE_VIDEO_KEY = 'active-inline-scene-video';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS = 0.002;
 const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
   'mullet_stored_inline_scene_video_v1',
   'mullet_stored_inline_scene_video_envelope_v1',
@@ -85,7 +88,9 @@ const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
   'mullet_stored_inline_scene_video_v3',
   'mullet_stored_inline_scene_video_envelope_v3',
   'mullet_stored_inline_scene_video_v4',
-  'mullet_stored_inline_scene_video_envelope_v4'
+  'mullet_stored_inline_scene_video_envelope_v4',
+  'mullet_stored_inline_scene_video_v5',
+  'mullet_stored_inline_scene_video_envelope_v5'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -128,35 +133,57 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
   ) throw new Error('stored inline-scene video source is invalid');
   const requestKey = inlineSceneVideoRequestKey(request);
   if (value.requestKey !== requestKey) throw new Error('stored inline-scene video request key is invalid');
-  if (value.modelTemplate !== request.modelTemplate || value.modelTemplate !== INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+  if (value.modelTemplate !== request.modelTemplate) {
     throw new Error('stored inline-scene video template is invalid');
   }
-  if (value.mode !== request.mode || value.mode !== INLINE_SCENE_VIDEO_MODE) {
+  if (value.mode !== request.mode) {
     throw new Error('stored inline-scene video mode is invalid');
   }
   if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) {
     throw new Error('stored inline-scene video prompt ID is invalid');
   }
-  const expected = inlineSceneVideoDimensions(request.aspectRatio);
+  const expected = inlineSceneVideoDimensions(request.aspectRatio, request.modelTemplate);
   const width = safeInteger(value.width, 'stored inline-scene video width', 16, 8192);
   const height = safeInteger(value.height, 'stored inline-scene video height', 16, 8192);
   if (width !== expected.width || height !== expected.height) {
     throw new Error('stored inline-scene video dimensions are invalid');
   }
   if (
-    value.frames !== INLINE_SCENE_VIDEO_FRAMES
+    value.frames !== expected.frames
     || value.fps !== INLINE_SCENE_VIDEO_FPS
   ) throw new Error('stored inline-scene video timing is invalid');
-  const durationSeconds = finiteNumber(value.durationSeconds, 'stored inline-scene video encoded duration', 0.001, 3_600);
+  const expectedDurationSeconds = expected.frames / expected.fps;
+  const encodedDurationTolerance = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ? WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS
+    : 0;
+  const durationSeconds = finiteNumber(
+    value.durationSeconds,
+    'stored inline-scene video encoded duration',
+    expectedDurationSeconds - encodedDurationTolerance,
+    expectedDurationSeconds + encodedDurationTolerance
+  );
+  const expectedAudioTracks = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 0 : 1;
+  const audioTracks = safeInteger(
+    value.audioTracks,
+    'stored inline-scene video audio-track count',
+    expectedAudioTracks,
+    expectedAudioTracks
+  ) as 0 | 1;
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored inline-scene video input hash');
   if (inputImageSha256 !== request.source.sceneImageSha256) {
     throw new Error('stored inline-scene video input hash does not match its request');
   }
   const videoSha256 = sha256(value.videoSha256, 'stored inline-scene video output hash');
+  const expectedContentType = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ? 'video/webm'
+    : request.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+      ? 'video/mp4'
+      : '';
+  const minimumBytes = expectedContentType === 'video/webm' ? 32 : 12;
   if (
     !(value.video instanceof Blob)
-    || value.video.type !== 'video/mp4'
-    || value.video.size < 12
+    || value.video.type !== expectedContentType
+    || value.video.size < minimumBytes
     || value.video.size > 64 * 1024 * 1024
   ) throw new Error('stored inline-scene video is invalid');
   return {
@@ -165,15 +192,16 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     epoch: request.source.epoch,
     requestKey,
     request,
-    modelTemplate: INLINE_SCENE_VIDEO_TEMPLATE_ID,
-    mode: INLINE_SCENE_VIDEO_MODE,
+    modelTemplate: request.modelTemplate,
+    mode: request.mode,
     promptId: value.promptId,
     seed: safeInteger(value.seed, 'stored inline-scene video seed', 0, Number.MAX_SAFE_INTEGER),
     width,
     height,
-    frames: INLINE_SCENE_VIDEO_FRAMES,
+    frames: expected.frames,
     fps: INLINE_SCENE_VIDEO_FPS,
     durationSeconds,
+    audioTracks,
     generatedAt: safeInteger(value.generatedAt, 'stored inline-scene video timestamp', 1, Number.MAX_SAFE_INTEGER),
     inputImageSha256,
     videoSha256,
@@ -201,23 +229,29 @@ async function blobSha256(blob: Blob): Promise<string> {
 export async function verifyStoredInlineSceneVideo(value: unknown): Promise<StoredInlineSceneVideo> {
   const video = normalizeStoredInlineSceneVideo(value);
   const bytes = new Uint8Array(await video.video.arrayBuffer());
-  if (
-    bytes[4] !== 0x66
-    || bytes[5] !== 0x74
-    || bytes[6] !== 0x79
-    || bytes[7] !== 0x70
-  ) throw new Error('stored inline-scene video has an invalid MP4 signature');
   if (await blobSha256(video.video) !== video.videoSha256) {
     throw new Error('stored inline-scene video hash does not match its bytes');
   }
-  const dimensions = inlineSceneVideoDimensions(video.request.aspectRatio);
-  const metadata = validateH264AacMp4(bytes, {
+  const dimensions = inlineSceneVideoDimensions(video.request.aspectRatio, video.modelTemplate);
+  const expected = {
     width: dimensions.width,
     height: dimensions.height,
     frames: dimensions.frames,
     fps: dimensions.fps
-  });
-  if (metadata.durationSeconds !== video.durationSeconds) {
+  };
+  let encodedDurationSeconds: number;
+  if (video.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+    encodedDurationSeconds = validateVp9Webm(bytes, expected).containerDurationSeconds;
+  } else {
+    if (
+      bytes[4] !== 0x66
+      || bytes[5] !== 0x74
+      || bytes[6] !== 0x79
+      || bytes[7] !== 0x70
+    ) throw new Error('stored inline-scene video has an invalid MP4 signature');
+    encodedDurationSeconds = validateH264AacMp4(bytes, expected).durationSeconds;
+  }
+  if (Math.abs(encodedDurationSeconds - video.durationSeconds) > WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS) {
     throw new Error('stored inline-scene video encoded duration does not match its bytes');
   }
   return video;

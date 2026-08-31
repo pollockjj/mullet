@@ -1,24 +1,31 @@
 import {
+  INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
   INLINE_SCENE_VIDEO_DIMENSIONS,
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
+  INLINE_SCENE_VIDEO_TEMPLATES,
+  LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
+  LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
-  buildMiniMaxH3InlineSceneVideoWorkflow,
+  buildInlineSceneVideoWorkflow,
   inlineSceneVideoDimensions,
+  inlineSceneVideoOutputNode,
   type InlineSceneVideoCapabilities,
   type InlineSceneVideoInputReference,
   type InlineSceneVideoRequest
 } from '../inline-scene-video.ts';
 import { validateH264AacMp4 } from '../mp4.ts';
+import { validateVp9Webm } from '../webm.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ComfyInlineSceneVideo = {
   bytes: Uint8Array;
-  contentType: 'video/mp4';
+  contentType: 'video/mp4' | 'video/webm';
   promptId: string;
   filename: string;
   sha256: string;
   durationSeconds: number;
+  audioTracks: 0 | 1;
 };
 
 export class ComfyInlineSceneVideoOutputTooLargeError extends Error {}
@@ -99,40 +106,103 @@ export async function loadInlineSceneVideoCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<InlineSceneVideoCapabilities> {
-  const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
-  const pairs = await Promise.all(template.requiredNodes.map(async (nodeName) => {
-    const response = await fetcher(endpoint(baseUrl, '/object_info/' + encodeURIComponent(nodeName)), { signal });
-    const body = await responseJson(response, 'inline-scene video capability query');
-    return [nodeName, nodeInfo(body, nodeName)] as const;
-  }));
-  const info = Object.fromEntries(pairs) as Record<string, Record<string, unknown>>;
-  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), template.modelFiles.unet, 'the MiniMax H3 FL2VA diffusion model');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), template.modelFiles.clip, 'the MiniMax H3 Qwen3-VL encoder');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'minimax', 'the MiniMax text-encoder mode');
-  const vaes = optionList(info.VAELoader, 'VAELoader', 'vae_name');
-  requireOption(vaes, template.modelFiles.videoVae, 'the MiniMax H3 video VAE');
-  requireOption(vaes, template.modelFiles.audioVae, 'the MiniMax H3 audio VAE');
-  requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), template.modelFiles.turboLora, 'the MiniMax H3 four-step Turbo LoRA');
-  requireOption(optionList(info.KSamplerSelect, 'KSamplerSelect', 'sampler_name'), template.sampler, 'the res_multistep sampler');
-  requireOption(optionList(info.BasicScheduler, 'BasicScheduler', 'scheduler'), template.scheduler, 'the simple scheduler');
-  requireOption(
-    dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
-    template.format,
-    'the automatic MP4 output format'
-  );
-  requireOption(
-    dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
-    template.codec,
-    'the automatic H.264 output codec'
-  );
-  const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
-  if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) {
-    throw new Error('ComfyUI image upload support is unavailable');
+  const nodeNames = [...new Set(INLINE_SCENE_VIDEO_TEMPLATES.flatMap(({ requiredNodes }) => [...requiredNodes]))];
+  const bodies = new Map(await Promise.all(nodeNames.map(async (nodeName): Promise<[string, unknown | null]> => {
+    try {
+      const response = await fetcher(endpoint(baseUrl, '/object_info/' + encodeURIComponent(nodeName)), { signal });
+      if (!response.ok) return [nodeName, null];
+      return [nodeName, await response.json()];
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return [nodeName, null];
+    }
+  })));
+  const nodeAvailable = (nodeName: string): boolean => {
+    const body = bodies.get(nodeName);
+    return isRecord(body) && isRecord(body[nodeName]);
+  };
+  const info = Object.fromEntries(nodeNames
+    .filter(nodeAvailable)
+    .map((nodeName) => [nodeName, nodeInfo(bodies.get(nodeName), nodeName)])) as Record<string, Record<string, unknown>>;
+  const diagnostic = (missing: string[], label: string, check: () => void): void => {
+    try {
+      check();
+    } catch {
+      missing.push(label);
+    }
+  };
+  const optionDiagnostic = (
+    missing: string[],
+    nodeName: string,
+    inputName: string,
+    expected: string,
+    label: string
+  ): void => {
+    if (!nodeAvailable(nodeName)) return;
+    diagnostic(missing, label, () => requireOption(optionList(info[nodeName], nodeName, inputName), expected, label));
+  };
+  const uploadDiagnostic = (missing: string[]): void => {
+    if (!nodeAvailable('LoadImage')) return;
+    diagnostic(missing, 'node-input:LoadImage.image_upload', () => {
+      const uploadInput = requiredInput(info.LoadImage, 'LoadImage', 'image');
+      if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('upload unavailable');
+    });
+  };
+
+  const ltx = LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
+  const ltxMissing = ltx.requiredNodes
+    .filter((nodeName) => !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  optionDiagnostic(ltxMissing, 'UNETLoader', 'unet_name', ltx.modelFiles.unet, `model:unet:${ltx.modelFiles.unet}`);
+  optionDiagnostic(ltxMissing, 'CLIPLoader', 'clip_name', ltx.modelFiles.clip, `model:clip:${ltx.modelFiles.clip}`);
+  optionDiagnostic(ltxMissing, 'CLIPLoader', 'type', 'ltxv', 'clip-type:ltxv');
+  optionDiagnostic(ltxMissing, 'VAELoader', 'vae_name', ltx.modelFiles.videoVae, `model:vae:${ltx.modelFiles.videoVae}`);
+  optionDiagnostic(ltxMissing, 'VAELoader', 'vae_name', ltx.modelFiles.audioVae, `model:vae:${ltx.modelFiles.audioVae}`);
+  optionDiagnostic(ltxMissing, 'LatentUpscaleModelLoader', 'model_name', ltx.modelFiles.latentUpscaler, `model:latent-upscaler:${ltx.modelFiles.latentUpscaler}`);
+  optionDiagnostic(ltxMissing, 'KSamplerSelect', 'sampler_name', ltx.sampler, `sampler:${ltx.sampler}`);
+  optionDiagnostic(ltxMissing, 'SaveWEBM', 'codec', ltx.codec, `video-codec:${ltx.codec}`);
+  uploadDiagnostic(ltxMissing);
+
+  const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const minimaxMissing = minimax.requiredNodes
+    .filter((nodeName) => !nodeAvailable(nodeName))
+    .map((nodeName) => `node:${nodeName}`);
+  optionDiagnostic(minimaxMissing, 'UNETLoader', 'unet_name', minimax.modelFiles.unet, `model:unet:${minimax.modelFiles.unet}`);
+  optionDiagnostic(minimaxMissing, 'CLIPLoader', 'clip_name', minimax.modelFiles.clip, `model:clip:${minimax.modelFiles.clip}`);
+  optionDiagnostic(minimaxMissing, 'CLIPLoader', 'type', 'minimax', 'clip-type:minimax');
+  optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.videoVae, `model:vae:${minimax.modelFiles.videoVae}`);
+  optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.audioVae, `model:vae:${minimax.modelFiles.audioVae}`);
+  optionDiagnostic(minimaxMissing, 'LoraLoaderModelOnly', 'lora_name', minimax.modelFiles.turboLora, `model:lora:${minimax.modelFiles.turboLora}`);
+  optionDiagnostic(minimaxMissing, 'KSamplerSelect', 'sampler_name', minimax.sampler, `sampler:${minimax.sampler}`);
+  optionDiagnostic(minimaxMissing, 'BasicScheduler', 'scheduler', minimax.scheduler, `scheduler:${minimax.scheduler}`);
+  if (nodeAvailable('SaveVideo')) {
+    diagnostic(minimaxMissing, `video-format:${minimax.format}`, () => requireOption(
+      dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+      minimax.format,
+      `video-format:${minimax.format}`
+    ));
+    diagnostic(minimaxMissing, `video-codec:${minimax.codec}`, () => requireOption(
+      dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+      minimax.codec,
+      `video-codec:${minimax.codec}`
+    ));
   }
+  uploadDiagnostic(minimaxMissing);
+  const unique = (items: readonly string[]): string[] => [...new Set(items)];
   return {
-    spec: 'mullet_inline_scene_video_capabilities_v2',
-    template,
-    modes: ['i2v'],
+    spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
+    templates: [
+      {
+        template: ltx,
+        available: ltxMissing.length === 0,
+        missing: unique(ltxMissing)
+      },
+      {
+        template: minimax,
+        available: minimaxMissing.length === 0,
+        missing: unique(minimaxMissing)
+      }
+    ],
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
     durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]
   };
@@ -213,14 +283,18 @@ function historyFailure(entry: Record<string, unknown>): string | null {
   return null;
 }
 
-function outputVideo(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
+function outputVideo(
+  entry: Record<string, unknown>,
+  request: InlineSceneVideoRequest
+): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
+  const outputNode = inlineSceneVideoOutputNode(request);
   if (
     !isRecord(entry.outputs)
     || Object.keys(entry.outputs).length !== 1
-    || !isRecord(entry.outputs[MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.outputNode])
+    || !isRecord(entry.outputs[outputNode])
   ) throw new Error('ComfyUI inline-scene video history omitted the fixed output node');
-  const output = entry.outputs[MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.outputNode];
+  const output = entry.outputs[outputNode];
   if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
     throw new Error('ComfyUI inline-scene video history omitted the video');
   }
@@ -228,7 +302,10 @@ function outputVideo(entry: Record<string, unknown>): { filename: string; subfol
     throw new Error('ComfyUI inline-scene video history did not mark the output animated');
   }
   const video = output.images[0];
-  if (typeof video.filename !== 'string' || !/^scene-motion_\d+_\.mp4$/.test(video.filename)) {
+  const filenamePattern = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ? /^scene-motion-loop-flf_\d+_\.webm$/
+    : /^scene-motion_\d+_\.mp4$/;
+  if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected inline-scene video filename');
   }
   if (video.subfolder !== 'mullet' || video.type !== 'output') {
@@ -256,6 +333,7 @@ async function waitForVideo(
   fetcher: Fetcher,
   baseUrl: string,
   id: string,
+  request: InlineSceneVideoRequest,
   signal?: AbortSignal
 ): Promise<{ filename: string; subfolder: 'mullet'; type: 'output' }> {
   while (true) {
@@ -265,7 +343,7 @@ async function waitForVideo(
     if (entry) {
       const failure = historyFailure(entry);
       if (failure) throw new Error(failure);
-      const video = outputVideo(entry);
+      const video = outputVideo(entry, request);
       if (video) return video;
     }
     await pollDelay(250, signal);
@@ -326,43 +404,55 @@ export async function runComfyInlineSceneVideo(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildMiniMaxH3InlineSceneVideoWorkflow(request, input, seed),
+        prompt: buildInlineSceneVideoWorkflow(request, input, seed),
         client_id: 'mullet-inline-scene-video'
       }),
       signal
     });
     id = promptId(await responseJson(queueResponse, 'inline-scene video queue submission'));
-    const video = await waitForVideo(fetcher, baseUrl, id, signal);
-    completed = true;
+    const video = await waitForVideo(fetcher, baseUrl, id, request, signal);
     const query = new URLSearchParams(video);
     const outputResponse = await fetcher(endpoint(baseUrl, '/view?' + query), { signal });
     if (!outputResponse.ok) throw new Error('ComfyUI inline-scene video fetch failed (' + outputResponse.status + ')');
     const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-    if (contentType !== 'video/mp4') throw new Error('ComfyUI inline-scene video output is not MP4');
     const bytes = await readBoundedVideo(outputResponse);
-    if (
-      bytes.byteLength < 12
-      || bytes[4] !== 0x66
-      || bytes[5] !== 0x74
-      || bytes[6] !== 0x79
-      || bytes[7] !== 0x70
-    ) {
-      throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
-    }
-    const dimensions = inlineSceneVideoDimensions(request.aspectRatio);
-    const metadata = validateH264AacMp4(bytes, {
+    const dimensions = inlineSceneVideoDimensions(request.aspectRatio, request.modelTemplate);
+    const expected = {
       width: dimensions.width,
       height: dimensions.height,
       frames: dimensions.frames,
       fps: dimensions.fps
-    });
+    };
+    let durationSeconds: number;
+    let resultContentType: ComfyInlineSceneVideo['contentType'];
+    let audioTracks: ComfyInlineSceneVideo['audioTracks'];
+    if (request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+      if (contentType !== 'video/webm') throw new Error('ComfyUI inline-scene video output is not WebM');
+      durationSeconds = validateVp9Webm(bytes, expected).containerDurationSeconds;
+      resultContentType = 'video/webm';
+      audioTracks = 0;
+    } else {
+      if (contentType !== 'video/mp4') throw new Error('ComfyUI inline-scene video output is not MP4');
+      if (
+        bytes.byteLength < 12
+        || bytes[4] !== 0x66
+        || bytes[5] !== 0x74
+        || bytes[6] !== 0x79
+        || bytes[7] !== 0x70
+      ) throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
+      durationSeconds = validateH264AacMp4(bytes, expected).durationSeconds;
+      resultContentType = 'video/mp4';
+      audioTracks = 1;
+    }
+    completed = true;
     return {
       bytes,
-      contentType: 'video/mp4',
+      contentType: resultContentType,
       promptId: id,
       filename: video.filename,
       sha256: await sha256InlineSceneVideoBytes(bytes),
-      durationSeconds: metadata.durationSeconds
+      durationSeconds,
+      audioTracks
     };
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
