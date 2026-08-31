@@ -439,13 +439,24 @@ export function inlineSceneH3ReferencePlan(
 
 export function describeInlineSceneH3ReferencePlan(request: InlineSceneVideoRequest): string {
   const plan = inlineSceneH3ReferencePlan(request);
-  const canonicalCount = plan.filter(({ kind }) => kind === 'canonical_identity').length;
-  const bodyCount = plan.filter(({ kind }) => kind === 'body_identity').length;
-  const references = ['current scene'];
-  if (plan.some(({ kind }) => kind === 'prior_master')) references.push('prior master');
-  references.push(`${canonicalCount} canonical ${canonicalCount === 1 ? 'identity' : 'identities'}`);
-  if (bodyCount > 0) references.push(`${bodyCount} body/wardrobe`);
-  return `${plan.length} refs · ${references.join(' + ')}`;
+  const references = ['P1 scene'];
+  const priorMaster = plan.find(({ kind }) => kind === 'prior_master');
+  if (priorMaster) references.push(`P${priorMaster.picture} prior`);
+  const identities = normalizeInlineSceneVideoRequest(request).source.sceneRequest.cast.identities;
+  identities.forEach((identity, identityIndex) => {
+    const canonical = plan.find((entry) => (
+      entry.kind === 'canonical_identity' && entry.identityIndex === identityIndex
+    ));
+    const body = plan.find((entry) => (
+      entry.kind === 'body_identity' && entry.identityIndex === identityIndex
+    ));
+    const slots = [
+      ...(canonical ? [`P${canonical.picture} face`] : []),
+      ...(body ? [`P${body.picture} body`] : [])
+    ];
+    if (slots.length > 0) references.push(`${identity.displayName} ${slots.join('/')}`);
+  });
+  return `${plan.length} refs · ${references.join(' · ')}`;
 }
 
 export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): string {

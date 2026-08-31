@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const pageSource = readFileSync(new URL('../src/routes/+page.svelte', import.meta.url), 'utf8');
 const portraitVideoSource = readFileSync(new URL('../src/lib/portrait-video.ts', import.meta.url), 'utf8');
+const inlineSceneVideoSource = readFileSync(new URL('../src/lib/inline-scene-video.ts', import.meta.url), 'utf8');
 const portraitImagePanel = pageSource.match(
   /<section class="portrait-panel" aria-label="Generated expression portrait">[\s\S]*?<\/section>/
 )?.[0] ?? '';
@@ -80,6 +81,9 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.match(pageSource, /buildInlineSceneVideoRequest\(scene, modelTemplate\)/);
   assert.match(pageSource, /LTX 2\.5 Distilled · silent/);
   assert.match(pageSource, /MiniMax H3 Ref2VA · \{inlineSceneH3ReferenceSummary \|\| 'reference plan resolves after the current scene'\} · native audio/);
+  assert.match(inlineSceneVideoSource, /const references = \['P1 scene'\];/);
+  assert.match(inlineSceneVideoSource, /`P\$\{priorMaster\.picture\} prior`/);
+  assert.match(inlineSceneVideoSource, /`\$\{identity\.displayName\} \$\{slots\.join\('\/'\)\}`/);
   assert.match(pageSource, /describeInlineSceneH3ReferencePlan\(inlineSceneVideoRequest\)/);
   assert.doesNotMatch(pageSource, /current scene \+ prior master \+ canonical cast/);
   assert.doesNotMatch(pageSource, /MiniMax H3 FL2VA Turbo/);

@@ -439,7 +439,9 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
     ]);
     assert.equal(
       describeInlineSceneH3ReferencePlan(request),
-      `${count * 2 + 1} refs · current scene + ${count} canonical ${count === 1 ? 'identity' : 'identities'} + ${count} body/wardrobe`
+      `${count * 2 + 1} refs · P1 scene · ${candidates.map((candidate, index) => (
+        `${candidate.displayName} P${index + 2} face/P${count + index + 2} body`
+      )).join(' · ')}`
     );
     assert.ok(plan.length <= MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.maxReferenceImages);
     const graph = buildMiniMaxH3InlineSceneVideoWorkflow(request, input, 42);
@@ -499,7 +501,9 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
     ]);
     assert.equal(
       describeInlineSceneH3ReferencePlan(continuedRequest),
-      `${count * 2 + 2} refs · current scene + prior master + ${count} canonical ${count === 1 ? 'identity' : 'identities'} + ${count} body/wardrobe`
+      `${count * 2 + 2} refs · P1 scene · P2 prior · ${candidates.map((candidate, index) => (
+        `${candidate.displayName} P${index + 3} face/P${count + index + 3} body`
+      )).join(' · ')}`
     );
     const continuedGraph = buildMiniMaxH3InlineSceneVideoWorkflow(continuedRequest, input, 43, masterInput);
     assert.equal(continuedGraph['6'].inputs.image, `mullet/motion-inputs/${masterInput.name}`);
