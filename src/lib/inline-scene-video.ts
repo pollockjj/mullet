@@ -7,9 +7,9 @@ import {
 } from './inline-scene.ts';
 import { sha256Hex } from './sha256.ts';
 
-export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v4' as const;
-export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v3' as const;
-export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-scene-v1' as const;
+export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v5' as const;
+export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v4' as const;
+export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-scene-v2' as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-i2v-turbo-v1' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
@@ -62,9 +62,10 @@ export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
     'ManualSigmas',
     'SamplerCustomAdvanced',
     'VAEDecodeTiled',
-    'SaveWEBM'
+    'CreateVideo',
+    'SaveVideo'
   ],
-  outputNode: '35',
+  outputNode: '36',
   mode: LTX25_INLINE_SCENE_VIDEO_MODE,
   durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
   frames: LTX25_INLINE_SCENE_VIDEO_FRAMES,
@@ -72,8 +73,9 @@ export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   sampler: 'euler_ancestral',
   firstPassSigmas: '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
   secondPassSigmas: '0.85, 0.7250, 0.4219, 0.0',
-  codec: 'vp9',
-  crf: 32,
+  format: 'mp4',
+  codec: 'h264',
+  bitDepth: 8,
   promptGuide: 'one continuous landscape shot, identical first/last-frame loop, restrained natural motion, silent video-only output, no cuts'
 } as const);
 
@@ -538,13 +540,20 @@ export function buildLtx25InlineSceneVideoWorkflow(
     '33': { class_type: 'LTXVCropGuides', inputs: { positive: ['25', 0], negative: ['25', 1], latent: ['32', 0] } },
     '34': { class_type: 'VAEDecodeTiled', inputs: { samples: ['33', 2], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
     '35': {
-      class_type: 'SaveWEBM',
+      class_type: 'CreateVideo',
       inputs: {
         images: ['34', 0],
-        filename_prefix: 'mullet/scene-motion-loop-flf',
-        codec: template.codec,
         fps,
-        crf: template.crf
+        bit_depth: template.bitDepth
+      }
+    },
+    '36': {
+      class_type: 'SaveVideo',
+      inputs: {
+        video: ['35', 0],
+        filename_prefix: 'mullet/scene-motion-loop-flf',
+        format: template.format,
+        codec: template.codec
       }
     }
   };

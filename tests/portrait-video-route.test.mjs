@@ -14,7 +14,6 @@ import {
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE
 } from '../src/lib/portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-portrait-video-route');
@@ -22,8 +21,8 @@ const publicOrigin = 'https://mullet.test';
 const deadComfyBaseUrl = 'http://127.0.0.1:1';
 const videoPromptId = '33333333-3333-4333-8333-333333333333';
 const endFramePromptId = '44444444-4444-4444-8444-444444444444';
-const webmBytes = buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24 });
-const audioWebmBytes = buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24, includeAudio: true });
+const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49, includeAudio: false });
+const ltxAudioMp4Bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49 });
 const mp4Bytes = buildH264AacMp4Fixture({
   width: 576,
   height: 1024,
@@ -102,7 +101,6 @@ function capabilityResponse(node) {
     scheduler: [['simple']]
   } } } };
   if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
-  if (node === 'SaveWEBM') return standardInfo(node, 'codec', ['vp9']);
   if (node === 'SaveVideo') return { [node]: { input: {
     required: { format: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'mp4' }] }] },
     optional: { codec: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'h264' }] }] }
@@ -224,8 +222,8 @@ function fakeComfy() {
         const loopFlf = ltx
           ? queued.prompt?.['13']?.class_type === 'LTXVAddGuide' && !generatedFlf
           : Boolean(queued.prompt?.['6']?.inputs?.last_frame) && !generatedFlf;
-        const outputNode = ltx ? (loopFlf || generatedFlf ? '35' : '31') : '15';
-        const extension = ltx ? 'webm' : 'mp4';
+        const outputNode = ltx ? '38' : '15';
+        const extension = 'mp4';
         const filename = generatedFlf
           ? `portrait-motion-generated-flf_00001_.${extension}`
           : loopFlf
@@ -255,23 +253,25 @@ function fakeComfy() {
           return;
         }
         const filename = url.searchParams.get('filename') ?? '';
-        const webm = filename.endsWith('.webm');
         if (state.mode === 'oversized') {
           response.writeHead(200, {
-            'content-type': webm ? 'video/webm' : 'video/mp4',
+            'content-type': 'video/mp4',
             'content-length': String(64 * 1024 * 1024 + 1)
           });
           response.end();
           return;
         }
         const queuedVideo = state.prompts.findLast((prompt) => prompt.client_id === 'mullet-portrait-video');
-        const videoBytes = webm
-          ? state.mode === 'audio-webm' ? audioWebmBytes : webmBytes
+        const ltx = queuedVideo?.prompt?.['3']?.inputs?.unet_name === LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet;
+        const videoBytes = state.mode === 'audio-ltx-mp4'
+          ? ltxAudioMp4Bytes
           : state.mode === 'audio-mp4'
             ? audioMp4Bytes
-            : queuedVideo?.prompt?.['6']?.inputs?.length === 124 ? mp4FiveBytes : mp4Bytes;
+            : ltx
+              ? ltxMp4Bytes
+              : queuedVideo?.prompt?.['6']?.inputs?.length === 124 ? mp4FiveBytes : mp4Bytes;
         response.writeHead(200, {
-          'content-type': webm ? 'video/webm' : 'video/mp4',
+          'content-type': 'video/mp4',
           'content-length': String(videoBytes.byteLength)
         });
         response.end(videoBytes);
@@ -372,7 +372,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v8');
+    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v9');
     assert.deepEqual(
       capabilities.templates.map(({ template }) => template.id),
       [LTX25_PORTRAIT_VIDEO_TEMPLATE_ID, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID]
@@ -409,13 +409,13 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(queriedImageNodes.length, new Set(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes).size);
   });
 
-  await context.test('POST defaults to the two-second silent LTX identical-frame loop WebM', async () => {
+  await context.test('POST defaults to the two-second silent LTX identical-frame loop H.264 MP4', async () => {
     fake.reset();
     const response = await post(formFor(request, imageBytes));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
     assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, webmBytes);
-    assert.equal(response.headers.get('content-type'), 'video/webm');
+    assert.deepEqual(responseBytes, ltxMp4Bytes);
+    assert.equal(response.headers.get('content-type'), 'video/mp4');
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-mullet-prompt-id'), videoPromptId);
@@ -424,12 +424,12 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(response.headers.get('x-mullet-frames'), '49');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
     assert.equal(response.headers.get('x-mullet-duration-seconds'), '2');
-    assert.equal(response.headers.get('x-mullet-encoded-duration-seconds'), '2.042');
+    assert.equal(response.headers.get('x-mullet-encoded-duration-seconds'), String(49 / 24));
     assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
     assert.equal(response.headers.get('x-mullet-model-template'), LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
     assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_loop');
     assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
-    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(webmBytes));
+    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(ltxMp4Bytes));
 
     assert.equal(fake.state.uploads.length, 1);
     const upload = fake.state.uploads[0];
@@ -459,10 +459,15 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.deepEqual(queued.prompt['24'].inputs.image, ['2', 0]);
     assert.equal(queued.prompt['25'].inputs.frame_idx, -1);
     assert.deepEqual(queued.prompt['25'].inputs.image, ['2', 0]);
-    assert.equal(queued.prompt['35'].class_type, 'SaveWEBM');
-    assert.equal(queued.prompt['35'].inputs.codec, 'vp9');
+    assert.equal(queued.prompt['35'].class_type, 'CreateVideo');
     assert.equal(queued.prompt['35'].inputs.fps, 24);
     assert.equal(Object.hasOwn(queued.prompt['35'].inputs, 'audio'), false);
+    assert.deepEqual(queued.prompt['35'].inputs.images, ['34', 0]);
+    assert.equal(queued.prompt['35'].inputs.bit_depth, 8);
+    assert.equal(queued.prompt['38'].class_type, 'SaveVideo');
+    assert.deepEqual(queued.prompt['38'].inputs.video, ['35', 0]);
+    assert.equal(queued.prompt['38'].inputs.format, 'mp4');
+    assert.equal(queued.prompt['38'].inputs.codec, 'h264');
   });
 
   await context.test('POST retains selectable MiniMax H3 three- and five-second MP4 loops', async () => {
@@ -511,8 +516,8 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     const response = await post(formFor(generatedRequest, imageBytes));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
     assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, webmBytes);
-    assert.equal(response.headers.get('content-type'), 'video/webm');
+    assert.deepEqual(responseBytes, ltxMp4Bytes);
+    assert.equal(response.headers.get('content-type'), 'video/mp4');
     assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_generated');
     assert.equal(response.headers.get('x-mullet-end-frame-model-template'), 'qwen-image-edit-2511-end-frame-v1');
     assert.equal(response.headers.get('x-mullet-end-frame-prompt-id'), endFramePromptId);
@@ -558,7 +563,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(videoPrompt.prompt['36'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[1].name}`);
     assert.deepEqual(videoPrompt.prompt['13'].inputs.image, ['37', 0]);
     assert.deepEqual(videoPrompt.prompt['25'].inputs.image, ['37', 0]);
-    assert.equal(videoPrompt.prompt['35'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
+    assert.equal(videoPrompt.prompt['38'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
   });
 
   await context.test('POST rejects mismatched hash, IHDR, and multipart shape before ComfyUI', async () => {
@@ -598,8 +603,8 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(fake.state.calls.some(({ path }) => path === '/interrupt'), false);
   });
 
-  await context.test('audio-bearing LTX WebM maps to 502 and cancels only its prompt', async () => {
-    fake.reset('audio-webm');
+  await context.test('audio-bearing LTX MP4 maps to 502 and cancels only its prompt', async () => {
+    fake.reset('audio-ltx-mp4');
     const response = await post(formFor(request, imageBytes));
     assert.equal(response.status, 502, await response.text());
     const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
@@ -616,7 +621,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(cancellations.length, 1);
   });
 
-  await context.test('declared oversized WebM maps to 413 without allocating its body', async () => {
+  await context.test('declared oversized MP4 maps to 413 without allocating its body', async () => {
     fake.reset('oversized');
     const response = await post(formFor(request, imageBytes));
     assert.equal(response.status, 413, await response.text());

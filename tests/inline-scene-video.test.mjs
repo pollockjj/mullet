@@ -119,7 +119,7 @@ function openingStaticScene(aspectRatio = '16:9', megapixels = 1) {
 test('binds motion to every static-scene provenance field', () => {
   const scene = staticScene();
   const request = buildInlineSceneVideoRequest(scene);
-  assert.equal(request.spec, 'mullet_inline_scene_video_request_v4');
+  assert.equal(request.spec, 'mullet_inline_scene_video_request_v5');
   assert.equal(request.modelTemplate, LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID);
   assert.equal(request.mode, 'flf2v_loop');
   assert.equal(request.source.sceneRequestKey, scene.requestKey);
@@ -329,9 +329,13 @@ test('builds the pinned two-pass LTX FLF graph with identical supplied first and
   assert.equal(graph['13'].inputs.frame_idx, -1);
   assert.equal(graph['24'].inputs.frame_idx, 0);
   assert.equal(graph['25'].inputs.frame_idx, -1);
-  assert.equal(graph['35'].class_type, 'SaveWEBM');
-  assert.equal(graph['35'].inputs.codec, 'vp9');
+  assert.equal(graph['35'].class_type, 'CreateVideo');
   assert.equal('audio' in graph['35'].inputs, false);
+  assert.equal(graph['35'].inputs.bit_depth, 8);
+  assert.equal(graph['36'].class_type, 'SaveVideo');
+  assert.equal(graph['36'].inputs.format, 'mp4');
+  assert.equal(graph['36'].inputs.codec, 'h264');
+  assert.deepEqual(graph['36'].inputs.video, ['35', 0]);
   assert.match(buildInlineSceneVideoPrompt(request), /Silent video only/);
   assert.match(buildInlineSceneVideoPrompt(request), /no talking, no lip or mouth movement/);
 });

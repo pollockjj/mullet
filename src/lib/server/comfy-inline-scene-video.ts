@@ -13,14 +13,13 @@ import {
   type InlineSceneVideoInputReference,
   type InlineSceneVideoRequest
 } from '../inline-scene-video.ts';
-import { validateH264AacMp4 } from '../mp4.ts';
-import { validateVp9Webm } from '../webm.ts';
+import { validateH264AacMp4, validateH264VideoOnlyMp4 } from '../mp4.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ComfyInlineSceneVideo = {
   bytes: Uint8Array;
-  contentType: 'video/mp4' | 'video/webm';
+  contentType: 'video/mp4';
   promptId: string;
   filename: string;
   sha256: string;
@@ -160,7 +159,18 @@ export async function loadInlineSceneVideoCapabilities(
   optionDiagnostic(ltxMissing, 'VAELoader', 'vae_name', ltx.modelFiles.audioVae, `model:vae:${ltx.modelFiles.audioVae}`);
   optionDiagnostic(ltxMissing, 'LatentUpscaleModelLoader', 'model_name', ltx.modelFiles.latentUpscaler, `model:latent-upscaler:${ltx.modelFiles.latentUpscaler}`);
   optionDiagnostic(ltxMissing, 'KSamplerSelect', 'sampler_name', ltx.sampler, `sampler:${ltx.sampler}`);
-  optionDiagnostic(ltxMissing, 'SaveWEBM', 'codec', ltx.codec, `video-codec:${ltx.codec}`);
+  if (nodeAvailable('SaveVideo')) {
+    diagnostic(ltxMissing, `video-format:${ltx.format}`, () => requireOption(
+      dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+      ltx.format,
+      `video-format:${ltx.format}`
+    ));
+    diagnostic(ltxMissing, `video-codec:${ltx.codec}`, () => requireOption(
+      dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+      ltx.codec,
+      `video-codec:${ltx.codec}`
+    ));
+  }
   uploadDiagnostic(ltxMissing);
 
   const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
@@ -295,15 +305,16 @@ function outputVideo(
     || !isRecord(entry.outputs[outputNode])
   ) throw new Error('ComfyUI inline-scene video history omitted the fixed output node');
   const output = entry.outputs[outputNode];
-  if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
+  const references = isRecord(output) && Array.isArray(output.videos) ? output.videos : isRecord(output) ? output.images : null;
+  if (!Array.isArray(references) || references.length !== 1 || !isRecord(references[0])) {
     throw new Error('ComfyUI inline-scene video history omitted the video');
   }
   if (!Array.isArray(output.animated) || output.animated.length !== 1 || output.animated[0] !== true) {
     throw new Error('ComfyUI inline-scene video history did not mark the output animated');
   }
-  const video = output.images[0];
+  const video = references[0];
   const filenamePattern = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? /^scene-motion-loop-flf_\d+_\.webm$/
+    ? /^scene-motion-loop-flf_\d+_\.mp4$/
     : /^scene-motion_\d+_\.mp4$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected inline-scene video filename');
@@ -424,30 +435,26 @@ export async function runComfyInlineSceneVideo(
       fps: dimensions.fps
     };
     let durationSeconds: number;
-    let resultContentType: ComfyInlineSceneVideo['contentType'];
     let audioTracks: ComfyInlineSceneVideo['audioTracks'];
+    if (contentType !== 'video/mp4') throw new Error('ComfyUI inline-scene video output is not MP4');
+    if (
+      bytes.byteLength < 12
+      || bytes[4] !== 0x66
+      || bytes[5] !== 0x74
+      || bytes[6] !== 0x79
+      || bytes[7] !== 0x70
+    ) throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
     if (request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
-      if (contentType !== 'video/webm') throw new Error('ComfyUI inline-scene video output is not WebM');
-      durationSeconds = validateVp9Webm(bytes, expected).containerDurationSeconds;
-      resultContentType = 'video/webm';
+      durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
       audioTracks = 0;
     } else {
-      if (contentType !== 'video/mp4') throw new Error('ComfyUI inline-scene video output is not MP4');
-      if (
-        bytes.byteLength < 12
-        || bytes[4] !== 0x66
-        || bytes[5] !== 0x74
-        || bytes[6] !== 0x79
-        || bytes[7] !== 0x70
-      ) throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
       durationSeconds = validateH264AacMp4(bytes, expected).durationSeconds;
-      resultContentType = 'video/mp4';
       audioTracks = 1;
     }
     completed = true;
     return {
       bytes,
-      contentType: resultContentType,
+      contentType: 'video/mp4',
       promptId: id,
       filename: video.filename,
       sha256: await sha256InlineSceneVideoBytes(bytes),

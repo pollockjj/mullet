@@ -18,13 +18,12 @@ import {
   type PortraitVideoRequest
 } from '../portrait-video.ts';
 import { validateH264VideoOnlyMp4 } from '../mp4.ts';
-import { validateVp9Webm } from '../webm.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ComfyPortraitVideo = {
   bytes: Uint8Array;
-  contentType: 'video/mp4' | 'video/webm';
+  contentType: 'video/mp4';
   promptId: string;
   filename: string;
   sha256: string;
@@ -231,7 +230,6 @@ export async function loadPortraitVideoCapabilities(
     `model:latent-upscaler:${ltxTemplate.modelFiles.latentUpscaler}`
   );
   modelOption(ltxCommonMissing, 'KSamplerSelect', 'sampler_name', ltxTemplate.sampler, `sampler:${ltxTemplate.sampler}`);
-  modelOption(ltxCommonMissing, 'SaveWEBM', 'codec', ltxTemplate.codec, `video-codec:${ltxTemplate.codec}`);
 
   modelOption(minimaxCommonMissing, 'UNETLoader', 'unet_name', minimaxTemplate.modelFiles.unet, `model:unet:${minimaxTemplate.modelFiles.unet}`);
   modelOption(minimaxCommonMissing, 'CLIPLoader', 'clip_name', minimaxTemplate.modelFiles.clip, `model:clip:${minimaxTemplate.modelFiles.clip}`);
@@ -241,6 +239,16 @@ export async function loadPortraitVideoCapabilities(
   modelOption(minimaxCommonMissing, 'KSamplerSelect', 'sampler_name', minimaxTemplate.sampler, `sampler:${minimaxTemplate.sampler}`);
   modelOption(minimaxCommonMissing, 'BasicScheduler', 'scheduler', minimaxTemplate.scheduler, `scheduler:${minimaxTemplate.scheduler}`);
   if (videoNodeAvailable('SaveVideo')) {
+    diagnostic(ltxCommonMissing, `video-format:${ltxTemplate.format}`, () => requireOption(
+      dynamicOptionKeys(requiredInput(videoInfo.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+      ltxTemplate.format,
+      `video-format:${ltxTemplate.format}`
+    ));
+    diagnostic(ltxCommonMissing, `video-codec:${ltxTemplate.codec}`, () => requireOption(
+      dynamicOptionKeys(inputDefinition(videoInfo.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+      ltxTemplate.codec,
+      `video-codec:${ltxTemplate.codec}`
+    ));
     diagnostic(minimaxCommonMissing, `video-format:${minimaxTemplate.format}`, () => requireOption(
       dynamicOptionKeys(requiredInput(videoInfo.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
       minimaxTemplate.format,
@@ -431,12 +439,11 @@ function outputVideo(entry: Record<string, unknown>, request: PortraitVideoReque
     throw new Error('ComfyUI portrait-video history did not mark the output animated');
   }
   const video = output.images[0];
-  const ltx = request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
   const filenamePattern = request.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
-    ? ltx ? /^portrait-motion-generated-flf_\d+_\.webm$/ : /^portrait-motion-generated-flf_\d+_\.mp4$/
+    ? /^portrait-motion-generated-flf_\d+_\.mp4$/
     : request.mode === 'flf2v_loop'
-      ? ltx ? /^portrait-motion-loop-flf_\d+_\.webm$/ : /^portrait-motion-loop-flf_\d+_\.mp4$/
-      : ltx ? /^portrait-motion_\d+_\.webm$/ : /^portrait-motion_\d+_\.mp4$/;
+      ? /^portrait-motion-loop-flf_\d+_\.mp4$/
+      : /^portrait-motion_\d+_\.mp4$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait-video filename');
   }
@@ -668,25 +675,16 @@ export async function runComfyPortraitVideo(
       frames: dimensions.frames,
       fps: dimensions.fps
     };
-    let durationSeconds: number;
-    let resultContentType: ComfyPortraitVideo['contentType'];
-    if (request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID) {
-      if (contentType !== 'video/webm') throw new Error('ComfyUI portrait-video output is not WebM');
-      durationSeconds = validateVp9Webm(bytes, expected).containerDurationSeconds;
-      resultContentType = 'video/webm';
-    } else {
-      if (contentType !== 'video/mp4') throw new Error('ComfyUI portrait-video output is not MP4');
-      if (bytes.byteLength < 12 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
-        throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
-      }
-      durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
-      resultContentType = 'video/mp4';
+    if (contentType !== 'video/mp4') throw new Error('ComfyUI portrait-video output is not MP4');
+    if (bytes.byteLength < 12 || bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
+      throw new Error('ComfyUI portrait-video output has an invalid MP4 signature');
     }
+    const durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
     const sha256 = await sha256Hex(bytes);
     validated = true;
     return {
       bytes,
-      contentType: resultContentType,
+      contentType: 'video/mp4',
       promptId: id,
       filename: video.filename,
       sha256,

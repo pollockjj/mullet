@@ -9,8 +9,8 @@ import {
 } from './portrait.ts';
 
 export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v8' as const;
-export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v8' as const;
-export const LTX25_PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v3' as const;
+export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v9' as const;
+export const LTX25_PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v4' as const;
 export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
 export const PORTRAIT_VIDEO_TEMPLATE_ID = LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
 export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-end-frame-v1' as const;
@@ -80,20 +80,22 @@ export const LTX25_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
     'ManualSigmas',
     'SamplerCustomAdvanced',
     'VAEDecodeTiled',
-    'SaveWEBM'
+    'CreateVideo',
+    'SaveVideo'
   ],
   outputNodes: {
-    [PORTRAIT_VIDEO_MODE_I2V]: '31',
-    [PORTRAIT_VIDEO_MODE_LOOP_FLF]: '35',
-    [PORTRAIT_VIDEO_MODE_GENERATED_FLF]: '35'
+    [PORTRAIT_VIDEO_MODE_I2V]: '38',
+    [PORTRAIT_VIDEO_MODE_LOOP_FLF]: '38',
+    [PORTRAIT_VIDEO_MODE_GENERATED_FLF]: '38'
   },
   durations: LTX25_PORTRAIT_VIDEO_DURATIONS,
   multiple: 64,
   sampler: 'euler_ancestral',
   firstPassSigmas: '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
   secondPassSigmas: '0.85, 0.7250, 0.4219, 0.0',
-  codec: 'vp9',
-  crf: 32,
+  format: 'mp4',
+  codec: 'h264',
+  bitDepth: 8,
   promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, silent video-only output, no cuts'
 } as const);
 
@@ -545,13 +547,20 @@ export function buildLtx25PortraitVideoWorkflow(
     '29': { class_type: 'LTXVSeparateAVLatent', inputs: { av_latent: ['28', 0] } },
     '30': { class_type: 'VAEDecodeTiled', inputs: { samples: ['29', 0], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
     '31': {
-      class_type: 'SaveWEBM',
+      class_type: 'CreateVideo',
       inputs: {
         images: ['30', 0],
-        filename_prefix: 'mullet/portrait-motion',
-        codec: template.codec,
         fps,
-        crf: template.crf
+        bit_depth: template.bitDepth
+      }
+    },
+    '38': {
+      class_type: 'SaveVideo',
+      inputs: {
+        video: ['31', 0],
+        filename_prefix: 'mullet/portrait-motion',
+        format: template.format,
+        codec: template.codec
       }
     }
   };
@@ -610,19 +619,26 @@ function buildLtx25FlfPortraitVideoWorkflow(
     '33': { class_type: 'LTXVCropGuides', inputs: { positive: ['25', 0], negative: ['25', 1], latent: ['32', 0] } },
     '34': { class_type: 'VAEDecodeTiled', inputs: { samples: ['33', 2], vae: ['5', 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
     '35': {
-      class_type: 'SaveWEBM',
+      class_type: 'CreateVideo',
       inputs: {
         images: ['34', 0],
-        filename_prefix: generatedEndFrame ? 'mullet/portrait-motion-generated-flf' : 'mullet/portrait-motion-loop-flf',
-        codec: template.codec,
         fps,
-        crf: template.crf
+        bit_depth: template.bitDepth
       }
     },
     ...(generatedEndFrame ? {
       '36': { class_type: 'LoadImage', inputs: { image: `${endFrameInput.subfolder}/${endFrameInput.name}` } },
       '37': { class_type: 'LTXVPreprocess', inputs: { image: ['36', 0], img_compression: 18 } }
-    } : {})
+    } : {}),
+    '38': {
+      class_type: 'SaveVideo',
+      inputs: {
+        video: ['35', 0],
+        filename_prefix: generatedEndFrame ? 'mullet/portrait-motion-generated-flf' : 'mullet/portrait-motion-loop-flf',
+        format: template.format,
+        codec: template.codec
+      }
+    }
   };
 }
 

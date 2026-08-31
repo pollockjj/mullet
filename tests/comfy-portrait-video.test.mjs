@@ -22,7 +22,6 @@ import {
   validatePortraitVideoPng
 } from '../src/lib/server/comfy-portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const portrait = {
   conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -85,7 +84,7 @@ const mp4 = buildH264AacMp4Fixture({
   includeAudio: false
 });
 const mp4Five = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 124, includeAudio: false });
-const webm = buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24 });
+const ltxMp4 = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49, includeAudio: false });
 
 function standardInfo(node, inputName, options, metadata = {}) {
   return { [node]: { input: { required: { [inputName]: [options, metadata] } } } };
@@ -117,7 +116,6 @@ function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, leng
     scheduler: [['simple']]
   } } } };
   if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
-  if (node === 'SaveWEBM') return standardInfo(node, 'codec', ['vp9']);
   if (node === 'SaveVideo') return { [node]: { input: {
     required: { format: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'mp4' }] }] },
     optional: { codec: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'h264' }] }] }
@@ -149,7 +147,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     return Response.json(capabilityResponse(node));
   };
   const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://video-comfy', 'http://image-comfy');
-  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v8');
+  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v9');
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
@@ -314,9 +312,9 @@ test('accepts only a PNG with the exact source IHDR dimensions', () => {
 async function runMode(selectedRequest, filename, selectedEndInput, outputBytes) {
   const observed = [];
   const ltx = selectedRequest.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
-  const outputNode = ltx && selectedRequest.mode !== PORTRAIT_VIDEO_MODE_I2V ? '35' : ltx ? '31' : '15';
-  const contentType = ltx ? 'video/webm' : 'video/mp4';
-  const selectedOutputBytes = outputBytes ?? (ltx ? webm : mp4);
+  const outputNode = ltx ? '38' : '15';
+  const contentType = 'video/mp4';
+  const selectedOutputBytes = outputBytes ?? (ltx ? ltxMp4 : mp4);
   const fetcher = async (url, init) => {
     const value = String(url);
     observed.push({ url: value, init });
@@ -334,57 +332,64 @@ async function runMode(selectedRequest, filename, selectedEndInput, outputBytes)
   return { result, observed, queued: JSON.parse(observed[0].init.body) };
 }
 
-test('queues and validates fixed two-second LTX 2.5 I2V as silent VP9 WebM', async () => {
-  const { result, observed, queued } = await runMode(requests.ltxI2v, 'portrait-motion_00001_.webm');
+test('queues and validates fixed two-second LTX 2.5 I2V as silent H.264 MP4', async () => {
+  const { result, observed, queued } = await runMode(requests.ltxI2v, 'portrait-motion_00001_.mp4');
   assert.equal(queued.client_id, 'mullet-portrait-video');
   assert.equal(queued.prompt['1'].inputs.image, `mullet/motion-inputs/${input.name}`);
   assert.equal(queued.prompt['3'].inputs.unet_name, LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet);
   assert.equal(queued.prompt['11'].inputs.length, 49);
   assert.equal(queued.prompt['16'].inputs.noise_seed, 42);
-  assert.equal(queued.prompt['31'].class_type, 'SaveWEBM');
-  assert.equal(queued.prompt['31'].inputs.codec, 'vp9');
+  assert.equal(queued.prompt['31'].class_type, 'CreateVideo');
   assert.equal(Object.hasOwn(queued.prompt['31'].inputs, 'audio'), false);
-  assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion_00001_.webm&subfolder=mullet&type=output');
-  assert.equal(result.contentType, 'video/webm');
-  assert.equal(result.durationSeconds, 2.042);
+  assert.deepEqual(queued.prompt['31'].inputs.images, ['30', 0]);
+  assert.equal(queued.prompt['31'].inputs.bit_depth, 8);
+  assert.equal(queued.prompt['38'].class_type, 'SaveVideo');
+  assert.deepEqual(queued.prompt['38'].inputs.video, ['31', 0]);
+  assert.equal(queued.prompt['38'].inputs.format, 'mp4');
+  assert.equal(queued.prompt['38'].inputs.codec, 'h264');
+  assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion_00001_.mp4&subfolder=mullet&type=output');
+  assert.equal(result.contentType, 'video/mp4');
+  assert.equal(result.durationSeconds, 49 / 24);
   assert.equal(result.audioTracks, 0);
-  assert.deepEqual(result.bytes, webm);
+  assert.deepEqual(result.bytes, ltxMp4);
 });
 
 test('dispatches LTX loop and generated-FLF output nodes and filenames independently', async () => {
-  const loop = await runMode(requests.ltxLoop, 'portrait-motion-loop-flf_00001_.webm');
+  const loop = await runMode(requests.ltxLoop, 'portrait-motion-loop-flf_00001_.mp4');
   assert.equal(loop.queued.prompt['12'].class_type, 'LTXVAddGuide');
   assert.deepEqual(loop.queued.prompt['13'].inputs.image, ['2', 0]);
-  assert.equal(loop.queued.prompt['35'].inputs.filename_prefix, 'mullet/portrait-motion-loop-flf');
-  assert.equal(loop.observed[2].url, 'http://comfy/view?filename=portrait-motion-loop-flf_00001_.webm&subfolder=mullet&type=output');
+  assert.equal(loop.queued.prompt['35'].class_type, 'CreateVideo');
+  assert.equal(Object.hasOwn(loop.queued.prompt['35'].inputs, 'audio'), false);
+  assert.equal(loop.queued.prompt['38'].inputs.filename_prefix, 'mullet/portrait-motion-loop-flf');
+  assert.equal(loop.observed[2].url, 'http://comfy/view?filename=portrait-motion-loop-flf_00001_.mp4&subfolder=mullet&type=output');
 
   const generated = await runMode(
     requests.ltxGenerated,
-    'portrait-motion-generated-flf_00001_.webm',
+    'portrait-motion-generated-flf_00001_.mp4',
     endInput
   );
   assert.equal(generated.queued.prompt['36'].inputs.image, `mullet/motion-inputs/${endInput.name}`);
   assert.deepEqual(generated.queued.prompt['13'].inputs.image, ['37', 0]);
-  assert.equal(generated.queued.prompt['35'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
-  assert.equal(generated.result.contentType, 'video/webm');
+  assert.equal(generated.queued.prompt['38'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
+  assert.equal(generated.result.contentType, 'video/mp4');
 });
 
-test('rejects audio-bearing or wrong-contract LTX WebM output', async () => {
+test('rejects audio-bearing or wrong-contract LTX H.264 MP4 output', async () => {
   await assert.rejects(
     runMode(
       requests.ltxI2v,
-      'portrait-motion_00002_.webm',
+      'portrait-motion_00002_.mp4',
       undefined,
-      buildVp9WebmFixture({ width: 576, height: 1024, frames: 49, fps: 24, includeAudio: true })
+      buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49 })
     ),
-    /must not contain audio or extra non-video media tracks/
+    /must not contain an audio track/
   );
   await assert.rejects(
     runMode(
       requests.ltxI2v,
-      'portrait-motion_00003_.webm',
+      'portrait-motion_00003_.mp4',
       undefined,
-      buildVp9WebmFixture({ width: 576, height: 1024, frames: 48, fps: 24 })
+      buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 48, includeAudio: false })
     ),
     /frame count/
   );

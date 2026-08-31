@@ -9,11 +9,10 @@ import {
   type InlineSceneVideoRequest,
   type InlineSceneVideoTemplateId
 } from './inline-scene-video.ts';
-import { validateH264AacMp4 } from './mp4.ts';
-import { validateVp9Webm } from './webm.ts';
+import { validateH264AacMp4, validateH264VideoOnlyMp4 } from './mp4.ts';
 
-export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v6' as const;
-export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v6' as const;
+export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v7' as const;
+export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v7' as const;
 
 export class StoredInlineSceneVideoIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -79,7 +78,6 @@ const STORE_NAME = 'state';
 const ACTIVE_VIDEO_KEY = 'active-inline-scene-video';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS = 0.002;
 const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
   'mullet_stored_inline_scene_video_v1',
   'mullet_stored_inline_scene_video_envelope_v1',
@@ -90,7 +88,9 @@ const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
   'mullet_stored_inline_scene_video_v4',
   'mullet_stored_inline_scene_video_envelope_v4',
   'mullet_stored_inline_scene_video_v5',
-  'mullet_stored_inline_scene_video_envelope_v5'
+  'mullet_stored_inline_scene_video_envelope_v5',
+  'mullet_stored_inline_scene_video_v6',
+  'mullet_stored_inline_scene_video_envelope_v6'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,14 +153,11 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     || value.fps !== INLINE_SCENE_VIDEO_FPS
   ) throw new Error('stored inline-scene video timing is invalid');
   const expectedDurationSeconds = expected.frames / expected.fps;
-  const encodedDurationTolerance = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS
-    : 0;
   const durationSeconds = finiteNumber(
     value.durationSeconds,
     'stored inline-scene video encoded duration',
-    expectedDurationSeconds - encodedDurationTolerance,
-    expectedDurationSeconds + encodedDurationTolerance
+    expectedDurationSeconds,
+    expectedDurationSeconds
   );
   const expectedAudioTracks = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 0 : 1;
   const audioTracks = safeInteger(
@@ -175,11 +172,10 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
   }
   const videoSha256 = sha256(value.videoSha256, 'stored inline-scene video output hash');
   const expectedContentType = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? 'video/webm'
-    : request.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
-      ? 'video/mp4'
-      : '';
-  const minimumBytes = expectedContentType === 'video/webm' ? 32 : 12;
+    || request.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ? 'video/mp4'
+    : '';
+  const minimumBytes = 12;
   if (
     !(value.video instanceof Blob)
     || value.video.type !== expectedContentType
@@ -241,7 +237,7 @@ export async function verifyStoredInlineSceneVideo(value: unknown): Promise<Stor
   };
   let encodedDurationSeconds: number;
   if (video.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
-    encodedDurationSeconds = validateVp9Webm(bytes, expected).containerDurationSeconds;
+    encodedDurationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
   } else {
     if (
       bytes[4] !== 0x66
@@ -251,7 +247,7 @@ export async function verifyStoredInlineSceneVideo(value: unknown): Promise<Stor
     ) throw new Error('stored inline-scene video has an invalid MP4 signature');
     encodedDurationSeconds = validateH264AacMp4(bytes, expected).durationSeconds;
   }
-  if (Math.abs(encodedDurationSeconds - video.durationSeconds) > WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS) {
+  if (encodedDurationSeconds !== video.durationSeconds) {
     throw new Error('stored inline-scene video encoded duration does not match its bytes');
   }
   return video;

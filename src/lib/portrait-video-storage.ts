@@ -1,6 +1,4 @@
 import {
-  LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
-  MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_VIDEO_FPS,
   PORTRAIT_END_FRAME_TEMPLATE_ID,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
@@ -14,8 +12,8 @@ import {
   type PortraitVideoTemplateId
 } from './portrait-video.ts';
 
-export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v8' as const;
-export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v8' as const;
+export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v9' as const;
+export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v9' as const;
 
 export type PortraitVideoEndFrameProvenance = {
   modelTemplate: typeof PORTRAIT_END_FRAME_TEMPLATE_ID;
@@ -83,7 +81,6 @@ const STORE_NAME = 'state';
 const ACTIVE_VIDEO_KEY = 'active-portrait-video';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS = 0.002;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -165,26 +162,19 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     throw new Error('stored portrait-video timing is invalid');
   }
   const expectedEncodedDurationSeconds = expected.frames / expected.fps;
-  const encodedDurationTolerance = request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
-    ? WEBM_CONTAINER_DURATION_TOLERANCE_SECONDS
-    : 0;
   const encodedDurationSeconds = finiteNumber(
     value.encodedDurationSeconds,
     'stored portrait-video encoded duration',
-    expectedEncodedDurationSeconds - encodedDurationTolerance,
-    expectedEncodedDurationSeconds + encodedDurationTolerance
+    expectedEncodedDurationSeconds,
+    expectedEncodedDurationSeconds
   );
   const audioTracks = safeInteger(value.audioTracks, 'stored portrait-video audio-track count', 0, 0) as 0;
   const inputImageSha256 = sha256(value.inputImageSha256, 'stored portrait-video input hash');
   if (inputImageSha256 !== request.source.portraitImageSha256) throw new Error('stored portrait-video input hash does not match its request');
   const endFrame = normalizeEndFrame(value.endFrame, request, inputImageSha256, seed);
   const videoSha256 = sha256(value.videoSha256, 'stored portrait-video output hash');
-  const expectedContentType = request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
-    ? 'video/webm'
-    : request.modelTemplate === MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
-      ? 'video/mp4'
-      : '';
-  const minimumBytes = expectedContentType === 'video/webm' ? 32 : 12;
+  const expectedContentType = 'video/mp4';
+  const minimumBytes = 12;
   if (
     !(value.video instanceof Blob)
     || value.video.type !== expectedContentType
@@ -227,6 +217,7 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
     || value.spec === 'mullet_stored_portrait_video_v5'
     || value.spec === 'mullet_stored_portrait_video_v6'
     || value.spec === 'mullet_stored_portrait_video_v7'
+    || value.spec === 'mullet_stored_portrait_video_v8'
     || value.spec === 'mullet_stored_portrait_video_envelope_v1'
     || value.spec === 'mullet_stored_portrait_video_envelope_v2'
     || value.spec === 'mullet_stored_portrait_video_envelope_v3'
@@ -234,6 +225,7 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
     || value.spec === 'mullet_stored_portrait_video_envelope_v5'
     || value.spec === 'mullet_stored_portrait_video_envelope_v6'
     || value.spec === 'mullet_stored_portrait_video_envelope_v7'
+    || value.spec === 'mullet_stored_portrait_video_envelope_v8'
   )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('video' in value)) {

@@ -8,8 +8,8 @@ This is the correction record a future owner must read before changing or deploy
 - The exact current FLUX diffusion artifact is `flux-2-klein-9b-kv-int8-convrot.safetensors` from `wraps/FLUX.2-klein-9B-KV-INT8-ConvRot-ComfyUI`; this supersedes the older non-KV filename below.
 - Expression output has no aspect selector: it is fixed at 9:16 and defaults to 0.5 MP (576x1024). Canonical reference metadata remains exact and independent; Jenna is 400x600, 2:3.
 - Firestorm is not an artifact-download target for this correction. The operator assigned the download to Leviathan.
-- Expression animation defaults to LTX 2.5 Distilled, not MiniMax: exactly 2 seconds, 49 frames at 24 FPS, identical first and last frames, VP9 WebM, and no audio, speech, talking, or lip-sync behavior.
-- MiniMax H3 remains the untouched default for the separate main-scene video path. LTX and MiniMax remain additive choices on the expression path; one does not replace the other.
+- Expression animation defaults to LTX 2.5 Distilled, not MiniMax: exactly 2 seconds, 49 frames at 24 FPS, identical first and last frames, H.264 video-only MP4, and no audio, speech, talking, or lip-sync behavior.
+- The separate main-scene video path also defaults to LTX 2.5. MiniMax H3 remains an additive selectable path; one model does not replace the other.
 - `docs/handoff/EXPRESSION_ACCEPTANCE_CHECKLIST.md` is the controlling restoration checklist. Historical rows below describe the terminated state and are superseded where they conflict with this resumption correction.
 
 ## Feedback ledger

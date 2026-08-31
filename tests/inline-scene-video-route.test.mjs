@@ -23,7 +23,6 @@ import {
   inlineSceneVideoSourceRequestSha256
 } from '../src/lib/inline-scene-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-inline-scene-video-route');
@@ -34,7 +33,7 @@ const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const comfyPromptId = '33333333-3333-4333-8333-333333333333';
 const staticPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const mp4Bytes = buildH264AacMp4Fixture();
-const webmBytes = buildVp9WebmFixture({ width: 1344, height: 768, frames: 121, fps: 24 });
+const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 1344, height: 768, frames: 121, includeAudio: false });
 const canonicalReference = Object.freeze({
   name: 'jenna-stannis-v1.jpg',
   subfolder: 'mullet/identity',
@@ -110,10 +109,9 @@ function capabilityResponse(nodeName) {
   if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler], {}];
   if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler], {}];
   if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
-  if (nodeName === 'SaveWEBM') required.codec = [[ltx.codec], {}];
   if (nodeName === 'SaveVideo') {
-    required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }] }];
-    optional.codec = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }] }];
+    required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'mp4' }, { key: 'auto' }] }];
+    optional.codec = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'h264' }, { key: 'auto' }] }];
   }
   return { [nodeName]: { input: { required, optional } } };
 }
@@ -188,7 +186,7 @@ function fakeComfy() {
       if (url.pathname === '/prompt' && request.method === 'POST') {
         const queued = JSON.parse((await requestBytes(request)).toString('utf8'));
         state.prompts.push(queued);
-        state.selectedModel = queued.prompt['35'] ? 'ltx' : 'minimax';
+        state.selectedModel = queued.prompt['36'] ? 'ltx' : 'minimax';
         responseJson(response, 200, { prompt_id: comfyPromptId, node_errors: {} });
         return;
       }
@@ -204,9 +202,9 @@ function fakeComfy() {
           [comfyPromptId]: {
             status: { completed: true, status_str: 'success' },
             outputs: {
-              [isLtx ? '35' : '15']: {
-                images: [{
-                  filename: isLtx ? 'scene-motion-loop-flf_00001_.webm' : 'scene-motion_00001_.mp4',
+              [isLtx ? '36' : '15']: {
+                [isLtx ? 'videos' : 'images']: [{
+                  filename: isLtx ? 'scene-motion-loop-flf_00001_.mp4' : 'scene-motion_00001_.mp4',
                   subfolder: 'mullet',
                   type: 'output'
                 }],
@@ -219,8 +217,8 @@ function fakeComfy() {
       }
       if (url.pathname === '/view') {
         const isLtx = state.selectedModel === 'ltx';
-        const bytes = isLtx ? webmBytes : mp4Bytes;
-        const contentType = isLtx ? 'video/webm' : 'video/mp4';
+        const bytes = isLtx ? ltxMp4Bytes : mp4Bytes;
+        const contentType = 'video/mp4';
         if (state.mode === 'oversized') {
           response.writeHead(200, {
             'content-type': contentType,
@@ -324,9 +322,9 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v3');
+    assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v4');
     assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
-      ['ltx-2.5-distilled-scene-v1', true],
+      ['ltx-2.5-distilled-scene-v2', true],
       ['minimax-h3-fl2va-i2v-turbo-v1', true]
     ]);
     assert.deepEqual(capabilities.aspectRatios, [
@@ -342,13 +340,13 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(queriedNodes.length, expectedNodes.size);
   });
 
-  await context.test('POST defaults to exact silent LTX first/last-frame VP9 WebM with provenance', async () => {
+  await context.test('POST defaults to exact silent LTX first/last-frame H.264 MP4 with provenance', async () => {
     fake.reset();
     const response = await post(formFor(request, imageBytes));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
     assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, webmBytes);
-    assert.equal(response.headers.get('content-type'), 'video/webm');
+    assert.deepEqual(responseBytes, ltxMp4Bytes);
+    assert.equal(response.headers.get('content-type'), 'video/mp4');
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-mullet-prompt-id'), comfyPromptId);
@@ -357,15 +355,15 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(response.headers.get('x-mullet-frames'), '121');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
     assert.equal(request.durationSeconds, 5);
-    assert.equal(response.headers.get('x-mullet-duration-seconds'), String(Math.round(121 * 1000 / 24) / 1000));
+    assert.equal(response.headers.get('x-mullet-duration-seconds'), String(121 / 24));
     assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
-    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-scene-v1');
+    assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-scene-v2');
     assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_loop');
     assert.equal(response.headers.get('x-mullet-source-prompt-id'), staticPromptId);
     assert.equal(response.headers.get('x-mullet-source-seed'), '42');
     assert.equal(response.headers.get('x-mullet-source-request-sha256'), inlineSceneVideoSourceRequestSha256(request));
     assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
-    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(webmBytes));
+    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(ltxMp4Bytes));
 
     assert.equal(fake.state.uploads.length, 1);
     const upload = fake.state.uploads[0];
@@ -391,8 +389,11 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(queued.prompt['24'].inputs.frame_idx, 0);
     assert.equal(queued.prompt['25'].inputs.frame_idx, -1);
     assert.equal(queued.prompt['35'].inputs.fps, 24);
-    assert.equal(queued.prompt['35'].inputs.codec, 'vp9');
     assert.equal('audio' in queued.prompt['35'].inputs, false);
+    assert.equal(queued.prompt['35'].inputs.bit_depth, 8);
+    assert.deepEqual(queued.prompt['36'].inputs.video, ['35', 0]);
+    assert.equal(queued.prompt['36'].inputs.format, 'mp4');
+    assert.equal(queued.prompt['36'].inputs.codec, 'h264');
   });
 
   await context.test('POST keeps MiniMax H3 as a selectable native-audio MP4', async () => {

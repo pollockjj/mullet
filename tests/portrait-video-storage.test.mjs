@@ -59,10 +59,7 @@ function minimaxRequest(overrides = {}) {
 function stored(overrides = {}) {
   const motionRequest = overrides.request ?? request();
   const frames = motionRequest.durationSeconds === 2 ? 49 : motionRequest.durationSeconds === 5 ? 124 : 73;
-  const ltx = motionRequest.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
-  const bytes = ltx
-    ? buildVp9WebmFixture({ width: 576, height: 1024, frames, fps: 24 })
-    : buildH264AacMp4Fixture({ width: 576, height: 1024, frames, includeAudio: false });
+  const bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames, includeAudio: false });
   return {
     spec: STORED_PORTRAIT_VIDEO_SPEC,
     conversationId: motionRequest.source.conversationId,
@@ -77,27 +74,27 @@ function stored(overrides = {}) {
     frames,
     fps: 24,
     durationSeconds: motionRequest.durationSeconds,
-    encodedDurationSeconds: ltx ? Math.round(frames * 1000 / 24) / 1000 : frames / 24,
+    encodedDurationSeconds: frames / 24,
     audioTracks: 0,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     endFrame: null,
     videoSha256: 'b'.repeat(64),
-    video: new Blob([bytes], { type: ltx ? 'video/webm' : 'video/mp4' }),
+    video: new Blob([bytes], { type: 'video/mp4' }),
     ...overrides
   };
 }
 
-test('normalizes the default two-second LTX VP9 WebM within container-duration tolerance', () => {
+test('normalizes the default two-second silent LTX H.264 MP4', () => {
   const result = normalizeStoredPortraitVideo(stored());
-  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v8');
-  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v8');
+  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v9');
+  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v9');
   assert.equal(result.modelTemplate, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
-  assert.equal(result.video.type, 'video/webm');
+  assert.equal(result.video.type, 'video/mp4');
   assert.equal(result.frames, 49);
   assert.equal(result.fps, 24);
   assert.equal(result.durationSeconds, 2);
-  assert.equal(result.encodedDurationSeconds, 2.042);
+  assert.equal(result.encodedDurationSeconds, 49 / 24);
   assert.equal(result.audioTracks, 0);
   assert.equal(result.mode, 'i2v');
   assert.equal(result.endFrame, null);
@@ -136,7 +133,7 @@ test('rejects unmatched request keys, conversations, hashes, timing, dimensions,
   assert.throws(() => normalizeStoredPortraitVideo(stored({ mode: 'flf2v_loop' })), /mode is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ frames: 48 })), /timing is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ encodedDurationSeconds: Number.NaN })), /encoded duration is invalid/);
-  assert.throws(() => normalizeStoredPortraitVideo(stored({ encodedDurationSeconds: 49 / 24 + 0.0021 })), /encoded duration is invalid/);
+  assert.throws(() => normalizeStoredPortraitVideo(stored({ encodedDurationSeconds: 49 / 24 + 0.001 })), /encoded duration is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ audioTracks: 1 })), /audio-track count is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ width: 512 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
@@ -144,7 +141,7 @@ test('rejects unmatched request keys, conversations, hashes, timing, dimensions,
     modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   })), /template is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({
-    video: new Blob([buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49, includeAudio: false })], { type: 'video/mp4' })
+    video: new Blob([buildVp9WebmFixture({ width: 576, height: 1024, frames: 49 })], { type: 'video/webm' })
   })), /video is invalid/);
   const minimax = minimaxRequest();
   assert.throws(() => normalizeStoredPortraitVideo(stored({
@@ -164,8 +161,8 @@ test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
   assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
 });
 
-test('discards obsolete v1-v7 direct values and envelopes for automatic regeneration', () => {
-  for (let version = 1; version <= 7; version += 1) {
+test('discards obsolete v1-v8 direct values and envelopes for automatic regeneration', () => {
+  for (let version = 1; version <= 8; version += 1) {
     assert.equal(unwrapStoredPortraitVideo({ spec: `mullet_stored_portrait_video_v${version}` }), null);
     assert.equal(unwrapStoredPortraitVideo({
       spec: `mullet_stored_portrait_video_envelope_v${version}`,

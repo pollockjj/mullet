@@ -31,15 +31,14 @@ import {
   verifyStoredInlineSceneVideo
 } from '../src/lib/inline-scene-video-storage.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const epoch = '11111111-1111-4111-8111-111111111111';
 const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const motionPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
-const mp4Bytes = buildH264AacMp4Fixture();
-const webmBytes = buildVp9WebmFixture({ width: 1344, height: 768, frames: 121, fps: 24 });
+const minimaxMp4Bytes = buildH264AacMp4Fixture();
+const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 1344, height: 768, frames: 121, includeAudio: false });
 const canonicalReference = Object.freeze({
   name: 'jenna-stannis-v1.jpg',
   subfolder: 'mullet/identity',
@@ -98,7 +97,7 @@ function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCE
 function stored(overrides = {}, motionRequest = request()) {
   const dimensions = inlineSceneVideoDimensions(motionRequest.aspectRatio, motionRequest.modelTemplate);
   const isLtx = motionRequest.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
-  const bytes = isLtx ? webmBytes : mp4Bytes;
+  const bytes = isLtx ? ltxMp4Bytes : minimaxMp4Bytes;
   return {
     spec: STORED_INLINE_SCENE_VIDEO_SPEC,
     conversationId,
@@ -113,22 +112,22 @@ function stored(overrides = {}, motionRequest = request()) {
     height: dimensions.height,
     frames: dimensions.frames,
     fps: dimensions.fps,
-    durationSeconds: isLtx ? Math.round(121 * 1000 / 24) / 1000 : 124 / 24,
+    durationSeconds: isLtx ? 121 / 24 : 124 / 24,
     audioTracks: isLtx ? 0 : 1,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     videoSha256: createHash('sha256').update(bytes).digest('hex'),
-    video: new Blob([bytes], { type: isLtx ? 'video/webm' : 'video/mp4' }),
+    video: new Blob([bytes], { type: 'video/mp4' }),
     ...overrides
   };
 }
 
-test('normalizes and byte-verifies the default static-scene-bound silent VP9 WebM', async () => {
+test('normalizes and byte-verifies the default static-scene-bound silent H.264 MP4', async () => {
   const normalized = normalizeStoredInlineSceneVideo(stored());
-  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v6');
-  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v6');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v7');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v7');
   assert.equal(normalized.requestKey, inlineSceneVideoRequestKey(normalized.request));
-  assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/webm');
+  assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/mp4');
   assert.equal(normalized.audioTracks, 0);
   assert.equal(normalized.request.source.scenePromptId, staticPromptId);
 });
@@ -165,11 +164,11 @@ test('rejects mismatched source, key, dimensions, timing, hashes, and blobs', as
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
   await assert.rejects(verifyStoredInlineSceneVideo(stored({ videoSha256: 'd'.repeat(64) })), /hash does not match/);
-  await assert.rejects(verifyStoredInlineSceneVideo(stored({ durationSeconds: 5.0398 })), /encoded duration does not match/);
-  const wrongSizeBytes = buildVp9WebmFixture({ width: 640, height: 768, frames: 121, fps: 24 });
+  await assert.rejects(verifyStoredInlineSceneVideo(stored({ durationSeconds: 5.0398 })), /encoded duration/);
+  const wrongSizeBytes = buildH264AacMp4Fixture({ width: 640, height: 768, frames: 121, includeAudio: false });
   await assert.rejects(
     verifyStoredInlineSceneVideo(stored({
-      video: new Blob([wrongSizeBytes], { type: 'video/webm' }),
+      video: new Blob([wrongSizeBytes], { type: 'video/mp4' }),
       videoSha256: createHash('sha256').update(wrongSizeBytes).digest('hex')
     })),
     /dimensions/
@@ -263,7 +262,7 @@ test('discards a malformed writer envelope inside its restore lock', async () =>
   assert.equal(discardedInsideLock, true);
 });
 
-test('silently discards obsolete v1 through v5 motion inside the restore lock', async () => {
+test('silently discards obsolete v1 through v6 motion inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_video_v1',
     'mullet_stored_inline_scene_video_envelope_v1',
@@ -274,7 +273,9 @@ test('silently discards obsolete v1 through v5 motion inside the restore lock', 
     'mullet_stored_inline_scene_video_v4',
     'mullet_stored_inline_scene_video_envelope_v4',
     'mullet_stored_inline_scene_video_v5',
-    'mullet_stored_inline_scene_video_envelope_v5'
+    'mullet_stored_inline_scene_video_envelope_v5',
+    'mullet_stored_inline_scene_video_v6',
+    'mullet_stored_inline_scene_video_envelope_v6'
   ]) {
     let lockHeld = false;
     let discardedInsideLock = false;
@@ -371,5 +372,5 @@ test('verified persisted motion remains restorable across a playback fallback an
   assert.equal(discarded, 0);
   assert.equal(replacementPosts, 0);
   assert.equal(persisted.video.promptId, motionPromptId);
-  assert.equal(persisted.video.videoSha256, createHash('sha256').update(webmBytes).digest('hex'));
+  assert.equal(persisted.video.videoSha256, createHash('sha256').update(ltxMp4Bytes).digest('hex'));
 });

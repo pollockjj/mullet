@@ -192,7 +192,6 @@
     type PortraitVideoTemplateId
   } from '$lib/portrait-video';
   import { validateH264VideoOnlyMp4 } from '$lib/mp4';
-  import { validateVp9Webm } from '$lib/webm';
   import {
     STORED_PORTRAIT_VIDEO_SPEC,
     clearStoredPortraitVideo,
@@ -1413,21 +1412,14 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      const expectsWebm = selectedRequest.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
-      const expectedContentType = expectsWebm ? 'video/webm' : 'video/mp4';
-      const minimumBytes = expectsWebm ? 32 : 12;
+      const isLtx = selectedRequest.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      const expectedContentType = 'video/mp4';
+      const minimumBytes = 12;
       if (video.type !== expectedContentType || video.size < minimumBytes) {
         throw new Error('Inline-scene motion generator returned an invalid video.');
       }
       const signature = new Uint8Array(await video.slice(0, minimumBytes).arrayBuffer());
-      if (expectsWebm) {
-        if (
-          signature[0] !== 0x1a
-          || signature[1] !== 0x45
-          || signature[2] !== 0xdf
-          || signature[3] !== 0xa3
-        ) throw new Error('Inline-scene motion generator returned an invalid WebM signature.');
-      } else if (
+      if (
         signature[4] !== 0x66
         || signature[5] !== 0x74
         || signature[6] !== 0x79
@@ -1440,7 +1432,7 @@
       const sourceRequestSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-source-request-sha256');
       const inputImageSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-input-sha256');
       const audioTracks = inlineSceneVideoHeaderInteger(response, 'x-mullet-audio-tracks', 0, 1);
-      const expectedAudioTracks = expectsWebm ? 0 : 1;
+      const expectedAudioTracks = isLtx ? 0 : 1;
       if (
         modelTemplate !== selectedRequest.modelTemplate
         || mode !== selectedRequest.mode
@@ -2197,18 +2189,6 @@
     if (await blobSha256(video.video) !== video.videoSha256) {
       throw new Error('stored portrait motion bytes are invalid');
     }
-    if (video.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID) {
-      const metadata = validateVp9Webm(bytes, {
-        width: video.width,
-        height: video.height,
-        frames: video.frames,
-        fps: video.fps
-      });
-      if (metadata.containerDurationSeconds !== video.encodedDurationSeconds) {
-        throw new Error('stored portrait motion duration is invalid');
-      }
-      return;
-    }
     if (
       bytes.length < 12
       || bytes[4] !== 0x66
@@ -2375,20 +2355,11 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      const expectsWebm = selectedRequest.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
-      const expectedContentType = expectsWebm ? 'video/webm' : 'video/mp4';
-      if (video.type !== expectedContentType || video.size < (expectsWebm ? 32 : 12)) {
+      if (video.type !== 'video/mp4' || video.size < 12) {
         throw new Error('Portrait-motion generator returned an invalid video.');
       }
       const videoBytes = new Uint8Array(await video.arrayBuffer());
-      if (expectsWebm) {
-        if (
-          videoBytes[0] !== 0x1a
-          || videoBytes[1] !== 0x45
-          || videoBytes[2] !== 0xdf
-          || videoBytes[3] !== 0xa3
-        ) throw new Error('Portrait-motion generator returned an invalid WebM signature.');
-      } else if (
+      if (
         videoBytes[4] !== 0x66
         || videoBytes[5] !== 0x74
         || videoBytes[6] !== 0x79
@@ -4676,7 +4647,7 @@
               </select>
             </label>
           {/if}
-          <small>{selectedPortraitVideoModeCapability?.label} · {selectedPortraitVideoTemplateCapability?.template.label} · silent · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s nominal encoded · {portraitVideoModelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID ? 'VP9 video-only WebM' : 'H.264 video-only MP4'}</small>
+          <small>{selectedPortraitVideoModeCapability?.label} · {selectedPortraitVideoTemplateCapability?.template.label} · silent · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
           {#if selectedPortraitVideoModeCapability && !portraitVideoSelectedModeAvailable}
             <div class="sidecar-error" role="alert">
               {selectedPortraitVideoModeCapability.label} is unavailable{selectedPortraitVideoModeCapability.missing.length
@@ -4787,7 +4758,7 @@
                 </select>
               </label>
               {#if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
-                <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · VP9 video-only WebM</small>
+                <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
               {:else}
                 <small>Image-to-video replay · MiniMax H3 FL2VA Turbo · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
               {/if}

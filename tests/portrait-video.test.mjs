@@ -133,7 +133,9 @@ test('restores the exact LTX 2.5 INT8 ConvRot artifact contract', () => {
     latentUpscaler: 'ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors'
   });
   assert.equal(LTX25_PORTRAIT_VIDEO_TEMPLATE.sampler, 'euler_ancestral');
-  assert.equal(LTX25_PORTRAIT_VIDEO_TEMPLATE.codec, 'vp9');
+  assert.equal(LTX25_PORTRAIT_VIDEO_TEMPLATE.format, 'mp4');
+  assert.equal(LTX25_PORTRAIT_VIDEO_TEMPLATE.codec, 'h264');
+  assert.equal(LTX25_PORTRAIT_VIDEO_TEMPLATE.bitDepth, 8);
 });
 
 test('compiles the default true first-frame-equals-last-frame LTX loop in both passes', () => {
@@ -156,11 +158,17 @@ test('compiles the default true first-frame-equals-last-frame LTX loop in both p
   assert.deepEqual(graph['24'].inputs.image, ['2', 0]);
   assert.equal(graph['25'].inputs.frame_idx, -1);
   assert.deepEqual(graph['25'].inputs.image, ['2', 0]);
-  assert.equal(graph['35'].class_type, 'SaveWEBM');
-  assert.equal(graph['35'].inputs.filename_prefix, 'mullet/portrait-motion-loop-flf');
+  assert.equal(graph['35'].class_type, 'CreateVideo');
   assert.equal(graph['35'].inputs.fps, 24);
   assert.equal(Object.hasOwn(graph['35'].inputs, 'audio'), false);
-  assert.equal(portraitVideoOutputNode(request), '35');
+  assert.deepEqual(graph['35'].inputs.images, ['34', 0]);
+  assert.equal(graph['35'].inputs.bit_depth, 8);
+  assert.equal(graph['38'].class_type, 'SaveVideo');
+  assert.deepEqual(graph['38'].inputs.video, ['35', 0]);
+  assert.equal(graph['38'].inputs.filename_prefix, 'mullet/portrait-motion-loop-flf');
+  assert.equal(graph['38'].inputs.format, 'mp4');
+  assert.equal(graph['38'].inputs.codec, 'h264');
+  assert.equal(portraitVideoOutputNode(request), '38');
 });
 
 test('retains LTX first-frame-only I2V as a selectable mode', () => {
@@ -168,10 +176,13 @@ test('retains LTX first-frame-only I2V as a selectable mode', () => {
   const graph = buildLtx25PortraitVideoWorkflow(request, firstInput, 42);
   assert.equal(graph['12'].class_type, 'LTXVImgToVideoInplace');
   assert.equal(graph['16'].inputs.noise_seed, 42);
-  assert.equal(graph['31'].class_type, 'SaveWEBM');
-  assert.equal(graph['31'].inputs.filename_prefix, 'mullet/portrait-motion');
+  assert.equal(graph['31'].class_type, 'CreateVideo');
   assert.equal(Object.hasOwn(graph['31'].inputs, 'audio'), false);
-  assert.equal(portraitVideoOutputNode(request), '31');
+  assert.deepEqual(graph['31'].inputs.images, ['30', 0]);
+  assert.equal(graph['38'].class_type, 'SaveVideo');
+  assert.deepEqual(graph['38'].inputs.video, ['31', 0]);
+  assert.equal(graph['38'].inputs.filename_prefix, 'mullet/portrait-motion');
+  assert.equal(portraitVideoOutputNode(request), '38');
 });
 
 test('retains MiniMax H3 as a separately selectable portrait-video template', () => {
@@ -230,7 +241,7 @@ test('keeps Qwen Image Edit 2511 Lightning end-frame generation and dispatches i
   assert.deepEqual(ltxGraph['13'].inputs.image, ['37', 0]);
   assert.deepEqual(ltxGraph['25'].inputs.image, ['37', 0]);
   assert.equal(ltxGraph['36'].inputs.image, `mullet/motion-inputs/${endInput.name}`);
-  assert.equal(ltxGraph['35'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
+  assert.equal(ltxGraph['38'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
 
   const minimaxRequest = requestFor(MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID, PORTRAIT_VIDEO_MODE_GENERATED_FLF);
   const minimaxGraph = buildPortraitVideoWorkflow(minimaxRequest, firstInput, 42, endInput);
