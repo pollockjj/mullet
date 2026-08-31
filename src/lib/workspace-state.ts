@@ -14,13 +14,19 @@ import {
   normalizeConversationMode,
   type ConversationMode
 } from './personal-assistant.ts';
+import {
+  normalizeFictionResponseReceipt,
+  type FictionResponseReceipt
+} from './fiction-finalization.ts';
 import { isSidecarConversationId } from './sidecar.ts';
 import { sha256Hex } from './sha256.ts';
 
-export const STORED_WORKSPACE_SPEC = 'mullet_workspace_v2' as const;
+export const STORED_WORKSPACE_SPEC = 'mullet_workspace_v3' as const;
+export const LEGACY_STORED_WORKSPACE_V2_SPEC = 'mullet_workspace_v2' as const;
 export const LEGACY_STORED_WORKSPACE_SPEC = 'mullet_workspace_v1' as const;
 export const WORKSPACE_MAX_MESSAGES = 1000 as const;
-export const WORKSPACE_STORAGE_KEY = 'mullet.workspace.v2' as const;
+export const WORKSPACE_STORAGE_KEY = 'mullet.workspace.v3' as const;
+export const LEGACY_WORKSPACE_V2_STORAGE_KEY = 'mullet.workspace.v2' as const;
 export const LEGACY_WORKSPACE_V1_STORAGE_KEY = 'mullet.workspace.v1' as const;
 export const LEGACY_WORKSPACE_MODE_KEY = 'mullet.conversation-mode' as const;
 export const LEGACY_WORKSPACE_CONVERSATION_ID_KEY = 'mullet.conversation-id' as const;
@@ -49,6 +55,15 @@ export type StoredWorkspace = {
   conversationId: string;
   messages: WorkspaceMessage[];
   assistantMemory: WorkspaceAssistantMemoryState | null;
+  finalizedFictionResponse: FictionResponseReceipt | null;
+};
+
+type LegacyStoredWorkspaceV2 = {
+  spec: typeof LEGACY_STORED_WORKSPACE_V2_SPEC;
+  mode: ConversationMode;
+  conversationId: string;
+  messages: WorkspaceMessage[];
+  assistantMemory: WorkspaceAssistantMemoryState | null;
 };
 
 type LegacyStoredWorkspace = {
@@ -62,7 +77,7 @@ export type WorkspaceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem
 
 export type LoadedStoredWorkspace = {
   workspace: StoredWorkspace;
-  disposition: 'current' | 'migrated' | 'reset';
+  disposition: 'current' | 'migrated' | 'repaired' | 'reset';
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -152,7 +167,7 @@ function normalizeAssistantMemoryState(
 export function normalizeStoredWorkspace(value: unknown): StoredWorkspace {
   const record = exactRecord(
     value,
-    ['spec', 'mode', 'conversationId', 'messages', 'assistantMemory'],
+    ['spec', 'mode', 'conversationId', 'messages', 'assistantMemory', 'finalizedFictionResponse'],
     'stored workspace'
   );
   if (record.spec !== STORED_WORKSPACE_SPEC) throw new Error('stored workspace spec is invalid');
@@ -161,8 +176,50 @@ export function normalizeStoredWorkspace(value: unknown): StoredWorkspace {
     throw new Error('stored workspace conversationId must be a UUID');
   }
   const messages = normalizeMessages(record.messages);
+  const assistantMemory = normalizeAssistantMemoryState(
+    record.assistantMemory,
+    mode,
+    record.conversationId,
+    messages
+  );
+  if (mode === CONVERSATION_MODE_PERSONAL_ASSISTANT && record.finalizedFictionResponse !== null) {
+    throw new Error('personal-assistant workspace cannot contain a fiction-response receipt');
+  }
   return {
     spec: STORED_WORKSPACE_SPEC,
+    mode,
+    conversationId: record.conversationId,
+    messages,
+    assistantMemory,
+    finalizedFictionResponse: mode === CONVERSATION_MODE_FICTION
+      ? normalizeFictionResponseReceipt(record.finalizedFictionResponse, record.conversationId, messages)
+      : null
+  };
+}
+
+function normalizeStoredWorkspaceWithoutFictionReceipt(value: unknown): StoredWorkspace {
+  if (!isRecord(value) || value.finalizedFictionResponse === null) {
+    throw new Error('stored workspace has no repairable fiction-response receipt');
+  }
+  return normalizeStoredWorkspace({ ...value, finalizedFictionResponse: null });
+}
+
+function normalizeLegacyStoredWorkspaceV2(value: unknown): LegacyStoredWorkspaceV2 {
+  const record = exactRecord(
+    value,
+    ['spec', 'mode', 'conversationId', 'messages', 'assistantMemory'],
+    'legacy v2 stored workspace'
+  );
+  if (record.spec !== LEGACY_STORED_WORKSPACE_V2_SPEC) {
+    throw new Error('legacy v2 stored workspace spec is invalid');
+  }
+  const mode = normalizeConversationMode(record.mode);
+  if (!isSidecarConversationId(record.conversationId)) {
+    throw new Error('legacy v2 stored workspace conversationId must be a UUID');
+  }
+  const messages = normalizeMessages(record.messages);
+  return {
+    spec: LEGACY_STORED_WORKSPACE_V2_SPEC,
     mode,
     conversationId: record.conversationId,
     messages,
@@ -229,14 +286,16 @@ export function createStoredWorkspace(
   mode: ConversationMode,
   conversationId: string,
   messages: readonly WorkspaceMessage[],
-  assistantMemory: WorkspaceAssistantMemoryState | null
+  assistantMemory: WorkspaceAssistantMemoryState | null,
+  finalizedFictionResponse: FictionResponseReceipt | null = null
 ): StoredWorkspace {
   return normalizeStoredWorkspace({
     spec: STORED_WORKSPACE_SPEC,
     mode,
     conversationId,
     messages: messages.map((message) => ({ ...message })),
-    assistantMemory
+    assistantMemory,
+    finalizedFictionResponse
   });
 }
 
@@ -251,6 +310,7 @@ function migratedAssistantMemoryState(
 }
 
 function clearLegacyWorkspace(storage: WorkspaceStorage): void {
+  storage.removeItem(LEGACY_WORKSPACE_V2_STORAGE_KEY);
   storage.removeItem(LEGACY_WORKSPACE_V1_STORAGE_KEY);
   storage.removeItem(LEGACY_WORKSPACE_MODE_KEY);
   storage.removeItem(LEGACY_WORKSPACE_CONVERSATION_ID_KEY);
@@ -274,10 +334,38 @@ export function loadStoredWorkspace(
   if (!isSidecarConversationId(epoch)) throw new Error('workspace assistant-memory epoch must be a UUID');
   const current = storage.getItem(WORKSPACE_STORAGE_KEY);
   if (current !== null) {
+    let parsed: unknown;
     try {
-      const workspace = normalizeStoredWorkspace(JSON.parse(current));
+      parsed = JSON.parse(current);
+      const workspace = normalizeStoredWorkspace(parsed);
       clearLegacyWorkspace(storage);
       return { workspace, disposition: 'current' };
+    } catch {
+      try {
+        const workspace = normalizeStoredWorkspaceWithoutFictionReceipt(parsed);
+        saveStoredWorkspace(storage, workspace);
+        return { workspace, disposition: 'repaired' };
+      } catch {
+        const workspace = createStoredWorkspace(CONVERSATION_MODE_FICTION, newConversationId, [], null);
+        saveStoredWorkspace(storage, workspace);
+        return { workspace, disposition: 'reset' };
+      }
+    }
+  }
+
+  const legacyV2Current = storage.getItem(LEGACY_WORKSPACE_V2_STORAGE_KEY);
+  if (legacyV2Current !== null) {
+    try {
+      const legacy = normalizeLegacyStoredWorkspaceV2(JSON.parse(legacyV2Current));
+      const workspace = createStoredWorkspace(
+        legacy.mode,
+        legacy.conversationId,
+        legacy.messages,
+        legacy.assistantMemory,
+        null
+      );
+      saveStoredWorkspace(storage, workspace);
+      return { workspace, disposition: 'migrated' };
     } catch {
       const workspace = createStoredWorkspace(CONVERSATION_MODE_FICTION, newConversationId, [], null);
       saveStoredWorkspace(storage, workspace);

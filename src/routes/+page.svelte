@@ -226,7 +226,6 @@
     type StoredPortraitVideo
   } from '$lib/portrait-video-storage';
   import {
-    buildExpressionSidecarRequest,
     emptySidecarState,
     expressionResultMatchesRequest,
     expressionSourceFingerprint,
@@ -239,6 +238,12 @@
     type ExpressionSidecarResult,
     type SidecarState
   } from '$lib/sidecar';
+  import {
+    createAuthoredOpeningReceipt,
+    createCompletedFictionResponseReceipt,
+    expressionRequestForFinalizedFictionResponse,
+    type FictionResponseReceipt
+  } from '$lib/fiction-finalization';
   import { loadStoredSidecarState, saveStoredSidecarState } from '$lib/sidecar-storage';
   import { serializeChatRequest } from '$lib/chat-request-size';
   import { assertFinalizedChatStream, parseChatStreamPayload } from '$lib/chat-stream';
@@ -303,8 +308,8 @@
     saveStoredWorkspace,
     workspaceCompletedTurnCapacityError,
     workspaceMutationFingerprint,
-    workspaceReadyForCompletedTurn
-    , type WorkspaceAssistantMemoryReceipt
+    workspaceReadyForCompletedTurn,
+    type WorkspaceAssistantMemoryReceipt
   } from '$lib/workspace-state';
   import type { PageData } from './$types';
 
@@ -321,6 +326,7 @@
   let noticeMessage = '';
   let tokenLimit = data.defaultMaxTokens;
   let conversationMode: ConversationMode = CONVERSATION_MODE_FICTION;
+  let finalizedFictionResponse: FictionResponseReceipt | null = null;
   let activeCard: ImportedCharacterCard | null = null;
   let cardSourceIdentifier = '';
   let portraitDataUrl = '';
@@ -622,7 +628,7 @@
     portraitVideoModelTemplate
   );
   $: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION
-    ? currentExpressionSnapshot(conversationId, messages)
+    ? currentExpressionSnapshot(finalizedFictionResponse, conversationId, messages)
     : null;
   $: expressionResult = sidecarState?.channels.expression ?? null;
   $: expressionCurrent = Boolean(expressionResult && expressionSnapshot && expressionResultMatchesRequest(expressionResult, expressionSnapshot));
@@ -840,6 +846,9 @@
         embeddedLorebook = embeddedLoreFromCard(activeCard);
         if (messages.length === 0 && conversationMode === CONVERSATION_MODE_FICTION) {
           messages = freshConversation();
+          bindAuthoredFictionOpeningReceipt();
+          persist();
+        } else if (recoverCanonicalAuthoredOpeningReceipt()) {
           persist();
         }
       } catch {
@@ -939,6 +948,7 @@
     conversationMode = loaded.workspace.mode;
     conversationId = loaded.workspace.conversationId;
     messages = loaded.workspace.messages;
+    finalizedFictionResponse = loaded.workspace.finalizedFictionResponse;
     const storedMemory = loaded.workspace.assistantMemory;
     if (
       conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
@@ -955,7 +965,11 @@
       lastAssistantMemoryActive = storedMemory?.lastCompletedChat?.active ?? null;
       if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) persist();
     }
-    if (loaded.disposition === 'reset') errorMessage = 'Stored workspace was invalid and was reset.';
+    if (loaded.disposition === 'repaired') {
+      noticeMessage = 'Stored response-finalization state was repaired; conversation retained.';
+    } else if (loaded.disposition === 'reset') {
+      errorMessage = 'Stored workspace was invalid and was reset.';
+    }
   }
 
   onDestroy(() => {
@@ -3378,13 +3392,12 @@
     }
   }
 
-  function currentExpressionSnapshot(currentConversationId: string, currentMessages: readonly Message[]): ExpressionSidecarRequest | null {
-    if (!currentConversationId) return null;
-    try {
-      return buildExpressionSidecarRequest(currentConversationId, currentMessages);
-    } catch {
-      return null;
-    }
+  function currentExpressionSnapshot(
+    receipt: FictionResponseReceipt | null,
+    currentConversationId: string,
+    currentMessages: readonly Message[]
+  ): ExpressionSidecarRequest | null {
+    return expressionRequestForFinalizedFictionResponse(receipt, currentConversationId, currentMessages);
   }
 
   function persistLivingHistoryBoundaries() {
@@ -3728,6 +3741,7 @@
     lastExpressionAttemptKey = '';
     lastLivingHistoryAttemptKey = '';
     conversationId = crypto.randomUUID();
+    finalizedFictionResponse = null;
     await resetInlineSceneForConversation();
     await resetPortraitForConversation();
     await clearLivingHistory();
@@ -4042,7 +4056,7 @@
   }
 
   async function determineExpression(selectedSnapshot: ExpressionSidecarRequest | null = null) {
-    const snapshot = selectedSnapshot ?? currentExpressionSnapshot(conversationId, messages);
+    const snapshot = selectedSnapshot ?? currentExpressionSnapshot(finalizedFictionResponse, conversationId, messages);
     if (!snapshot || streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !sidecarState) return;
     const key = expressionSnapshotKey(snapshot);
     lastExpressionAttemptKey = key;
@@ -4126,6 +4140,7 @@
         cardSourceIdentifier = characterSourceIdentifier(activeScenario.card);
         embeddedLorebook = embeddedLoreFromCard(activeCard);
         persistCard();
+        if (recoverCanonicalAuthoredOpeningReceipt()) persist();
       }
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario catalog failed to load.';
@@ -4221,6 +4236,7 @@
         persistLoreEnabled();
         messages = freshConversation();
         await resetSidecarForConversation();
+        bindAuthoredFictionOpeningReceipt();
         if (!publishScenarioOpeningInlineSceneSource()) {
           throw new Error('Bundled scenario opening could not be bound to inline-scene provenance.');
         }
@@ -4252,7 +4268,8 @@
             pending: assistantMemoryPending,
             lastCompletedChat
           }
-        : null
+        : null,
+      conversationMode === CONVERSATION_MODE_FICTION ? finalizedFictionResponse : null
     );
     saveStoredWorkspace(localStorage, workspace);
   }
@@ -4263,6 +4280,23 @@
       ? scenarioStarterMessage(activeCard, activeScenarioStarterId)
       : firstCharacterMessage(activeCard);
     return greeting.trim() ? [{ role: 'assistant', content: greeting }] : [];
+  }
+
+  function bindAuthoredFictionOpeningReceipt() {
+    finalizedFictionResponse = conversationMode === CONVERSATION_MODE_FICTION && messages.length === 1
+      ? createAuthoredOpeningReceipt(conversationId, messages)
+      : null;
+  }
+
+  function recoverCanonicalAuthoredOpeningReceipt(): boolean {
+    if (
+      finalizedFictionResponse
+      || conversationMode !== CONVERSATION_MODE_FICTION
+      || !activeCard
+      || !containsOnlyOpeningGreeting(activeCard)
+    ) return false;
+    bindAuthoredFictionOpeningReceipt();
+    return finalizedFictionResponse !== null;
   }
 
   function embeddedLoreFromCard(card: ImportedCharacterCard | null): ImportedLorebook | null {
@@ -4372,6 +4406,7 @@
         loreTimedState = emptyLoreTimedState();
         localStorage.removeItem(loreTimedStateStorageKey);
         await resetSidecarForConversation();
+        bindAuthoredFictionOpeningReceipt();
         persist();
         await scrollToLatest();
       });
@@ -4414,6 +4449,7 @@
         loreTimedState = emptyLoreTimedState();
         localStorage.removeItem(loreTimedStateStorageKey);
         await resetSidecarForConversation();
+        bindAuthoredFictionOpeningReceipt();
         persist();
       });
     } catch (cause) {
@@ -4476,6 +4512,9 @@
         if (seedGreeting) {
           messages = freshConversation();
           await resetSidecarForConversation();
+          bindAuthoredFictionOpeningReceipt();
+          persist();
+        } else if (recoverCanonicalAuthoredOpeningReceipt()) {
           persist();
         }
         noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
@@ -4834,7 +4873,9 @@
       }
 
       assertFinalizedChatStream(terminalEventSeen, messages.at(-1)?.content ?? '');
-      if (!fictionMode) {
+      if (fictionMode) {
+        finalizedFictionResponse = createCompletedFictionResponseReceipt(conversationId, messages);
+      } else {
         const memoryRequest = buildAssistantMemoryRequest(
           assistantMemoryId,
           conversationId,
@@ -4860,6 +4901,7 @@
         errorMessage = cause instanceof Error ? cause.message : 'Generation failed.';
       }
       if (fictionMode) {
+        finalizedFictionResponse = null;
         if (messages.at(-1)?.content === '') messages = messages.slice(0, -1);
         persist();
       } else {

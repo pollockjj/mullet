@@ -4,6 +4,72 @@ import test from 'node:test';
 
 const pageSource = readFileSync(new URL('../src/routes/+page.svelte', import.meta.url), 'utf8');
 
+function sourceBetween(start, end) {
+  const startIndex = pageSource.indexOf(start);
+  const endIndex = pageSource.indexOf(end, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `missing source marker: ${start}`);
+  assert.notEqual(endIndex, -1, `missing source marker: ${end}`);
+  return pageSource.slice(startIndex, endIndex);
+}
+
+test('expression, portrait, and portrait motion derive only from a durable finalized fiction response', () => {
+  assert.match(
+    pageSource,
+    /\$: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION\s+\? currentExpressionSnapshot\(finalizedFictionResponse, conversationId, messages\)/
+  );
+  assert.match(
+    pageSource,
+    /return expressionRequestForFinalizedFictionResponse\(receipt, currentConversationId, currentMessages\);/
+  );
+  assert.match(
+    sourceBetween('async function determineExpression(', 'async function loadScenarioCatalog()'),
+    /selectedSnapshot \?\? currentExpressionSnapshot\(finalizedFictionResponse, conversationId, messages\)/
+  );
+  assert.doesNotMatch(pageSource, /\bbuildExpressionSidecarRequest\b/);
+  assert.match(pageSource, /\$: expressionCurrent = Boolean\(expressionResult && expressionSnapshot/);
+  assert.match(pageSource, /\$: portraitRequest = currentPortraitRequest\(\s+expressionResult,\s+expressionCurrent,/);
+  assert.match(pageSource, /\$: portraitVideoRequest = currentPortraitVideoRequest\(\s+generatedPortrait,\s+portraitCurrent,/);
+});
+
+test('terminal chat finalization is atomic and every failed post-append fiction stream clears eligibility', () => {
+  const sendTurn = sourceBetween('async function sendChatTurn(', 'function composerKeydown(');
+  assert.match(
+    sendTurn,
+    /assertFinalizedChatStream\([\s\S]*?if \(fictionMode\) {\s+finalizedFictionResponse = createCompletedFictionResponseReceipt\(conversationId, messages\);[\s\S]*?persist\(\);\s+completedResponse = true;/
+  );
+  assert.match(
+    sendTurn,
+    /if \(fictionMode\) {\s+finalizedFictionResponse = null;\s+if \(messages\.at\(-1\)\?\.content === ''\) messages = messages\.slice\(0, -1\);\s+persist\(\);/
+  );
+});
+
+test('restore, authored openings, and workspace saves carry the exact fiction receipt', () => {
+  assert.match(
+    sourceBetween('function restoreWorkspaceState()', 'onDestroy(() => {'),
+    /finalizedFictionResponse = loaded\.workspace\.finalizedFictionResponse;/
+  );
+  assert.match(
+    sourceBetween('function persist()', 'function freshConversation()'),
+    /conversationMode === CONVERSATION_MODE_FICTION \? finalizedFictionResponse : null/
+  );
+  assert.match(
+    sourceBetween('onMount(() => {', 'function restoreWorkspaceState()'),
+    /messages = freshConversation\(\);\s+bindAuthoredFictionOpeningReceipt\(\);\s+persist\(\);/
+  );
+  for (const [start, end] of [
+    ['async function startSelectedScenario(', 'function persist()'],
+    ['async function replaceConversationMode(', 'async function startPersonalAssistant()'],
+    ['async function clearConversation()', 'async function portraitFromPng('],
+    ['async function importCharacterCard(', 'function removeCharacterCard()']
+  ]) {
+    assert.match(sourceBetween(start, end), /await resetSidecarForConversation\(\);\s+bindAuthoredFictionOpeningReceipt\(\);/);
+  }
+  assert.match(
+    sourceBetween('async function resetSidecarForConversation()', 'function assistantMemoryIsCurrent('),
+    /conversationId = crypto\.randomUUID\(\);\s+finalizedFictionResponse = null;/
+  );
+});
+
 test('never renders a restored expression portrait unless it matches the current request', () => {
   assert.match(pageSource, /generatedPortraitUrl && portraitCurrent\} class="portrait"/);
   assert.match(pageSource, /\{:else if expressionsEnabled && generatedPortraitUrl && portraitCurrent\}/);

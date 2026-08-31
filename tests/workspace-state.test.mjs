@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LEGACY_WORKSPACE_V2_STORAGE_KEY,
   LEGACY_WORKSPACE_V1_STORAGE_KEY,
   LEGACY_WORKSPACE_CONVERSATION_ID_KEY,
   LEGACY_WORKSPACE_MESSAGES_KEY,
@@ -18,6 +19,10 @@ import {
   rollbackFailedWorkspaceTurn,
   workspaceReadyForCompletedTurn
 } from '../src/lib/workspace-state.ts';
+import {
+  createCompletedFictionResponseReceipt,
+  expressionRequestForFinalizedFictionResponse
+} from '../src/lib/fiction-finalization.ts';
 import { buildAssistantMemoryRequest } from '../src/lib/assistant-memory.ts';
 import { createStoredAssistantMemoryPendingTurn } from '../src/lib/assistant-memory-storage.ts';
 import {
@@ -74,7 +79,8 @@ test('stores mode, conversation identity, and transcript in one exact envelope',
     mode: CONVERSATION_MODE_PERSONAL_ASSISTANT,
     conversationId,
     messages,
-    assistantMemory: assistantState(messages)
+    assistantMemory: assistantState(messages),
+    finalizedFictionResponse: null
   });
   assert.deepEqual(normalizeStoredWorkspace(JSON.parse(JSON.stringify(stored))), stored);
   assert.notEqual(stored.messages, messages);
@@ -237,6 +243,7 @@ test('normal save performs one authoritative set before deleting legacy keys', (
   saveStoredWorkspace(storage, workspace);
   assert.deepEqual(storage.operations.map(([operation, key]) => [operation, key]), [
     ['set', WORKSPACE_STORAGE_KEY],
+    ['remove', LEGACY_WORKSPACE_V2_STORAGE_KEY],
     ['remove', LEGACY_WORKSPACE_V1_STORAGE_KEY],
     ['remove', LEGACY_WORKSPACE_MODE_KEY],
     ['remove', LEGACY_WORKSPACE_CONVERSATION_ID_KEY],
@@ -263,4 +270,178 @@ test('migrates the authoritative v1 workspace before removing it', () => {
   const setIndex = storage.operations.findIndex(([operation, key]) => operation === 'set' && key === WORKSPACE_STORAGE_KEY);
   const removeIndex = storage.operations.findIndex(([operation, key]) => operation === 'remove' && key === LEGACY_WORKSPACE_V1_STORAGE_KEY);
   assert.ok(setIndex >= 0 && removeIndex > setIndex);
+});
+
+test('stores and reloads one exact finalized fiction response receipt', () => {
+  const messages = [
+    { role: 'user', content: 'Where are we?' },
+    { role: 'assistant', content: 'Aboard the Liberator.' }
+  ];
+  const receipt = createCompletedFictionResponseReceipt(conversationId, messages);
+  const workspace = createStoredWorkspace(
+    CONVERSATION_MODE_FICTION,
+    conversationId,
+    messages,
+    null,
+    receipt
+  );
+  const storage = fakeStorage();
+  saveStoredWorkspace(storage, workspace);
+
+  const loaded = loadStoredWorkspace(storage, replacementConversationId, memoryId, epoch);
+  assert.equal(loaded.disposition, 'current');
+  assert.deepEqual(loaded.workspace, workspace);
+  assert.equal(
+    expressionRequestForFinalizedFictionResponse(
+      loaded.workspace.finalizedFictionResponse,
+      loaded.workspace.conversationId,
+      loaded.workspace.messages
+    )?.text,
+    'Aboard the Liberator.'
+  );
+});
+
+test('repairs a bad derived fiction receipt without discarding the canonical transcript', () => {
+  const messages = [
+    { role: 'user', content: 'Where are we?' },
+    { role: 'assistant', content: 'Aboard the Liberator.' }
+  ];
+  const receipt = createCompletedFictionResponseReceipt(conversationId, messages);
+  const workspace = createStoredWorkspace(
+    CONVERSATION_MODE_FICTION,
+    conversationId,
+    messages,
+    null,
+    receipt
+  );
+  const corrupted = {
+    ...workspace,
+    finalizedFictionResponse: {
+      ...receipt,
+      source: { ...receipt.source, rawFingerprint: `sha256:${'0'.repeat(64)}` }
+    }
+  };
+  const storage = fakeStorage({
+    [WORKSPACE_STORAGE_KEY]: JSON.stringify(corrupted)
+  });
+
+  const loaded = loadStoredWorkspace(storage, replacementConversationId, memoryId, epoch);
+  assert.equal(loaded.disposition, 'repaired');
+  assert.equal(loaded.workspace.conversationId, conversationId);
+  assert.deepEqual(loaded.workspace.messages, messages);
+  assert.equal(loaded.workspace.finalizedFictionResponse, null);
+  assert.deepEqual(JSON.parse(storage.values.get(WORKSPACE_STORAGE_KEY)), loaded.workspace);
+});
+
+test('migrates a v2 fiction transcript without treating an aborted partial as finalized', () => {
+  const v2Messages = [
+    { role: 'user', content: 'Tell me what you see.' },
+    { role: 'assistant', content: 'I can see' }
+  ];
+  const legacyV2 = {
+    spec: 'mullet_workspace_v2',
+    mode: CONVERSATION_MODE_FICTION,
+    conversationId,
+    messages: v2Messages,
+    assistantMemory: null
+  };
+  const storage = fakeStorage({
+    [LEGACY_WORKSPACE_V2_STORAGE_KEY]: JSON.stringify(legacyV2)
+  });
+
+  const loaded = loadStoredWorkspace(storage, replacementConversationId, memoryId, epoch);
+  assert.equal(loaded.disposition, 'migrated');
+  assert.equal(loaded.workspace.conversationId, conversationId);
+  assert.deepEqual(loaded.workspace.messages, v2Messages);
+  assert.equal(loaded.workspace.finalizedFictionResponse, null);
+  assert.equal(
+    expressionRequestForFinalizedFictionResponse(
+      loaded.workspace.finalizedFictionResponse,
+      loaded.workspace.conversationId,
+      loaded.workspace.messages
+    ),
+    null
+  );
+  assert.equal(storage.values.has(LEGACY_WORKSPACE_V2_STORAGE_KEY), false);
+  assert.deepEqual(JSON.parse(storage.values.get(WORKSPACE_STORAGE_KEY)).messages, v2Messages);
+});
+
+test('migrates a v2 personal-assistant transcript and memory without inventing fiction provenance', () => {
+  const v2Messages = [
+    { role: 'user', content: 'Remember Atlas.' },
+    { role: 'assistant', content: 'I will remember Atlas.' }
+  ];
+  const request = buildAssistantMemoryRequest(memoryId, conversationId, v2Messages, null);
+  const pending = createStoredAssistantMemoryPendingTurn(memoryId, epoch, request.source, request.turns);
+  const legacyAssistantMemory = assistantState(v2Messages, {
+    pending,
+    lastCompletedChat: { source: request.source, active: false }
+  });
+  const storage = fakeStorage({
+    [LEGACY_WORKSPACE_V2_STORAGE_KEY]: JSON.stringify({
+      spec: 'mullet_workspace_v2',
+      mode: CONVERSATION_MODE_PERSONAL_ASSISTANT,
+      conversationId,
+      messages: v2Messages,
+      assistantMemory: legacyAssistantMemory
+    })
+  });
+
+  const loaded = loadStoredWorkspace(storage, replacementConversationId, memoryId, epoch);
+  assert.equal(loaded.disposition, 'migrated');
+  assert.deepEqual(loaded.workspace.messages, v2Messages);
+  assert.deepEqual(loaded.workspace.assistantMemory, legacyAssistantMemory);
+  assert.equal(loaded.workspace.finalizedFictionResponse, null);
+});
+
+test('v3 enforces mutually exclusive fiction receipt and personal-assistant memory state', () => {
+  const messages = [
+    { role: 'user', content: 'Report.' },
+    { role: 'assistant', content: 'Complete.' }
+  ];
+  const receipt = createCompletedFictionResponseReceipt(conversationId, messages);
+  const fiction = createStoredWorkspace(CONVERSATION_MODE_FICTION, conversationId, messages, null, receipt);
+  assert.throws(
+    () => normalizeStoredWorkspace({ ...fiction, assistantMemory: assistantState(messages) }),
+    /fiction workspace cannot contain assistant-memory/
+  );
+  assert.throws(
+    () => normalizeStoredWorkspace({
+      ...fiction,
+      mode: CONVERSATION_MODE_PERSONAL_ASSISTANT,
+      assistantMemory: assistantState(messages)
+    }),
+    /cannot contain a fiction-response receipt/
+  );
+});
+
+test('round-trips an aborted fiction suffix only after clearing its former completion receipt', () => {
+  const completed = [
+    { role: 'user', content: 'Report.' },
+    { role: 'assistant', content: 'All systems are nominal.' }
+  ];
+  const formerReceipt = createCompletedFictionResponseReceipt(conversationId, completed);
+  const aborted = [
+    ...completed,
+    { role: 'user', content: 'And the pursuit ships?' },
+    { role: 'assistant', content: 'They are' }
+  ];
+  const workspace = createStoredWorkspace(
+    CONVERSATION_MODE_FICTION,
+    conversationId,
+    aborted,
+    null,
+    null
+  );
+  assert.deepEqual(normalizeStoredWorkspace(JSON.parse(JSON.stringify(workspace))), workspace);
+  assert.throws(
+    () => createStoredWorkspace(
+      CONVERSATION_MODE_FICTION,
+      conversationId,
+      aborted,
+      null,
+      formerReceipt
+    ),
+    /does not match its whole transcript/
+  );
 });
