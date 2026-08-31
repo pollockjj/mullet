@@ -480,18 +480,36 @@ export function buildPortraitPrompt(request: PortraitRequest): string {
     : description;
 }
 
-export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_TEMPLATE_ID) throw new Error('Z-Image workflow requires the Z-Image template');
-  const validatedSeed = integer(seed, 'portrait seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
-  const modelSource: [string, number] = normalized.lora ? ['11', 0] : ['1', 0];
-  const clipSource: [string, number] = normalized.lora ? ['11', 1] : ['2', 0];
+export type ZImageTurboImageWorkflowSettings = {
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  lora: string | null;
+  filenamePrefix: 'mullet/portrait' | 'mullet/scene';
+};
+
+export function buildZImageTurboImageWorkflow(
+  settings: ZImageTurboImageWorkflowSettings
+): Record<string, unknown> {
+  const validatedSeed = integer(settings.seed, 'Z-Image seed', 0, Number.MAX_SAFE_INTEGER);
+  const width = integer(settings.width, 'Z-Image width', 16, 8192);
+  const height = integer(settings.height, 'Z-Image height', 16, 8192);
+  if (width % Z_IMAGE_TURBO_TEMPLATE.multiple !== 0 || height % Z_IMAGE_TURBO_TEMPLATE.multiple !== 0) {
+    throw new Error(`Z-Image dimensions must be divisible by ${Z_IMAGE_TURBO_TEMPLATE.multiple}`);
+  }
+  if (settings.lora !== null && !isPortraitLoraName(settings.lora)) throw new Error('Z-Image LoRA path is invalid');
+  if (settings.filenamePrefix !== 'mullet/portrait' && settings.filenamePrefix !== 'mullet/scene') {
+    throw new Error('Z-Image filename prefix is invalid');
+  }
+  const prompt = textField(settings.prompt, 'Z-Image prompt', 1, 2000);
+  const modelSource: [string, number] = settings.lora ? ['11', 0] : ['1', 0];
+  const clipSource: [string, number] = settings.lora ? ['11', 1] : ['2', 0];
   const graph: Record<string, unknown> = {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: Z_IMAGE_TURBO_TEMPLATE.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: Z_IMAGE_TURBO_TEMPLATE.modelFiles.clip, type: 'lumina2', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: Z_IMAGE_TURBO_TEMPLATE.modelFiles.vae } },
-    '4': { class_type: 'CLIPTextEncode', inputs: { text: buildPortraitPrompt(normalized), clip: clipSource } },
+    '4': { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: clipSource } },
     '5': { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['4', 0] } },
     '6': { class_type: 'ModelSamplingAuraFlow', inputs: { model: modelSource, shift: Z_IMAGE_TURBO_TEMPLATE.shift } },
     '7': { class_type: 'EmptySD3LatentImage', inputs: { width, height, batch_size: 1 } },
@@ -511,21 +529,35 @@ export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number)
       }
     },
     '9': { class_type: 'VAEDecode', inputs: { samples: ['8', 0], vae: ['3', 0] } },
-    '10': { class_type: 'SaveImage', inputs: { images: ['9', 0], filename_prefix: 'mullet/portrait' } }
+    '10': { class_type: 'SaveImage', inputs: { images: ['9', 0], filename_prefix: settings.filenamePrefix } }
   };
-  if (normalized.lora) {
+  if (settings.lora) {
     graph['11'] = {
       class_type: 'LoraLoader',
       inputs: {
         model: ['1', 0],
         clip: ['2', 0],
-        lora_name: normalized.lora,
+        lora_name: settings.lora,
         strength_model: 1,
         strength_clip: 1
       }
     };
   }
   return graph;
+}
+
+export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_TEMPLATE_ID) throw new Error('Z-Image workflow requires the Z-Image template');
+  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
+  return buildZImageTurboImageWorkflow({
+    prompt: buildPortraitPrompt(normalized),
+    width,
+    height,
+    seed,
+    lora: normalized.lora,
+    filenamePrefix: 'mullet/portrait'
+  });
 }
 
 export type QwenReferenceEditSettings = {

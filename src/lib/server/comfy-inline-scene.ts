@@ -2,9 +2,15 @@ import {
   INLINE_SCENE_ASPECT_RATIOS,
   INLINE_SCENE_CAPABILITIES_SPEC,
   INLINE_SCENE_MEGAPIXELS,
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
+  INLINE_SCENE_TEMPLATE_ID,
+  INLINE_SCENE_TEMPLATES,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+  Z_IMAGE_TURBO_SCENE_TEMPLATE,
   buildQwenImageEditSceneWorkflow,
+  buildZImageTurboSceneWorkflow,
   inlineSceneDimensions,
+  inlineSceneTemplate,
   type InlineSceneCapabilities,
   type InlineSceneImageRequest
 } from '../inline-scene.ts';
@@ -25,7 +31,10 @@ export class ComfyInlineSceneOutputTooLargeError extends Error {}
 
 const OUTPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REQUIRED_NODES = QWEN_IMAGE_EDIT_SCENE_TEMPLATE.requiredNodes;
+const REQUIRED_NODES = [...new Set([
+  ...INLINE_SCENE_TEMPLATES.flatMap((template) => [...template.requiredNodes]),
+  'LoraLoader'
+])];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -40,29 +49,20 @@ async function responseJson(response: Response, action: string): Promise<unknown
   return response.json();
 }
 
-function nodeInfo(value: unknown, nodeName: string): Record<string, unknown> {
-  if (!isRecord(value) || !isRecord(value[nodeName])) throw new Error(`ComfyUI is missing ${nodeName}`);
-  return value[nodeName];
-}
-
-function requiredInput(info: Record<string, unknown>, nodeName: string, inputName: string): unknown[] {
-  if (!isRecord(info.input) || !isRecord(info.input.required) || !Array.isArray(info.input.required[inputName])) {
-    throw new Error(`ComfyUI returned invalid ${nodeName}.${inputName} metadata`);
-  }
-  return info.input.required[inputName] as unknown[];
-}
-
-function optionList(info: Record<string, unknown>, nodeName: string, inputName: string): string[] {
-  const input = requiredInput(info, nodeName, inputName);
+function optionList(value: unknown, nodeName: string, inputName: string): string[] {
+  if (!isRecord(value) || !isRecord(value[nodeName])) return [];
+  const info = value[nodeName];
+  if (!isRecord(info.input) || !isRecord(info.input.required) || !Array.isArray(info.input.required[inputName])) return [];
+  const input = info.input.required[inputName] as unknown[];
   if (Array.isArray(input[0]) && input[0].every((item) => typeof item === 'string')) return input[0] as string[];
   if (input[0] === 'COMBO' && isRecord(input[1]) && Array.isArray(input[1].options) && input[1].options.every((item) => typeof item === 'string')) {
     return input[1].options as string[];
   }
-  throw new Error(`ComfyUI returned invalid ${nodeName}.${inputName} options`);
+  return [];
 }
 
-function requireOption(options: readonly string[], expected: string, label: string): void {
-  if (!options.includes(expected)) throw new Error(`ComfyUI is missing ${label}`);
+function nodeAvailable(value: unknown, nodeName: string): boolean {
+  return isRecord(value) && isRecord(value[nodeName]);
 }
 
 export async function loadInlineSceneCapabilities(
@@ -70,25 +70,43 @@ export async function loadInlineSceneCapabilities(
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<InlineSceneCapabilities> {
-  const pairs = await Promise.all(REQUIRED_NODES.map(async (nodeName) => {
+  const pairs = await Promise.all(REQUIRED_NODES.map(async (nodeName): Promise<[string, unknown | null]> => {
     const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
-    const body = await responseJson(response, 'inline-scene capability query');
-    return [nodeName, nodeInfo(body, nodeName)] as const;
+    if (!response.ok) return [nodeName, null];
+    return [nodeName, await response.json()];
   }));
-  const info = Object.fromEntries(pairs) as Record<string, Record<string, unknown>>;
-  requireOption(optionList(info.UNETLoader, 'UNETLoader', 'unet_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.unet, 'the Qwen Image Edit model');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'clip_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.clip, 'the Qwen image encoder');
-  requireOption(optionList(info.CLIPLoader, 'CLIPLoader', 'type'), 'qwen_image', 'the qwen_image encoder mode');
-  requireOption(optionList(info.VAELoader, 'VAELoader', 'vae_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.vae, 'the Qwen image VAE');
-  requireOption(optionList(info.LoraLoaderModelOnly, 'LoraLoaderModelOnly', 'lora_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora, 'the Qwen Lightning four-step LoRA');
-  requireOption(optionList(info.KSampler, 'KSampler', 'sampler_name'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.sampler, 'the euler sampler');
-  requireOption(optionList(info.KSampler, 'KSampler', 'scheduler'), QWEN_IMAGE_EDIT_SCENE_TEMPLATE.scheduler, 'the simple scheduler');
+  const info = new Map(pairs);
+  const unets = optionList(info.get('UNETLoader'), 'UNETLoader', 'unet_name');
+  const clips = optionList(info.get('CLIPLoader'), 'CLIPLoader', 'clip_name');
+  const clipTypes = optionList(info.get('CLIPLoader'), 'CLIPLoader', 'type');
+  const vaes = optionList(info.get('VAELoader'), 'VAELoader', 'vae_name');
+  const loras = optionList(info.get('LoraLoader'), 'LoraLoader', 'lora_name');
+  const modelOnlyLoras = optionList(info.get('LoraLoaderModelOnly'), 'LoraLoaderModelOnly', 'lora_name');
+  const samplers = optionList(info.get('KSampler'), 'KSampler', 'sampler_name');
+  const schedulers = optionList(info.get('KSampler'), 'KSampler', 'scheduler');
+  const templates = INLINE_SCENE_TEMPLATES.map((template) => {
+    const missing: string[] = [];
+    if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);
+    if (!clips.includes(template.modelFiles.clip)) missing.push(`model:clip:${template.modelFiles.clip}`);
+    if (!vaes.includes(template.modelFiles.vae)) missing.push(`model:vae:${template.modelFiles.vae}`);
+    const clipType = template.id === INLINE_SCENE_TEMPLATE_ID ? 'lumina2' : 'qwen_image';
+    if (!clipTypes.includes(clipType)) missing.push(`clip-type:${clipType}`);
+    if (!samplers.includes(template.sampler)) missing.push(`sampler:${template.sampler}`);
+    if (!schedulers.includes(template.scheduler)) missing.push(`scheduler:${template.scheduler}`);
+    if (template.id === INLINE_SCENE_QWEN_TEMPLATE_ID && !modelOnlyLoras.includes(QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora)) {
+      missing.push(`model:lora:${QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora}`);
+    }
+    for (const nodeName of template.requiredNodes) {
+      if (!nodeAvailable(info.get(nodeName), nodeName)) missing.push(`node:${nodeName}`);
+    }
+    return { template, available: missing.length === 0, missing: [...new Set(missing)] };
+  });
   return {
     spec: INLINE_SCENE_CAPABILITIES_SPEC,
-    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+    templates,
     aspectRatios: INLINE_SCENE_ASPECT_RATIOS,
     megapixels: INLINE_SCENE_MEGAPIXELS,
-    loras: []
+    loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_SCENE_TEMPLATE.loraPrefix)).sort()
   };
 }
 
@@ -117,12 +135,16 @@ function historyFailure(entry: Record<string, unknown>): string | null {
   return null;
 }
 
-function outputImage(entry: Record<string, unknown>): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
+function outputImage(
+  entry: Record<string, unknown>,
+  request: InlineSceneImageRequest
+): { filename: string; subfolder: 'mullet'; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  if (!isRecord(entry.outputs) || !isRecord(entry.outputs[QWEN_IMAGE_EDIT_SCENE_TEMPLATE.outputNode])) {
+  const outputNode = inlineSceneTemplate(request.modelTemplate).outputNode;
+  if (!isRecord(entry.outputs) || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI inline-scene history omitted the output node');
   }
-  const output = entry.outputs[QWEN_IMAGE_EDIT_SCENE_TEMPLATE.outputNode];
+  const output = entry.outputs[outputNode];
   if (!isRecord(output) || !Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
     throw new Error('ComfyUI inline-scene history must contain exactly one image');
   }
@@ -153,6 +175,7 @@ async function waitForImage(
   fetcher: Fetcher,
   baseUrl: string,
   id: string,
+  request: InlineSceneImageRequest,
   signal?: AbortSignal
 ): Promise<{ filename: string; subfolder: 'mullet'; type: 'output' }> {
   while (true) {
@@ -162,7 +185,7 @@ async function waitForImage(
     if (entry) {
       const failure = historyFailure(entry);
       if (failure) throw new Error(failure);
-      const image = outputImage(entry);
+      const image = outputImage(entry, request);
       if (image) return image;
     }
     await pollDelay(250, signal);
@@ -229,7 +252,14 @@ export async function runComfyInlineScene(
   seed: number,
   signal?: AbortSignal
 ): Promise<ComfyInlineSceneImage> {
-  await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
+  if (request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID && request.referenceImage) {
+    await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
+  }
+  const workflow = request.modelTemplate === INLINE_SCENE_TEMPLATE_ID
+    ? buildZImageTurboSceneWorkflow(request, seed, capabilities)
+    : request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
+      ? buildQwenImageEditSceneWorkflow(request, seed, capabilities)
+      : (() => { throw new Error('unsupported inline-scene model template'); })();
   let id = '';
   let completed = false;
   try {
@@ -237,13 +267,13 @@ export async function runComfyInlineScene(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildQwenImageEditSceneWorkflow(request, seed, capabilities),
+        prompt: workflow,
         client_id: 'mullet-inline-scene'
       }),
       signal
     });
     id = queuedPromptId(await responseJson(queueResponse, 'inline-scene queue submission'));
-    const image = await waitForImage(fetcher, baseUrl, id, signal);
+    const image = await waitForImage(fetcher, baseUrl, id, request, signal);
     completed = true;
     const query = new URLSearchParams(image);
     const outputResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
+  INLINE_SCENE_TEMPLATE_ID,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
   createInlineSceneResult,
@@ -39,14 +40,10 @@ const motionPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const minimaxMp4Bytes = buildH264AacMp4Fixture();
 const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 1344, height: 768, frames: 121, includeAudio: false });
-const canonicalReference = Object.freeze({
-  name: 'jenna-stannis-v1.jpg',
-  subfolder: 'mullet/identity',
-  type: 'input',
-  sha256: 'c'.repeat(64),
-  width: 400,
-  height: 600,
-  aspectRatio: '2:3'
+const sceneLora = Object.freeze({
+  path: 'zimage/jenna6.safetensors',
+  trigger: 'jennastannis',
+  modelHash: 'c'.repeat(64)
 });
 
 function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
@@ -74,8 +71,10 @@ function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCE
     : buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', prompt);
   const sceneRequest = buildInlineSceneImageRequest(result, {
-    referenceImage: canonicalReference,
-    lora: null,
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+    subject: 'Jenna Stannis',
+    referenceImage: null,
+    lora: sceneLora,
     aspectRatio: '16:9',
     megapixels: 1
   });

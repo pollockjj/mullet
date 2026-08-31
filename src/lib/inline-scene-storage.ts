@@ -1,13 +1,13 @@
 import {
-  INLINE_SCENE_TEMPLATE_ID,
   inlineSceneDimensions,
   inlineSceneImageRequestKey,
   normalizeInlineSceneImageRequest,
-  type InlineSceneImageRequest
+  type InlineSceneImageRequest,
+  type InlineSceneModelTemplate
 } from './inline-scene.ts';
 
-export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v3' as const;
-export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v3' as const;
+export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v4' as const;
+export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v4' as const;
 
 export class StoredInlineSceneIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -22,7 +22,7 @@ export type StoredInlineScene = {
   epoch: string;
   requestKey: string;
   request: InlineSceneImageRequest;
-  modelTemplate: typeof INLINE_SCENE_TEMPLATE_ID;
+  modelTemplate: InlineSceneModelTemplate;
   promptId: string;
   seed: number;
   width: number;
@@ -67,7 +67,9 @@ const OBSOLETE_INLINE_SCENE_SPECS = new Set([
   'mullet_stored_inline_scene_v1',
   'mullet_stored_inline_scene_envelope_v1',
   'mullet_stored_inline_scene_v2',
-  'mullet_stored_inline_scene_envelope_v2'
+  'mullet_stored_inline_scene_envelope_v2',
+  'mullet_stored_inline_scene_v3',
+  'mullet_stored_inline_scene_envelope_v3'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,7 +94,7 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
   if (typeof value.epoch !== 'string' || !UUID_PATTERN.test(value.epoch)) throw new Error('stored inline-scene epoch is invalid');
   const requestKey = inlineSceneImageRequestKey(request);
   if (value.requestKey !== requestKey) throw new Error('stored inline-scene request key is invalid');
-  if (value.modelTemplate !== request.modelTemplate || value.modelTemplate !== INLINE_SCENE_TEMPLATE_ID) {
+  if (value.modelTemplate !== request.modelTemplate) {
     throw new Error('stored inline-scene template is invalid');
   }
   if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) throw new Error('stored inline-scene prompt ID is invalid');
@@ -110,7 +112,7 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
     epoch: value.epoch,
     requestKey,
     request,
-    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+    modelTemplate: request.modelTemplate,
     promptId: value.promptId,
     seed: safeInteger(value.seed, 'stored inline-scene seed', 0, Number.MAX_SAFE_INTEGER),
     width,

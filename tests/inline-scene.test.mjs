@@ -3,14 +3,20 @@ import test from 'node:test';
 
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
+  INLINE_SCENE_CAPABILITIES_SPEC,
   INLINE_SCENE_IMAGE_REQUEST_SPEC,
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_REQUEST_SPEC,
   INLINE_SCENE_RESULT_SPEC,
   INLINE_SCENE_SYSTEM_PROMPT,
+  INLINE_SCENE_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+  Z_IMAGE_TURBO_SCENE_TEMPLATE,
   buildInlineSceneImageRequest,
+  buildInlineScenePrompt,
   buildInlineSceneRequest,
   buildQwenImageEditSceneWorkflow,
+  buildZImageTurboSceneWorkflow,
   createInlineSceneResult,
   inlineSceneDimensions,
   inlineSceneImageRequestKey,
@@ -49,6 +55,11 @@ const canonicalReference = Object.freeze({
   height: 600,
   aspectRatio: '2:3'
 });
+const subjectLora = Object.freeze({
+  path: 'zimage/jan6.safetensors',
+  trigger: 'janpollock',
+  modelHash: 'd'.repeat(64)
+});
 
 function result() {
   const request = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
@@ -72,7 +83,7 @@ test('represents a canonical assistant-only scenario opening without weakening c
   const request = buildInlineSceneRequest(conversationId, openingMessages, source);
   assert.equal(INLINE_SCENE_REQUEST_SPEC, 'mullet_inline_scene_request_v2');
   assert.equal(INLINE_SCENE_RESULT_SPEC, 'mullet_inline_scene_result_v2');
-  assert.equal(INLINE_SCENE_IMAGE_REQUEST_SPEC, 'mullet_inline_scene_image_request_v3');
+  assert.equal(INLINE_SCENE_IMAGE_REQUEST_SPEC, 'mullet_inline_scene_image_request_v4');
   assert.equal(source.sourceKind, 'scenario_opening');
   assert.equal(source.messageCount, 1);
   assert.equal(source.messageIndex, 0);
@@ -90,6 +101,8 @@ test('represents a canonical assistant-only scenario opening without weakening c
   const openingResult = createInlineSceneResult(request, 'gemma-4-ortenzya', visualPrompt);
   assert.equal(inlineSceneResultMatchesRequest(openingResult, request), true);
   const openingImageRequest = buildInlineSceneImageRequest(openingResult, {
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    subject: 'Jenna Stannis',
     referenceImage: canonicalReference,
     lora: null,
     aspectRatio: '16:9',
@@ -109,7 +122,14 @@ test('represents a canonical assistant-only scenario opening without weakening c
       'gemma-4-ortenzya',
       visualPrompt
     ),
-    { referenceImage: canonicalReference, lora: null, aspectRatio: '16:9', megapixels: 1 }
+    {
+      modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+      subject: 'Jenna Stannis',
+      referenceImage: canonicalReference,
+      lora: null,
+      aspectRatio: '16:9',
+      megapixels: 1
+    }
   );
   assert.notEqual(inlineSceneImageRequestKey(openingImageRequest), inlineSceneImageRequestKey(otherImageRequest));
 
@@ -201,6 +221,8 @@ test('binds the scene result and image request to exact transcript and prompt ha
   const sidecarRequest = buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
   assert.equal(inlineSceneResultMatchesRequest(sceneResult, sidecarRequest), true);
   const request = buildInlineSceneImageRequest(sceneResult, {
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    subject: 'Jenna Stannis',
     referenceImage: canonicalReference,
     lora: null,
     aspectRatio: '16:9',
@@ -213,13 +235,43 @@ test('binds the scene result and image request to exact transcript and prompt ha
   assert.throws(() => normalizeInlineSceneImageRequest({ ...request, prompt: `${request.prompt} changed` }), /prompt hash/);
   assert.throws(() => normalizeInlineSceneImageRequest({
     ...request,
-    lora: { path: 'subject.safetensors', trigger: 'subject', modelHash: 'd'.repeat(64) }
-  }), /does not accept a selectable LoRA/);
+    lora: { path: 'zimage/subject.safetensors', trigger: 'subject', modelHash: 'd'.repeat(64) }
+  }), /Qwen inline scenes require/);
   assert.notEqual(inlineSceneImageRequestKey(request), inlineSceneImageRequestKey({ ...request, megapixels: 0.9 }));
   assert.notEqual(inlineSceneImageRequestKey(request), inlineSceneImageRequestKey({
     ...request,
     referenceImage: { ...canonicalReference, sha256: 'd'.repeat(64) }
   }));
+});
+
+test('binds a Z-Image scene to the linked LoRA trigger and provenance', () => {
+  const request = buildInlineSceneImageRequest(result(), {
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+    subject: 'Jan Pollock',
+    referenceImage: null,
+    lora: subjectLora,
+    aspectRatio: '16:9',
+    megapixels: 0.5
+  });
+  assert.equal(request.referenceImage, null);
+  assert.deepEqual(request.lora, subjectLora);
+  assert.match(buildInlineScenePrompt(request), /janpollock represents Jan Pollock/);
+  assert.notEqual(inlineSceneImageRequestKey(request), inlineSceneImageRequestKey({
+    ...request,
+    lora: { ...subjectLora, trigger: 'janpollock_alt' }
+  }));
+  assert.notEqual(inlineSceneImageRequestKey(request), inlineSceneImageRequestKey({
+    ...request,
+    lora: { ...subjectLora, modelHash: 'e'.repeat(64) }
+  }));
+  assert.throws(() => normalizeInlineSceneImageRequest({
+    ...request,
+    referenceImage: canonicalReference
+  }), /Z-Image inline scenes require/);
+  assert.throws(() => normalizeInlineSceneImageRequest({
+    ...request,
+    lora: null
+  }), /Z-Image inline scenes require/);
 });
 
 test('independently snaps all landscape dimensions to the model multiple', () => {
@@ -230,8 +282,8 @@ test('independently snaps all landscape dimensions to the model multiple', () =>
   for (const ratio of ['3:2', '4:3', '5:4', '16:9']) {
     for (const megapixels of [0.5, 0.75, 0.9, 1, 1.5, 2]) {
       const dimensions = inlineSceneDimensions(ratio, megapixels);
-      assert.equal(dimensions.width % QWEN_IMAGE_EDIT_SCENE_TEMPLATE.multiple, 0);
-      assert.equal(dimensions.height % QWEN_IMAGE_EDIT_SCENE_TEMPLATE.multiple, 0);
+      assert.equal(dimensions.width % Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple, 0);
+      assert.equal(dimensions.height % Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple, 0);
       assert.ok(dimensions.width <= 2048 && dimensions.height <= 2048);
     }
   }
@@ -239,14 +291,16 @@ test('independently snaps all landscape dimensions to the model multiple', () =>
 
 test('builds the Qwen landscape outpaint graph with a fixed four-step LoRA and canonical reference', () => {
   const request = buildInlineSceneImageRequest(result(), {
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    subject: 'Jenna Stannis',
     referenceImage: canonicalReference,
     lora: null,
     aspectRatio: '3:2',
     megapixels: 0.5
   });
   const capabilities = {
-    spec: 'mullet_inline_scene_capabilities_v2',
-    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+    spec: INLINE_SCENE_CAPABILITIES_SPEC,
+    templates: [],
     aspectRatios: [],
     megapixels: [],
     loras: []
@@ -268,4 +322,30 @@ test('builds the Qwen landscape outpaint graph with a fixed four-step LoRA and c
   assert.deepEqual(graph['11'].inputs.pixels, ['15', 0]);
   assert.match(graph['9'].inputs.prompt, /outpaint it into the requested wide scene/);
   assert.equal(graph['14'].inputs.filename_prefix, 'mullet/scene');
+});
+
+test('builds a landscape Z-Image graph with the selected identity LoRA and exact trigger', () => {
+  const request = buildInlineSceneImageRequest(result(), {
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+    subject: 'Jan Pollock',
+    referenceImage: null,
+    lora: subjectLora,
+    aspectRatio: '3:2',
+    megapixels: 0.5
+  });
+  const graph = buildZImageTurboSceneWorkflow(request, 43);
+  assert.equal(graph['1'].inputs.unet_name, Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.type, 'lumina2');
+  assert.deepEqual(graph['7'].inputs, { width: 864, height: 576, batch_size: 1 });
+  assert.equal(graph['11'].inputs.lora_name, subjectLora.path);
+  assert.deepEqual(graph['11'].inputs.model, ['1', 0]);
+  assert.deepEqual(graph['11'].inputs.clip, ['2', 0]);
+  assert.deepEqual(graph['6'].inputs.model, ['11', 0]);
+  assert.deepEqual(graph['4'].inputs.clip, ['11', 1]);
+  assert.match(graph['4'].inputs.text, /janpollock represents Jan Pollock/);
+  assert.match(graph['4'].inputs.text, new RegExp(visualPrompt.slice(0, 40)));
+  assert.equal(graph['8'].inputs.steps, Z_IMAGE_TURBO_SCENE_TEMPLATE.steps);
+  assert.equal(graph['8'].inputs.sampler_name, Z_IMAGE_TURBO_SCENE_TEMPLATE.sampler);
+  assert.equal(graph['10'].inputs.filename_prefix, 'mullet/scene');
+  assert.equal(Object.values(graph).some((node) => node.class_type === 'LoadImage'), false);
 });

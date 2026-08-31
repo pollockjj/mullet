@@ -4,7 +4,12 @@ import test from 'node:test';
 
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
+  INLINE_SCENE_CAPABILITIES_SPEC,
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
+  INLINE_SCENE_TEMPLATE_ID,
+  INLINE_SCENE_TEMPLATES,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+  Z_IMAGE_TURBO_SCENE_TEMPLATE,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
   createInlineSceneResult,
@@ -31,6 +36,11 @@ const canonicalReference = Object.freeze({
   height: 600,
   aspectRatio: '2:3'
 });
+const subjectLora = Object.freeze({
+  path: 'zimage/jan6.safetensors',
+  trigger: 'janpollock',
+  modelHash: 'd'.repeat(64)
+});
 
 function request() {
   const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
@@ -42,6 +52,27 @@ function request() {
     visualPrompt
   );
   return buildInlineSceneImageRequest(result, {
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+    subject: 'Jan Pollock',
+    referenceImage: null,
+    lora: subjectLora,
+    aspectRatio: '3:2',
+    megapixels: 0.5
+  });
+}
+
+function qwenRequest() {
+  const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
+  const turns = [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }];
+  const source = inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, turns));
+  const result = createInlineSceneResult(
+    buildInlineSceneRequest(conversationId, turns, source),
+    'gemma-4-ortenzya',
+    visualPrompt
+  );
+  return buildInlineSceneImageRequest(result, {
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    subject: 'Jenna Stannis',
     referenceImage: canonicalReference,
     lora: null,
     aspectRatio: '3:2',
@@ -54,13 +85,31 @@ function node(name, required = {}) {
 }
 
 function info(name) {
-  const files = QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles;
-  if (name === 'UNETLoader') return node(name, { unet_name: [[files.unet]] });
-  if (name === 'CLIPLoader') return node(name, { clip_name: [[files.clip]], type: [['qwen_image']] });
-  if (name === 'VAELoader') return node(name, { vae_name: [[files.vae]] });
-  if (name === 'LoraLoaderModelOnly') return node(name, { lora_name: [[files.lora]] });
-  if (name === 'KSampler') return node(name, { sampler_name: [['euler']], scheduler: [['simple']] });
+  const qwen = QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles;
+  const zImage = Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles;
+  if (name === 'UNETLoader') return node(name, { unet_name: [[zImage.unet, qwen.unet]] });
+  if (name === 'CLIPLoader') return node(name, {
+    clip_name: [[zImage.clip, qwen.clip]],
+    type: [['lumina2', 'qwen_image']]
+  });
+  if (name === 'VAELoader') return node(name, { vae_name: [[zImage.vae, qwen.vae]] });
+  if (name === 'LoraLoader') return node(name, { lora_name: [[subjectLora.path, 'other/ignored.safetensors']] });
+  if (name === 'LoraLoaderModelOnly') return node(name, { lora_name: [[qwen.lora]] });
+  if (name === 'KSampler') return node(name, {
+    sampler_name: [[Z_IMAGE_TURBO_SCENE_TEMPLATE.sampler, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.sampler]],
+    scheduler: [['simple']]
+  });
   return node(name);
+}
+
+function capabilities() {
+  return {
+    spec: INLINE_SCENE_CAPABILITIES_SPEC,
+    templates: INLINE_SCENE_TEMPLATES.map((template) => ({ template, available: true, missing: [] })),
+    aspectRatios: [],
+    megapixels: [],
+    loras: [subjectLora.path]
+  };
 }
 
 function png(width = 864, height = 576) {
@@ -73,7 +122,7 @@ function png(width = 864, height = 576) {
   return bytes;
 }
 
-test('requires the exact Qwen Image Edit stack and fixed Lightning four-step LoRA', async () => {
+test('reports additive Z-Image and Qwen scene capabilities with the linked LoRA inventory', async () => {
   const queried = [];
   const fetcher = async (url) => {
     const parsed = new URL(String(url));
@@ -83,37 +132,73 @@ test('requires the exact Qwen Image Edit stack and fixed Lightning four-step LoR
     return Response.json(info(name));
   };
   const capabilities = await loadInlineSceneCapabilities(fetcher, 'http://comfy');
-  assert.equal(capabilities.spec, 'mullet_inline_scene_capabilities_v2');
-  assert.equal(capabilities.template.id, 'qwen-image-edit-2511-scene-v1');
-  assert.equal(capabilities.template.modelFiles.lora, 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors');
-  assert.equal(capabilities.template.steps, 4);
-  assert.deepEqual(capabilities.loras, []);
-  assert.deepEqual(new Set(queried), new Set(QWEN_IMAGE_EDIT_SCENE_TEMPLATE.requiredNodes));
-  assert.equal(queried.length, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.requiredNodes.length);
+  assert.equal(capabilities.spec, 'mullet_inline_scene_capabilities_v3');
+  assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
+    [INLINE_SCENE_TEMPLATE_ID, true],
+    [INLINE_SCENE_QWEN_TEMPLATE_ID, true]
+  ]);
+  assert.equal(capabilities.templates[0].template.steps, Z_IMAGE_TURBO_SCENE_TEMPLATE.steps);
+  assert.equal(capabilities.templates[1].template.modelFiles.lora, 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors');
+  assert.deepEqual(capabilities.loras, [subjectLora.path]);
+  const expectedNodes = new Set(INLINE_SCENE_TEMPLATES.flatMap((template) => [...template.requiredNodes]));
+  assert.deepEqual(new Set(queried), expectedNodes);
+  assert.equal(queried.length, expectedNodes.size);
 });
 
-test('fails closed when the fixed Qwen Lightning LoRA is unavailable', async () => {
-  await assert.rejects(loadInlineSceneCapabilities(async (url) => {
+test('keeps Z-Image available while marking the additive Qwen fallback unavailable', async () => {
+  const capabilities = await loadInlineSceneCapabilities(async (url) => {
     const parsed = new URL(String(url));
     const name = decodeURIComponent(parsed.pathname.slice('/object_info/'.length));
     if (name === 'LoraLoaderModelOnly') return Response.json(node(name, { lora_name: [['other.safetensors']] }));
     return Response.json(info(name));
-  }, 'http://comfy'), /Qwen Lightning four-step LoRA/);
+  }, 'http://comfy');
+  const zImage = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_TEMPLATE_ID);
+  const qwen = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_QWEN_TEMPLATE_ID);
+  assert.equal(zImage.available, true);
+  assert.equal(qwen.available, false);
+  assert.deepEqual(qwen.missing, [`model:lora:${QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora}`]);
 });
 
-test('queues the scene namespace and verifies exact output PNG dimensions and hash', async () => {
-  const capabilities = {
-    spec: 'mullet_inline_scene_capabilities_v2',
-    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
-    aspectRatios: [],
-    megapixels: [],
-    loras: []
-  };
+test('queues the Z-Image LoRA scene without fetching a reference and verifies its PNG', async () => {
+  const available = capabilities();
   const observed = [];
   const bytes = png();
   const fetcher = async (url, init = {}) => {
     const parsed = new URL(String(url));
-    observed.push({ path: parsed.pathname, init });
+    observed.push({ path: parsed.pathname, filename: parsed.searchParams.get('filename'), init });
+    if (parsed.pathname === '/prompt') return Response.json({ prompt_id: promptId, node_errors: {} });
+    if (parsed.pathname === `/history/${promptId}`) return Response.json({
+      [promptId]: {
+        status: { completed: true, status_str: 'success' },
+        outputs: { '10': { images: [{ filename: 'scene_00001_.png', subfolder: 'mullet', type: 'output' }] } }
+      }
+    });
+    if (parsed.pathname === '/view') return new Response(bytes, { headers: { 'content-type': 'image/png' } });
+    throw new Error(`unexpected ${parsed.pathname}`);
+  };
+  const output = await runComfyInlineScene(fetcher, 'http://comfy', request(), available, 42);
+  const queuedCall = observed.find(({ path }) => path === '/prompt');
+  assert.ok(queuedCall);
+  const queued = JSON.parse(queuedCall.init.body);
+  assert.equal(queued.client_id, 'mullet-inline-scene');
+  assert.equal(queued.prompt['11'].inputs.lora_name, subjectLora.path);
+  assert.match(queued.prompt['4'].inputs.text, /janpollock represents Jan Pollock/);
+  assert.equal(queued.prompt['8'].inputs.steps, Z_IMAGE_TURBO_SCENE_TEMPLATE.steps);
+  assert.equal(queued.prompt['10'].inputs.filename_prefix, 'mullet/scene');
+  assert.equal(observed.some(({ path, filename }) => path === '/view' && filename === 'scene_00001_.png'), true);
+  assert.equal(observed.some(({ path, filename }) => path === '/view' && filename === canonicalReference.name), false);
+  assert.equal(output.promptId, promptId);
+  assert.match(output.sha256, /^[0-9a-f]{64}$/);
+  assert.throws(() => validateInlineScenePng(png(800, 600), 864, 576), /dimensions/);
+});
+
+test('retains Qwen reference fetching and the fixed four-step fallback graph', async () => {
+  const available = capabilities();
+  const observed = [];
+  const bytes = png();
+  const fetcher = async (url, init = {}) => {
+    const parsed = new URL(String(url));
+    observed.push({ pathname: parsed.pathname, filename: parsed.searchParams.get('filename'), init });
     if (parsed.pathname === '/view' && parsed.searchParams.get('filename') === canonicalReference.name) {
       return new Response(referenceBytes, { headers: { 'content-type': 'image/jpeg' } });
     }
@@ -127,35 +212,21 @@ test('queues the scene namespace and verifies exact output PNG dimensions and ha
     if (parsed.pathname === '/view') return new Response(bytes, { headers: { 'content-type': 'image/png' } });
     throw new Error(`unexpected ${parsed.pathname}`);
   };
-  const output = await runComfyInlineScene(fetcher, 'http://comfy', request(), capabilities, 42);
-  const queuedCall = observed.find(({ path }) => path === '/prompt');
-  assert.ok(queuedCall);
-  const queued = JSON.parse(queuedCall.init.body);
-  assert.equal(queued.client_id, 'mullet-inline-scene');
+  await runComfyInlineScene(fetcher, 'http://comfy', qwenRequest(), available, 42);
+  const queued = JSON.parse(observed.find(({ pathname }) => pathname === '/prompt').init.body);
+  assert.equal(observed.some(({ pathname, filename }) => pathname === '/view' && filename === canonicalReference.name), true);
   assert.equal(queued.prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   assert.equal(queued.prompt['8'].inputs.lora_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora);
   assert.equal(queued.prompt['12'].inputs.steps, 4);
   assert.equal(queued.prompt['14'].inputs.filename_prefix, 'mullet/scene');
-  assert.equal(output.promptId, promptId);
-  assert.match(output.sha256, /^[0-9a-f]{64}$/);
-  assert.throws(() => validateInlineScenePng(png(800, 600), 864, 576), /dimensions/);
 });
 
 test('targets only its queued Comfy job when execution fails', async () => {
   const calls = [];
-  const capabilities = {
-    spec: 'mullet_inline_scene_capabilities_v2',
-    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
-    aspectRatios: [],
-    megapixels: [],
-    loras: []
-  };
+  const available = capabilities();
   const fetcher = async (url) => {
     const parsed = new URL(String(url));
     calls.push(parsed.pathname);
-    if (parsed.pathname === '/view' && parsed.searchParams.get('filename') === canonicalReference.name) {
-      return new Response(referenceBytes, { headers: { 'content-type': 'image/jpeg' } });
-    }
     if (parsed.pathname === '/prompt') return Response.json({ prompt_id: promptId, node_errors: {} });
     if (parsed.pathname === `/history/${promptId}`) return Response.json({
       [promptId]: { status: { completed: true, status_str: 'error' }, outputs: {} }
@@ -163,7 +234,7 @@ test('targets only its queued Comfy job when execution fails', async () => {
     if (parsed.pathname === `/api/jobs/${promptId}/cancel`) return Response.json({ cancelled: true });
     throw new Error(`unexpected ${parsed.pathname}`);
   };
-  await assert.rejects(runComfyInlineScene(fetcher, 'http://comfy', request(), capabilities, 42), /execution failed/);
+  await assert.rejects(runComfyInlineScene(fetcher, 'http://comfy', request(), available, 42), /execution failed/);
   assert.ok(calls.includes(`/api/jobs/${promptId}/cancel`));
   assert.ok(!calls.includes('/interrupt'));
 });

@@ -15,7 +15,7 @@
 ## Model artifact rules
 
 - Route by media type: every still-image workflow runs through `IMAGE_COMFY_BASE_URL` on Firestorm CUDA0, and every video workflow runs through `VIDEO_COMFY_BASE_URL` on Firestorm CUDA1. A generated video end frame is an image and therefore runs on the image lane before its bytes are handed to the video lane.
-- Qwen Image Edit 2511 with `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` is the required reference editor for expression portraits, landscape scenes, and generated portrait end frames.
+- Scenario identity drives both portrait and landscape stills. A profile with a linked Z-Image subject LoRA uses Z-Image Turbo plus that exact LoRA for both; a reference-only profile uses Qwen Image Edit 2511 with `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors`. Generated portrait end frames remain Qwen reference edits.
 - Mage-Flow and FLUX.2 are explicitly excluded from MULLET. Do not restore them as selectable options or hidden workflow dependencies without a new current-turn operator order.
 - ComfyUI diffusion-model weights for this project use the native INT8 ConvRot artifact when one exists. Do not substitute an official FP8 diffusion weight merely because the original publisher's repository is gated.
 - Search the public ComfyUI-native INT8 ConvRot conversions on Hugging Face before declaring a required model unavailable or gated.

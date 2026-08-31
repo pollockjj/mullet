@@ -47,10 +47,13 @@
   } from '$lib/living-history';
   import {
     INLINE_SCENE_IMAGE_TIMEOUT_MS,
+    INLINE_SCENE_QWEN_TEMPLATE_ID,
+    INLINE_SCENE_TEMPLATE_ID,
     INLINE_SCENE_TIMEOUT_MS,
     buildInlineSceneImageRequest,
     buildInlineSceneRequest,
     inlineSceneImageRequestKey,
+    inlineSceneModelTemplateAvailable,
     inlineSceneResultMatchesRequest,
     inlineSceneSourceForCompletedTurn,
     inlineSceneSourceForScenarioOpening,
@@ -293,6 +296,10 @@
 
   type Role = 'user' | 'assistant';
   type Message = { role: Role; content: string };
+  type InlineSceneProfileDriver = Pick<
+    InlineSceneImageRequest,
+    'modelTemplate' | 'subject' | 'referenceImage' | 'lora'
+  >;
 
   export let data: PageData;
 
@@ -444,6 +451,11 @@
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let activeScenarioStarterId = '';
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
+  let inlineSceneProfileDriver: InlineSceneProfileDriver | null = null;
+  let selectedInlineSceneCapability: InlineSceneCapabilities['templates'][number] | null = null;
+  let inlineSceneSelectedModelAvailable = false;
+  let inlineSceneSelectedLoraAvailable = false;
+  let inlineSceneProfileDriverAvailable = false;
   let scenarioLoading = false;
   let conversationId = '';
   let expressionsEnabled = false;
@@ -555,6 +567,23 @@
   $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
     ? scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)
     : null;
+  $: inlineSceneProfileDriver = scenarioPortraitProfile
+    ? inlineSceneDriverForProfile(scenarioPortraitProfile)
+    : null;
+  $: selectedInlineSceneCapability = inlineSceneProfileDriver
+    ? inlineSceneCapabilities?.templates.find(
+        ({ template }) => template.id === inlineSceneProfileDriver?.modelTemplate
+      ) ?? null
+    : null;
+  $: inlineSceneSelectedModelAvailable = Boolean(
+    inlineSceneProfileDriver
+    && inlineSceneModelTemplateAvailable(inlineSceneCapabilities, inlineSceneProfileDriver.modelTemplate)
+  );
+  $: inlineSceneSelectedLoraAvailable = Boolean(
+    inlineSceneProfileDriver
+    && (!inlineSceneProfileDriver.lora || inlineSceneCapabilities?.loras.includes(inlineSceneProfileDriver.lora.path))
+  );
+  $: inlineSceneProfileDriverAvailable = inlineSceneSelectedModelAvailable && inlineSceneSelectedLoraAvailable;
   $: selectedPortraitCapability = portraitCapabilities?.templates.find(
     ({ template }) => template.id === portraitModelTemplate
   ) ?? null;
@@ -1090,18 +1119,55 @@
     );
   }
 
+  function inlineSceneDriverForProfile(profile: ScenarioPortraitProfile): InlineSceneProfileDriver {
+    if (profile.subjectLora) {
+      return {
+        modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+        subject: profile.subject,
+        referenceImage: null,
+        lora: {
+          path: profile.subjectLora.name,
+          trigger: profile.subjectLora.trigger,
+          modelHash: profile.subjectLora.sha256
+        }
+      };
+    }
+    return {
+      modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+      subject: profile.subject,
+      referenceImage: profile.referenceImage,
+      lora: null
+    };
+  }
+
+  function inlineSceneDriverIsAvailable(
+    capabilities: InlineSceneCapabilities | null,
+    driver: InlineSceneProfileDriver
+  ): boolean {
+    return inlineSceneModelTemplateAvailable(capabilities, driver.modelTemplate)
+      && (!driver.lora || capabilities?.loras.includes(driver.lora.path) === true);
+  }
+
   function inlineSceneMatchesSettings(
     scene: StoredInlineScene | null,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
     profile: ScenarioPortraitProfile | null
   ): boolean {
+    if (!scene || !profile) return false;
+    const driver = inlineSceneDriverForProfile(profile);
     return Boolean(
-      scene
-      && profile
-      && scene.request.aspectRatio === aspectRatio
+      scene.request.aspectRatio === aspectRatio
       && scene.request.megapixels === megapixels
-      && scene.request.referenceImage.sha256 === profile.referenceImage.sha256
+      && scene.request.modelTemplate === driver.modelTemplate
+      && scene.request.subject === driver.subject
+      && (scene.request.referenceImage?.name ?? null) === (driver.referenceImage?.name ?? null)
+      && (scene.request.referenceImage?.sha256 ?? null) === (driver.referenceImage?.sha256 ?? null)
+      && (scene.request.referenceImage?.width ?? null) === (driver.referenceImage?.width ?? null)
+      && (scene.request.referenceImage?.height ?? null) === (driver.referenceImage?.height ?? null)
+      && (scene.request.lora?.path ?? null) === (driver.lora?.path ?? null)
+      && (scene.request.lora?.trigger ?? null) === (driver.lora?.trigger ?? null)
+      && (scene.request.lora?.modelHash ?? null) === (driver.lora?.modelHash ?? null)
     );
   }
 
@@ -1752,6 +1818,7 @@
     megapixels: InlineSceneMegapixels,
     profile: ScenarioPortraitProfile
   ): string {
+    const driver = inlineSceneDriverForProfile(profile);
     return [
       request.source.conversationId,
       request.source.messageCount,
@@ -1761,7 +1828,12 @@
       megapixels,
       profile.id,
       profile.fingerprint,
-      profile.referenceImage.sha256
+      driver.modelTemplate,
+      driver.subject,
+      driver.referenceImage?.sha256 ?? '',
+      driver.lora?.path ?? '',
+      driver.lora?.trigger ?? '',
+      driver.lora?.modelHash ?? ''
     ].join('\u001f');
   }
 
@@ -1779,6 +1851,7 @@
     profile: ScenarioPortraitProfile | null
   ) {
     if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current || !profile) return;
+    if (!inlineSceneDriverIsAvailable(capabilities, inlineSceneDriverForProfile(profile))) return;
     const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, profile);
     if (key === lastInlineSceneAttemptKey) return;
     lastInlineSceneAttemptKey = key;
@@ -1805,9 +1878,9 @@
     if (!result) return true;
     if (!scenarioPortraitProfile) return false;
     try {
+      const driver = inlineSceneDriverForProfile(scenarioPortraitProfile);
       const liveImageRequest = buildInlineSceneImageRequest(result, {
-        referenceImage: scenarioPortraitProfile.referenceImage,
-        lora: null,
+        ...driver,
         aspectRatio: inlineSceneAspectRatio,
         megapixels: inlineSceneMegapixels
       });
@@ -1834,6 +1907,7 @@
       || !inlineScenesEnabled
       || !inlineSceneCapabilities
       || !selectedProfile
+      || !inlineSceneDriverIsAvailable(inlineSceneCapabilities, inlineSceneDriverForProfile(selectedProfile))
       || inlineSceneBusy
       || !inlineScenePersistenceReady
       || !inlineScenePersistenceAvailable
@@ -1874,9 +1948,9 @@
       if (!inlineSceneResultMatchesRequest(result, selectedSidecarRequest)) {
         throw new Error('Inline-scene sidecar returned a mismatched finalized source.');
       }
+      const driver = inlineSceneDriverForProfile(selectedProfile);
       const imageRequest = buildInlineSceneImageRequest(result, {
-        referenceImage: selectedProfile.referenceImage,
-        lora: null,
+        ...driver,
         aspectRatio: selectedAspectRatio,
         megapixels: selectedMegapixels
       });
@@ -5016,10 +5090,31 @@
         {#if inlineSceneCapabilities}
           <label>
             <span>Image model</span>
-            <select value={inlineSceneCapabilities.template.id} disabled={inlineSceneBusy} aria-label="Inline scene image model">
-              <option value={inlineSceneCapabilities.template.id}>{inlineSceneCapabilities.template.label}</option>
+            <select value={inlineSceneProfileDriver?.modelTemplate ?? ''} disabled aria-label="Inline scene image model">
+              {#if !inlineSceneProfileDriver}<option value="">No linked scenario identity</option>{/if}
+              {#each inlineSceneCapabilities.templates as capability}
+                <option value={capability.template.id}>
+                  {capability.template.label}{capability.available
+                    ? ''
+                    : ` · unavailable · missing ${capability.missing.join(', ')}`}
+                </option>
+              {/each}
             </select>
           </label>
+          {#if inlineSceneProfileDriver}
+            <label>
+              <span>Identity driver</span>
+              <input
+                value={inlineSceneProfileDriver.lora
+                  ? `Linked LoRA · ${inlineSceneProfileDriver.lora.path.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · trigger ${inlineSceneProfileDriver.lora.trigger}`
+                  : inlineSceneProfileDriver.referenceImage
+                    ? `Canonical reference · ${inlineSceneProfileDriver.referenceImage.width}×${inlineSceneProfileDriver.referenceImage.height} · ${inlineSceneProfileDriver.referenceImage.aspectRatio}`
+                    : 'Unavailable'}
+                disabled
+                aria-label="Inline scene identity driver"
+              />
+            </label>
+          {/if}
           <div class="portrait-grid">
             <label>
               <span>Aspect</span>
@@ -5034,18 +5129,35 @@
               </select>
             </label>
           </div>
-          {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.source.sidecarModel}</small>{/if}
-          <small class="prompt-guide">{inlineSceneCapabilities.template.promptGuide}</small>
+          {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.source.sidecarModel} · {generatedInlineScene.request.modelTemplate === INLINE_SCENE_TEMPLATE_ID ? 'linked identity LoRA' : 'canonical identity reference'}</small>{/if}
+          {#if selectedInlineSceneCapability}<small class="prompt-guide">{selectedInlineSceneCapability.template.promptGuide}</small>{/if}
+          {#if selectedInlineSceneCapability && !inlineSceneSelectedModelAvailable}
+            <div class="sidecar-error capability-error" role="alert">
+              <span>{selectedInlineSceneCapability.template.label} is unavailable{selectedInlineSceneCapability.missing.length
+                ? ` · missing ${selectedInlineSceneCapability.missing.join(', ')}`
+                : ''}.</span>
+              <button class="error-retry" on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
+                {inlineSceneCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
+              </button>
+            </div>
+          {:else if inlineSceneProfileDriver?.lora && !inlineSceneSelectedLoraAvailable}
+            <div class="sidecar-error capability-error" role="alert">
+              <span>Linked scene identity LoRA is unavailable · {inlineSceneProfileDriver.lora.path}</span>
+              <button class="error-retry" on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
+                {inlineSceneCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
+              </button>
+            </div>
+          {/if}
           {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
           <button
             on:click={() => void generateInlineScene()}
-            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || !scenarioPortraitProfile || !inlineScenesEnabled || !inlineScenePersistenceAvailable}
+            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || !inlineSceneProfileDriver || !inlineSceneProfileDriverAvailable || !inlineScenesEnabled || !inlineScenePersistenceAvailable}
           >
             {inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Regenerate scene' : 'Generate scene'}
           </button>
           {#if !inlineScenesEnabled}<small>Turn on Inline scene to direct and render each finalized response.</small>{/if}
           {#if inlineScenesEnabled && !inlineSceneSidecarRequest}<small>Finish one user-and-assistant turn before scene generation starts.</small>{/if}
-          {#if inlineScenesEnabled && inlineSceneSidecarRequest && !scenarioPortraitProfile}<small>A validated scenario identity reference is required for Qwen scene editing.</small>{/if}
+          {#if inlineScenesEnabled && inlineSceneSidecarRequest && !inlineSceneProfileDriver}<small>A validated scenario identity LoRA or canonical reference is required for scene generation.</small>{/if}
           <div class="scene-motion-controls">
             <div class="portrait-heading">
               <div>
@@ -5358,7 +5470,7 @@
                     ></video>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Qwen Image Edit') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : `Gemma sidecar → ${selectedInlineSceneCapability?.template.label ?? 'scene image'}`) : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : generatedInlineScene?.request.modelTemplate === INLINE_SCENE_TEMPLATE_ID ? 'Current response · Z-Image + linked identity LoRA' : 'Current response · Qwen identity-reference edit') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded · {generatedInlineSceneVideo.audioTracks === 0 ? 'silent' : 'native audio'}</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>

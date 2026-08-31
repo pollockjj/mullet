@@ -3,6 +3,9 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
+  INLINE_SCENE_IMAGE_REQUEST_SPEC,
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
+  INLINE_SCENE_TEMPLATE_ID,
   inlineSceneImageRequestKey,
   inlineSceneSourceForScenarioOpening
 } from '../src/lib/inline-scene.ts';
@@ -29,8 +32,8 @@ const canonicalReference = Object.freeze({
 
 function request(overrides = {}) {
   return {
-    spec: 'mullet_inline_scene_image_request_v3',
-    modelTemplate: 'qwen-image-edit-2511-scene-v1',
+    spec: INLINE_SCENE_IMAGE_REQUEST_SPEC,
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
     source: {
       sourceKind: 'completed_turn',
       conversationId: '8d78c151-83f0-4c72-9b9b-1ab957adca78',
@@ -42,8 +45,13 @@ function request(overrides = {}) {
       promptSha256: `sha256:${'f'.repeat(64)}`
     },
     prompt: 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.',
-    referenceImage: canonicalReference,
-    lora: null,
+    subject: 'Jenna Stannis',
+    referenceImage: null,
+    lora: {
+      path: 'zimage/jenna6.safetensors',
+      trigger: 'jennastannis',
+      modelHash: 'd'.repeat(64)
+    },
     aspectRatio: '3:2',
     megapixels: 0.5,
     ...overrides
@@ -102,12 +110,26 @@ function stored(overrides = {}, sceneRequest = request()) {
 
 test('normalizes and byte-verifies a provenance-bound inline PNG', async () => {
   const scene = normalizeStoredInlineScene(stored());
-  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v3');
-  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v3');
+  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v4');
+  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v4');
   assert.equal(scene.requestKey, inlineSceneImageRequestKey(scene.request));
-  assert.deepEqual(scene.request.referenceImage, canonicalReference);
+  assert.equal(scene.request.referenceImage, null);
+  assert.equal(scene.request.lora.path, 'zimage/jenna6.safetensors');
   assert.equal((await verifyStoredInlineScene(scene)).image.type, 'image/png');
   assert.equal(JSON.stringify(scene).includes('transcript'), false);
+});
+
+test('preserves an additive Qwen reference-edit scene in the v4 envelope', async () => {
+  const qwenRequest = request({
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    referenceImage: canonicalReference,
+    lora: null
+  });
+  const scene = normalizeStoredInlineScene(stored({}, qwenRequest));
+  assert.equal(scene.modelTemplate, INLINE_SCENE_QWEN_TEMPLATE_ID);
+  assert.deepEqual(scene.request.referenceImage, canonicalReference);
+  assert.equal(scene.request.lora, null);
+  await verifyStoredInlineScene(scene);
 });
 
 test('preserves scenario-opening identity through static-scene persistence', async () => {
@@ -204,12 +226,14 @@ test('discards corrupt bytes inside the original restore lock', async () => {
   assert.equal(discardedWhileLocked, true);
 });
 
-test('silently discards obsolete v1 and v2 scenes inside the restore lock', async () => {
+test('silently discards obsolete v1 through v3 scenes inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_v1',
     'mullet_stored_inline_scene_envelope_v1',
     'mullet_stored_inline_scene_v2',
-    'mullet_stored_inline_scene_envelope_v2'
+    'mullet_stored_inline_scene_envelope_v2',
+    'mullet_stored_inline_scene_v3',
+    'mullet_stored_inline_scene_envelope_v3'
   ]) {
     let lockHeld = false;
     let discardedWhileLocked = false;

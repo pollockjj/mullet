@@ -8,15 +8,19 @@ import { isSidecarConversationId } from './sidecar.ts';
 import { sha256Hex } from './sha256.ts';
 import {
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
+  Z_IMAGE_TURBO_TEMPLATE,
   buildQwenReferenceEditWorkflow,
+  buildZImageTurboImageWorkflow,
+  isPortraitLoraName,
   type PortraitReferenceImage
 } from './portrait.ts';
 
 export const INLINE_SCENE_REQUEST_SPEC = 'mullet_inline_scene_request_v2' as const;
 export const INLINE_SCENE_RESULT_SPEC = 'mullet_inline_scene_result_v2' as const;
-export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_request_v3' as const;
-export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v2' as const;
-export const INLINE_SCENE_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
+export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_request_v4' as const;
+export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v3' as const;
+export const INLINE_SCENE_TEMPLATE_ID = 'z-image-turbo-scene-v1' as const;
+export const INLINE_SCENE_QWEN_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
 export const INLINE_SCENE_TIMEOUT_MS = 30_000 as const;
 export const INLINE_SCENE_IMAGE_TIMEOUT_MS = 120_000 as const;
 export const INLINE_SCENE_MAX_TURNS = 6 as const;
@@ -34,7 +38,7 @@ export const INLINE_SCENE_ASPECT_RATIOS = Object.freeze([
 export const INLINE_SCENE_MEGAPIXELS = Object.freeze([0.5, 0.75, 0.9, 1, 1.5, 2] as const);
 
 export const QWEN_IMAGE_EDIT_SCENE_TEMPLATE = Object.freeze({
-  id: INLINE_SCENE_TEMPLATE_ID,
+  id: INLINE_SCENE_QWEN_TEMPLATE_ID,
   label: 'Qwen Image Edit 2511 · Lightning 4-step',
   modelFamily: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFamily,
   promptGuide: 'use the supplied canonical identity as a visual anchor; outpaint into a cinematic realistic landscape scene with coherent anatomy, clear spatial relationships, natural lighting, no text, and no watermark',
@@ -48,8 +52,32 @@ export const QWEN_IMAGE_EDIT_SCENE_TEMPLATE = Object.freeze({
   scheduler: QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.scheduler
 } as const);
 
+export const Z_IMAGE_TURBO_SCENE_TEMPLATE = Object.freeze({
+  id: INLINE_SCENE_TEMPLATE_ID,
+  label: 'Z-Image Turbo · linked identity LoRA',
+  modelFamily: Z_IMAGE_TURBO_TEMPLATE.modelFamily,
+  promptGuide: 'cinematic realistic landscape fiction still, coherent anatomy and spatial relationships, natural skin texture, controlled depth of field, no text, and no watermark',
+  modelFiles: Z_IMAGE_TURBO_TEMPLATE.modelFiles,
+  requiredNodes: [...Z_IMAGE_TURBO_TEMPLATE.requiredNodes, 'LoraLoader'],
+  loraPrefix: Z_IMAGE_TURBO_TEMPLATE.loraPrefix,
+  multiple: Z_IMAGE_TURBO_TEMPLATE.multiple,
+  outputNode: Z_IMAGE_TURBO_TEMPLATE.outputNode,
+  steps: Z_IMAGE_TURBO_TEMPLATE.steps,
+  cfg: Z_IMAGE_TURBO_TEMPLATE.cfg,
+  sampler: Z_IMAGE_TURBO_TEMPLATE.sampler,
+  scheduler: Z_IMAGE_TURBO_TEMPLATE.scheduler,
+  shift: Z_IMAGE_TURBO_TEMPLATE.shift
+} as const);
+
+export const INLINE_SCENE_TEMPLATES = Object.freeze([
+  Z_IMAGE_TURBO_SCENE_TEMPLATE,
+  QWEN_IMAGE_EDIT_SCENE_TEMPLATE
+] as const);
+
 export type InlineSceneAspectRatio = (typeof INLINE_SCENE_ASPECT_RATIOS)[number]['id'];
 export type InlineSceneMegapixels = (typeof INLINE_SCENE_MEGAPIXELS)[number];
+export type InlineSceneModelTemplate = (typeof INLINE_SCENE_TEMPLATES)[number]['id'];
+export type InlineSceneTemplate = (typeof INLINE_SCENE_TEMPLATES)[number];
 
 export type InlineSceneCompletedTurnSource = LivingHistorySource & {
   sourceKind: 'completed_turn';
@@ -100,13 +128,14 @@ export type InlineSceneLora = { path: string; trigger: string; modelHash: string
 
 export type InlineSceneImageRequest = {
   spec: typeof INLINE_SCENE_IMAGE_REQUEST_SPEC;
-  modelTemplate: typeof INLINE_SCENE_TEMPLATE_ID;
+  modelTemplate: InlineSceneModelTemplate;
   source: InlineSceneSource & {
     sidecarModel: string;
     promptSha256: string;
   };
   prompt: string;
-  referenceImage: PortraitReferenceImage;
+  subject: string;
+  referenceImage: PortraitReferenceImage | null;
   lora: InlineSceneLora | null;
   aspectRatio: InlineSceneAspectRatio;
   megapixels: InlineSceneMegapixels;
@@ -115,10 +144,16 @@ export type InlineSceneImageRequest = {
 
 export type InlineSceneCapabilities = {
   spec: typeof INLINE_SCENE_CAPABILITIES_SPEC;
-  template: typeof QWEN_IMAGE_EDIT_SCENE_TEMPLATE;
+  templates: InlineSceneTemplateCapability[];
   aspectRatios: typeof INLINE_SCENE_ASPECT_RATIOS;
   megapixels: typeof INLINE_SCENE_MEGAPIXELS;
-  loras: InlineSceneLora[];
+  loras: string[];
+};
+
+export type InlineSceneTemplateCapability = {
+  template: InlineSceneTemplate;
+  available: boolean;
+  missing: string[];
 };
 
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -453,7 +488,7 @@ export function inlineSceneResultMatchesRequest(result: InlineSceneResult, reque
 export function inlineSceneDimensions(
   aspectRatio: InlineSceneAspectRatio,
   megapixels: InlineSceneMegapixels,
-  multiple = QWEN_IMAGE_EDIT_SCENE_TEMPLATE.multiple
+  multiple = Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple
 ): { width: number; height: number; pixels: number } {
   const ratio = aspectMap.get(aspectRatio);
   if (!ratio) throw new Error('unsupported inline-scene aspect ratio');
@@ -467,12 +502,11 @@ export function inlineSceneDimensions(
 
 export function buildInlineSceneImageRequest(
   result: InlineSceneResult,
-  settings: Omit<InlineSceneImageRequest, 'spec' | 'modelTemplate' | 'source' | 'prompt'>
+  settings: Omit<InlineSceneImageRequest, 'spec' | 'source' | 'prompt'>
 ): InlineSceneImageRequest {
   const normalized = normalizeInlineSceneResult(result);
   return normalizeInlineSceneImageRequest({
     spec: INLINE_SCENE_IMAGE_REQUEST_SPEC,
-    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
     source: {
       ...normalized.source,
       sidecarModel: normalized.model,
@@ -483,9 +517,55 @@ export function buildInlineSceneImageRequest(
   });
 }
 
+function normalizeInlineSceneReference(value: unknown): PortraitReferenceImage | null {
+  if (value === null) return null;
+  if (
+    !isRecord(value)
+    || typeof value.name !== 'string'
+    || !REFERENCE_IMAGE_PATTERN.test(value.name)
+    || value.subfolder !== 'mullet/identity'
+    || value.type !== 'input'
+    || typeof value.sha256 !== 'string'
+    || !RAW_SHA256_PATTERN.test(value.sha256)
+    || !Number.isSafeInteger(value.width)
+    || Number(value.width) < 16
+    || Number(value.width) > 8192
+    || !Number.isSafeInteger(value.height)
+    || Number(value.height) < 16
+    || Number(value.height) > 8192
+    || typeof value.aspectRatio !== 'string'
+    || value.aspectRatio.length < 3
+    || value.aspectRatio.length > 20
+  ) throw new Error('inline-scene identity reference is invalid');
+  return {
+    name: value.name,
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: value.sha256,
+    width: Number(value.width),
+    height: Number(value.height),
+    aspectRatio: value.aspectRatio
+  };
+}
+
+function normalizeInlineSceneLora(value: unknown): InlineSceneLora | null {
+  if (value === null) return null;
+  if (
+    !isRecord(value)
+    || !isPortraitLoraName(value.path)
+    || typeof value.trigger !== 'string'
+    || !/^[a-z0-9][a-z0-9_-]*$/.test(value.trigger)
+    || typeof value.modelHash !== 'string'
+    || !RAW_SHA256_PATTERN.test(value.modelHash)
+  ) throw new Error('inline-scene LoRA provenance is invalid');
+  return { path: value.path, trigger: value.trigger, modelHash: value.modelHash };
+}
+
 export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneImageRequest {
   if (!isRecord(value) || value.spec !== INLINE_SCENE_IMAGE_REQUEST_SPEC) throw new Error('invalid inline-scene image request spec');
-  if (value.modelTemplate !== INLINE_SCENE_TEMPLATE_ID) throw new Error('unsupported inline-scene model template');
+  if (value.modelTemplate !== INLINE_SCENE_TEMPLATE_ID && value.modelTemplate !== INLINE_SCENE_QWEN_TEMPLATE_ID) {
+    throw new Error('unsupported inline-scene model template');
+  }
   const source = normalizeInlineSceneSource(value.source);
   if (!isRecord(value.source) || typeof value.source.sidecarModel !== 'string' || !value.source.sidecarModel.trim() || value.source.sidecarModel.length > 200) {
     throw new Error('inline-scene source model is invalid');
@@ -501,42 +581,26 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
   }
   const megapixels = Number(value.megapixels);
   if (!megapixelSet.has(megapixels)) throw new Error('unsupported inline-scene megapixel target');
-  if (value.lora !== null) throw new Error('inline-scene model does not accept a selectable LoRA');
-  if (
-    !isRecord(value.referenceImage)
-    || typeof value.referenceImage.name !== 'string'
-    || !REFERENCE_IMAGE_PATTERN.test(value.referenceImage.name)
-    || value.referenceImage.subfolder !== 'mullet/identity'
-    || value.referenceImage.type !== 'input'
-    || typeof value.referenceImage.sha256 !== 'string'
-    || !RAW_SHA256_PATTERN.test(value.referenceImage.sha256)
-    || !Number.isSafeInteger(value.referenceImage.width)
-    || Number(value.referenceImage.width) < 16
-    || Number(value.referenceImage.width) > 8192
-    || !Number.isSafeInteger(value.referenceImage.height)
-    || Number(value.referenceImage.height) < 16
-    || Number(value.referenceImage.height) > 8192
-    || typeof value.referenceImage.aspectRatio !== 'string'
-    || value.referenceImage.aspectRatio.length < 3
-    || value.referenceImage.aspectRatio.length > 20
-  ) throw new Error('inline-scene identity reference is invalid');
-  const referenceImage: PortraitReferenceImage = {
-    name: value.referenceImage.name,
-    subfolder: 'mullet/identity',
-    type: 'input',
-    sha256: value.referenceImage.sha256,
-    width: Number(value.referenceImage.width),
-    height: Number(value.referenceImage.height),
-    aspectRatio: value.referenceImage.aspectRatio
-  };
+  if (typeof value.subject !== 'string') throw new Error('inline-scene subject is invalid');
+  const subject = value.subject.replace(/\s+/g, ' ').trim();
+  if (!subject || subject.length > 200) throw new Error('inline-scene subject is invalid');
+  const referenceImage = normalizeInlineSceneReference(value.referenceImage);
+  const lora = normalizeInlineSceneLora(value.lora);
+  if (value.modelTemplate === INLINE_SCENE_TEMPLATE_ID && (!lora || referenceImage !== null)) {
+    throw new Error('Z-Image inline scenes require one linked LoRA and no reference image');
+  }
+  if (value.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID && (lora !== null || referenceImage === null)) {
+    throw new Error('Qwen inline scenes require one identity reference and no selectable LoRA');
+  }
   const seed = value.seed === undefined ? undefined : integer(value.seed, 'inline-scene seed', 0, Number.MAX_SAFE_INTEGER);
   return {
     spec: INLINE_SCENE_IMAGE_REQUEST_SPEC,
-    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+    modelTemplate: value.modelTemplate,
     source: { ...source, sidecarModel: value.source.sidecarModel.trim(), promptSha256 },
     prompt,
+    subject,
     referenceImage,
-    lora: null,
+    lora,
     aspectRatio: value.aspectRatio as InlineSceneAspectRatio,
     megapixels: megapixels as InlineSceneMegapixels,
     ...(seed === undefined ? {} : { seed })
@@ -551,10 +615,14 @@ export function inlineSceneImageRequestKey(request: InlineSceneImageRequest): st
     normalized.source.promptSha256,
     normalized.prompt,
     normalized.modelTemplate,
-    normalized.referenceImage.name,
-    normalized.referenceImage.sha256,
-    normalized.referenceImage.width,
-    normalized.referenceImage.height,
+    normalized.subject,
+    normalized.referenceImage?.name ?? '',
+    normalized.referenceImage?.sha256 ?? '',
+    normalized.referenceImage?.width ?? '',
+    normalized.referenceImage?.height ?? '',
+    normalized.lora?.path ?? '',
+    normalized.lora?.trigger ?? '',
+    normalized.lora?.modelHash ?? '',
     normalized.aspectRatio,
     normalized.megapixels,
     normalized.seed ?? 'random'
@@ -563,6 +631,14 @@ export function inlineSceneImageRequestKey(request: InlineSceneImageRequest): st
 
 export function buildInlineScenePrompt(request: InlineSceneImageRequest): string {
   const normalized = normalizeInlineSceneImageRequest(request);
+  if (normalized.modelTemplate === INLINE_SCENE_TEMPLATE_ID && normalized.lora) {
+    return [
+      `The loaded identity LoRA token ${normalized.lora.trigger} represents ${normalized.subject}.`,
+      `Apply ${normalized.lora.trigger} only when ${normalized.subject} is visible; do not insert that person when absent from the directed scene.`,
+      normalized.prompt,
+      Z_IMAGE_TURBO_SCENE_TEMPLATE.promptGuide
+    ].join(' ');
+  }
   return [
     'Use the supplied canonical reference only as the exact identity source for that character.',
     'Recompose and outpaint it into the requested wide scene; do not retain portrait framing or blank padding.',
@@ -577,6 +653,9 @@ export function buildQwenImageEditSceneWorkflow(
   _capabilities?: InlineSceneCapabilities
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneImageRequest(request);
+  if (normalized.modelTemplate !== INLINE_SCENE_QWEN_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('Qwen scene workflow requires a reference-conditioned request');
+  }
   const { width, height } = inlineSceneDimensions(normalized.aspectRatio, normalized.megapixels);
   return buildQwenReferenceEditWorkflow({
     referencePath: `${normalized.referenceImage.subfolder}/${normalized.referenceImage.name}`,
@@ -591,15 +670,78 @@ export function buildQwenImageEditSceneWorkflow(
   });
 }
 
+export function buildZImageTurboSceneWorkflow(
+  request: InlineSceneImageRequest,
+  seed: number,
+  _capabilities?: InlineSceneCapabilities
+): Record<string, unknown> {
+  const normalized = normalizeInlineSceneImageRequest(request);
+  if (normalized.modelTemplate !== INLINE_SCENE_TEMPLATE_ID || !normalized.lora) {
+    throw new Error('Z-Image scene workflow requires a linked LoRA request');
+  }
+  const { width, height } = inlineSceneDimensions(normalized.aspectRatio, normalized.megapixels);
+  return buildZImageTurboImageWorkflow({
+    prompt: buildInlineScenePrompt(normalized),
+    width,
+    height,
+    seed,
+    lora: normalized.lora.path,
+    filenamePrefix: 'mullet/scene'
+  });
+}
+
+export function inlineSceneTemplate(modelTemplate: InlineSceneModelTemplate): InlineSceneTemplate {
+  const template = INLINE_SCENE_TEMPLATES.find((candidate) => candidate.id === modelTemplate);
+  if (!template) throw new Error('unsupported inline-scene model template');
+  return template;
+}
+
+export function inlineSceneTemplateCapability(
+  capabilities: InlineSceneCapabilities | null,
+  modelTemplate: InlineSceneModelTemplate
+): InlineSceneTemplateCapability | null {
+  return capabilities?.templates.find((capability) => capability.template.id === modelTemplate) ?? null;
+}
+
+export function inlineSceneModelTemplateAvailable(
+  capabilities: InlineSceneCapabilities | null,
+  modelTemplate: InlineSceneModelTemplate
+): boolean {
+  return inlineSceneTemplateCapability(capabilities, modelTemplate)?.available === true;
+}
+
 export function normalizeInlineSceneCapabilities(value: unknown): InlineSceneCapabilities {
   if (!isRecord(value) || value.spec !== INLINE_SCENE_CAPABILITIES_SPEC) throw new Error('invalid inline-scene capabilities');
-  if (!isRecord(value.template) || value.template.id !== INLINE_SCENE_TEMPLATE_ID) throw new Error('invalid inline-scene template');
-  if (!Array.isArray(value.loras) || value.loras.length !== 0) throw new Error('invalid inline-scene LoRA inventory');
+  if (!Array.isArray(value.templates) || value.templates.length !== INLINE_SCENE_TEMPLATES.length) {
+    throw new Error('invalid inline-scene template capabilities');
+  }
+  const suppliedTemplates = value.templates;
+  const templates = INLINE_SCENE_TEMPLATES.map((template): InlineSceneTemplateCapability => {
+    const matching = suppliedTemplates.filter((candidate: unknown) => (
+      isRecord(candidate) && isRecord(candidate.template) && candidate.template.id === template.id
+    ));
+    if (matching.length !== 1) throw new Error(`invalid inline-scene template capability for ${template.id}`);
+    const capability = matching[0];
+    if (
+      !isRecord(capability)
+      || typeof capability.available !== 'boolean'
+      || !Array.isArray(capability.missing)
+      || capability.missing.some((diagnostic) => typeof diagnostic !== 'string' || diagnostic.length < 1 || diagnostic.length > 500)
+    ) throw new Error(`invalid inline-scene template diagnostics for ${template.id}`);
+    const missing = [...new Set(capability.missing as string[])];
+    if (capability.available !== (missing.length === 0)) {
+      throw new Error(`inline-scene template availability contradicts diagnostics for ${template.id}`);
+    }
+    return { template, available: capability.available, missing };
+  });
+  if (!Array.isArray(value.loras) || value.loras.some((lora) => !isPortraitLoraName(lora))) {
+    throw new Error('invalid inline-scene LoRA inventory');
+  }
   return {
     spec: INLINE_SCENE_CAPABILITIES_SPEC,
-    template: QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
+    templates,
     aspectRatios: INLINE_SCENE_ASPECT_RATIOS,
     megapixels: INLINE_SCENE_MEGAPIXELS,
-    loras: []
+    loras: [...new Set(value.loras)].sort()
   };
 }

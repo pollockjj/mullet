@@ -1,6 +1,11 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { INLINE_SCENE_IMAGE_TIMEOUT_MS, inlineSceneDimensions, normalizeInlineSceneImageRequest } from '$lib/inline-scene';
+import {
+  INLINE_SCENE_IMAGE_TIMEOUT_MS,
+  inlineSceneDimensions,
+  inlineSceneModelTemplateAvailable,
+  normalizeInlineSceneImageRequest
+} from '$lib/inline-scene';
 import { ComfyInlineSceneOutputTooLargeError, loadInlineSceneCapabilities, runComfyInlineScene } from '$lib/server/comfy-inline-scene';
 import { runtime } from '$lib/server/runtime';
 
@@ -45,13 +50,11 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(INLINE_SCENE_IMAGE_TIMEOUT_MS)]);
   try {
     const capabilities = await loadInlineSceneCapabilities(fetch, baseUrl, signal);
-    if (sceneRequest.lora) {
-      const currentLora = capabilities.loras.find((lora) => lora.path === sceneRequest.lora?.path);
-      if (
-        !currentLora
-        || currentLora.trigger !== sceneRequest.lora.trigger
-        || currentLora.modelHash !== sceneRequest.lora.modelHash
-      ) throw error(400, 'The selected inline-scene LoRA provenance no longer matches this model.');
+    if (!inlineSceneModelTemplateAvailable(capabilities, sceneRequest.modelTemplate)) {
+      throw error(400, 'The selected inline-scene model is unavailable.');
+    }
+    if (sceneRequest.lora && !capabilities.loras.includes(sceneRequest.lora.path)) {
+      throw error(400, 'The selected inline-scene LoRA is unavailable.');
     }
     const result = await runComfyInlineScene(fetch, baseUrl, sceneRequest, capabilities, seed, signal);
     const dimensions = inlineSceneDimensions(sceneRequest.aspectRatio, sceneRequest.megapixels);
