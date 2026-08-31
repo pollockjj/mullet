@@ -16,6 +16,7 @@ import {
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
   buildInlineSceneVideoRequest
 } from '../src/lib/inline-scene-video.ts';
 import {
@@ -139,6 +140,7 @@ function png(width, height) {
 function capabilityInfo(nodeName) {
   const ltx = LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
   const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const preview = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE;
   const required = {};
   const optional = {};
   if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet], {}];
@@ -161,8 +163,9 @@ function capabilityInfo(nodeName) {
       }
     }];
   }
-  if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler], {}];
-  if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler], {}];
+  if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler, preview.sampler], {}];
+  if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler, preview.scheduler], {}];
+  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[preview.modelFiles.lora], {}];
   if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
   if (nodeName === 'SaveVideo') {
     required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'mp4' }, { key: 'auto' }] }];
@@ -176,10 +179,11 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
     const nodeName = decodeURIComponent(String(inputUrl).split('/').at(-1));
     return Response.json(capabilityInfo(nodeName));
   }, 'http://comfy');
-  assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v5');
+  assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v6');
   assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
     ['ltx-2.5-distilled-scene-v2', true],
-    ['minimax-h3-ref2va-scene-v1', true]
+    ['minimax-h3-ref2va-scene-v1', true],
+    ['minimax-h3-ref2va-lightx-preview-v1', true]
   ]);
   assert.deepEqual(capabilities.durations, [5]);
   const degradationCases = [
@@ -210,7 +214,21 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
     assert.equal(degraded.templates[0].available, true);
     assert.equal(degraded.templates[1].available, false);
     assert.deepEqual(degraded.templates[1].missing, [diagnostic]);
+    assert.equal(degraded.templates[2].available, false);
+    assert.deepEqual(degraded.templates[2].missing, [diagnostic]);
   }
+  const missingPreviewLora = await loadInlineSceneVideoCapabilities(async (inputUrl) => {
+    const nodeName = decodeURIComponent(String(inputUrl).split('/').at(-1));
+    const info = capabilityInfo(nodeName);
+    if (nodeName === 'LoraLoaderModelOnly') info.LoraLoaderModelOnly.input.required.lora_name[0] = [];
+    return Response.json(info);
+  }, 'http://comfy');
+  assert.equal(missingPreviewLora.templates[0].available, true);
+  assert.equal(missingPreviewLora.templates[1].available, true);
+  assert.equal(missingPreviewLora.templates[2].available, false);
+  assert.deepEqual(missingPreviewLora.templates[2].missing, [
+    `model:lora:${MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.lora}`
+  ]);
 });
 
 test('uploads only digest-matched static scene bytes to the isolated input namespace', async () => {

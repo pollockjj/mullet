@@ -84,9 +84,11 @@
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+    MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     buildInlineSceneVideoRequest,
     describeInlineSceneH3ReferencePlan,
     inlineSceneH3ReferencePlan,
+    isMiniMaxH3InlineSceneVideoTemplate,
     inlineSceneMasterToggleEnabled,
     inlineSceneVideoDecodeFailureTransition,
     inlineSceneVideoDimensions,
@@ -690,7 +692,7 @@
     inlineSceneCurrent,
     inlineSceneVideoModelTemplate
   );
-  $: inlineSceneH3ReferenceSummary = inlineSceneVideoRequest?.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  $: inlineSceneH3ReferenceSummary = inlineSceneVideoRequest && isMiniMaxH3InlineSceneVideoTemplate(inlineSceneVideoRequest.modelTemplate)
     ? describeInlineSceneH3ReferencePlan(inlineSceneVideoRequest)
     : '';
   $: inlineSceneVideoCurrent = Boolean(
@@ -895,6 +897,7 @@
     const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
     inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
       ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
       : INLINE_SCENE_VIDEO_TEMPLATE_ID;
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
@@ -1752,7 +1755,7 @@
       const form = new FormData();
       form.append('request', JSON.stringify(selectedRequest));
       form.append('image', selectedScene.image, 'scene.png');
-      const priorMasterRequired = selectedRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+      const priorMasterRequired = isMiniMaxH3InlineSceneVideoTemplate(selectedRequest.modelTemplate)
         && inlineSceneH3ReferencePlan(selectedRequest).some(({ kind }) => kind === 'prior_master');
       if (priorMasterRequired) {
         if (!selectedScene.continuityMasterImage) {
@@ -5374,7 +5377,7 @@
               {#if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
                 <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
               {:else}
-                <small>Reference-to-video · MiniMax H3 Ref2VA · {inlineSceneH3ReferenceSummary || 'reference plan resolves after the current scene'} · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
+                <small>Reference-to-video · {inlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'LightX four-step preview · 544p training envelope · Euler/simple · shifts 12/3' : '20-step quality'} · {inlineSceneH3ReferenceSummary || 'reference plan resolves after the current scene'} · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
               {/if}
               {#if selectedInlineSceneVideoTemplateCapability && !inlineSceneVideoSelectedModelAvailable}
                 <small class="prompt-guide">Unavailable: {selectedInlineSceneVideoTemplateCapability.missing.join('; ')}</small>

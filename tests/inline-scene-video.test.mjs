@@ -19,6 +19,9 @@ import {
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
   buildLtx25InlineSceneVideoWorkflow,
   buildInlineSceneVideoPrompt,
   buildInlineSceneVideoRequest,
@@ -338,6 +341,21 @@ test('uses the fixed live-tested landscape envelopes with LTX as the default', (
     assert.equal(minimax.frames, 124);
     assert.equal(minimax.fps, 24);
   }
+  assert.deepEqual(MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS, [
+    { aspectRatio: '3:2', width: 832, height: 544 },
+    { aspectRatio: '4:3', width: 736, height: 544 },
+    { aspectRatio: '5:4', width: 672, height: 544 },
+    { aspectRatio: '16:9', width: 960, height: 544 }
+  ]);
+  for (const entry of MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS) {
+    assert.deepEqual(
+      inlineSceneVideoDimensions(entry.aspectRatio, MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID),
+      { width: entry.width, height: entry.height, frames: 124, fps: 24 }
+    );
+    assert.equal(entry.width % 32, 0);
+    assert.equal(entry.height % 32, 0);
+    assert.equal(entry.height, 544);
+  }
 });
 
 test('blocks replacement generation until persisted motion restoration finishes', () => {
@@ -611,6 +629,49 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
   const dedupedPrompt = buildInlineSceneVideoPrompt(dedupedRequest);
   assert.match(dedupedPrompt, /<Subject 1> is Jenna Stannis;[^\n]*<Picture 2>/);
   assert.match(dedupedPrompt, /<Subject 2> is Cally;[^\n]*<Picture 3>[^\n]*<Picture 2>/);
+});
+
+test('builds the exact additive LightX Ref2VA four-step preview without changing quality H3', () => {
+  const scene = staticScene('16:9', 0.5);
+  const qualityRequest = buildInlineSceneVideoRequest(scene, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+  const previewRequest = buildInlineSceneVideoRequest(
+    scene,
+    MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  );
+  const input = {
+    name: 'scene-motion-33333333-3333-4333-8333-333333333333.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: previewRequest.source.sceneImageSha256
+  };
+  assert.notEqual(inlineSceneVideoRequestKey(previewRequest), inlineSceneVideoRequestKey(qualityRequest));
+  assert.deepEqual(
+    inlineSceneH3ReferencePlan(previewRequest).map(({ picture, kind }) => ({ picture, kind })),
+    [
+      { picture: 1, kind: 'current_scene' },
+      { picture: 2, kind: 'canonical_identity' },
+      { picture: 3, kind: 'body_identity' }
+    ]
+  );
+  const graph = buildInlineSceneVideoWorkflow(previewRequest, input, 42);
+  assert.equal(graph['20'].inputs.width, 960);
+  assert.equal(graph['20'].inputs.height, 544);
+  assert.equal(graph['20'].inputs.length, 124);
+  assert.equal(graph['20'].inputs.ref_image_size, 'match');
+  assert.equal(graph['22'].inputs.sampler_name, 'euler');
+  assert.deepEqual(graph['23'].inputs, { model: ['1', 0], scheduler: 'simple', steps: 4, denoise: 1 });
+  assert.deepEqual(graph['30'].inputs, {
+    model: ['1', 0],
+    lora_name: MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.lora,
+    strength_model: 1
+  });
+  assert.deepEqual(graph['31'].inputs, { model: ['30', 0], shift_video: 12, shift_audio: 3 });
+  assert.deepEqual(graph['21'].inputs.model, ['31', 0]);
+  const qualityGraph = buildInlineSceneVideoWorkflow(qualityRequest, input, 42);
+  assert.equal('30' in qualityGraph, false);
+  assert.equal('31' in qualityGraph, false);
+  assert.equal(qualityGraph['22'].inputs.sampler_name, 'res_multistep');
+  assert.deepEqual(qualityGraph['23'].inputs, { model: ['1', 0], scheduler: 'beta', steps: 20, denoise: 1 });
 });
 
 test('builds the pinned two-pass LTX FLF graph with identical supplied first and last frames and no output audio', () => {

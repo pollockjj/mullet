@@ -1,7 +1,6 @@
 import {
   INLINE_SCENE_VIDEO_FPS,
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   inlineSceneVideoDimensions,
   inlineSceneVideoRequestKey,
   normalizeInlineSceneVideoRequest,
@@ -175,10 +174,7 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     throw new Error('stored inline-scene video input hash does not match its request');
   }
   const videoSha256 = sha256(value.videoSha256, 'stored inline-scene video output hash');
-  const expectedContentType = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    || request.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? 'video/mp4'
-    : '';
+  const expectedContentType = 'video/mp4';
   const minimumBytes = 12;
   if (
     !(value.video instanceof Blob)

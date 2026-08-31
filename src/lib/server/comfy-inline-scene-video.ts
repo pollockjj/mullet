@@ -6,8 +6,9 @@ import {
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
-  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
   buildInlineSceneVideoWorkflow,
+  isMiniMaxH3InlineSceneVideoTemplate,
   inlineSceneH3ReferencePlan,
   inlineSceneVideoDimensions,
   inlineSceneVideoOutputNode,
@@ -208,47 +209,65 @@ export async function loadInlineSceneVideoCapabilities(
   }
   uploadDiagnostic(ltxMissing);
 
-  const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
-  const minimaxMissing = minimax.requiredNodes
-    .filter((nodeName) => !nodeAvailable(nodeName))
-    .map((nodeName) => `node:${nodeName}`);
-  optionDiagnostic(minimaxMissing, 'UNETLoader', 'unet_name', minimax.modelFiles.unet, `model:unet:${minimax.modelFiles.unet}`);
-  optionDiagnostic(minimaxMissing, 'CLIPLoader', 'clip_name', minimax.modelFiles.clip, `model:clip:${minimax.modelFiles.clip}`);
-  optionDiagnostic(minimaxMissing, 'CLIPLoader', 'type', 'minimax', 'clip-type:minimax');
-  optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.videoVae, `model:vae:${minimax.modelFiles.videoVae}`);
-  optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.audioVae, `model:vae:${minimax.modelFiles.audioVae}`);
-  optionDiagnostic(minimaxMissing, 'KSamplerSelect', 'sampler_name', minimax.sampler, `sampler:${minimax.sampler}`);
-  optionDiagnostic(minimaxMissing, 'BasicScheduler', 'scheduler', minimax.scheduler, `scheduler:${minimax.scheduler}`);
-  optionDiagnostic(
-    minimaxMissing,
-    'MiniMaxH3ReferenceToVideo',
-    'ref_image_size',
-    minimax.referenceImageSize,
-    `node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${minimax.referenceImageSize}`
-  );
-  if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
-    diagnostic(minimaxMissing, 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9', () => requireExactAutogrowDefinition(
-      inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
-      'MiniMaxH3ReferenceToVideo',
-      'ref_images',
-      'ref_image_',
-      minimax.maxReferenceImages
-    ));
-  }
-  if (nodeAvailable('SaveVideo')) {
-    diagnostic(minimaxMissing, `video-format:${minimax.format}`, () => requireOption(
-      dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
-      minimax.format,
-      `video-format:${minimax.format}`
-    ));
-    diagnostic(minimaxMissing, `video-codec:${minimax.codec}`, () => requireOption(
-      dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
-      minimax.codec,
-      `video-codec:${minimax.codec}`
-    ));
-  }
-  uploadDiagnostic(minimaxMissing);
   const unique = (items: readonly string[]): string[] => [...new Set(items)];
+  const minimaxCapabilities = [
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+    MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE
+  ].map((minimax) => {
+    const minimaxMissing = minimax.requiredNodes
+      .filter((nodeName) => !nodeAvailable(nodeName))
+      .map((nodeName) => `node:${nodeName}`);
+    optionDiagnostic(minimaxMissing, 'UNETLoader', 'unet_name', minimax.modelFiles.unet, `model:unet:${minimax.modelFiles.unet}`);
+    optionDiagnostic(minimaxMissing, 'CLIPLoader', 'clip_name', minimax.modelFiles.clip, `model:clip:${minimax.modelFiles.clip}`);
+    optionDiagnostic(minimaxMissing, 'CLIPLoader', 'type', 'minimax', 'clip-type:minimax');
+    optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.videoVae, `model:vae:${minimax.modelFiles.videoVae}`);
+    optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.audioVae, `model:vae:${minimax.modelFiles.audioVae}`);
+    optionDiagnostic(minimaxMissing, 'KSamplerSelect', 'sampler_name', minimax.sampler, `sampler:${minimax.sampler}`);
+    optionDiagnostic(minimaxMissing, 'BasicScheduler', 'scheduler', minimax.scheduler, `scheduler:${minimax.scheduler}`);
+    if ('lora' in minimax.modelFiles) {
+      optionDiagnostic(
+        minimaxMissing,
+        'LoraLoaderModelOnly',
+        'lora_name',
+        minimax.modelFiles.lora,
+        `model:lora:${minimax.modelFiles.lora}`
+      );
+    }
+    optionDiagnostic(
+      minimaxMissing,
+      'MiniMaxH3ReferenceToVideo',
+      'ref_image_size',
+      minimax.referenceImageSize,
+      `node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${minimax.referenceImageSize}`
+    );
+    if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
+      diagnostic(minimaxMissing, 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9', () => requireExactAutogrowDefinition(
+        inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
+        'MiniMaxH3ReferenceToVideo',
+        'ref_images',
+        'ref_image_',
+        minimax.maxReferenceImages
+      ));
+    }
+    if (nodeAvailable('SaveVideo')) {
+      diagnostic(minimaxMissing, `video-format:${minimax.format}`, () => requireOption(
+        dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
+        minimax.format,
+        `video-format:${minimax.format}`
+      ));
+      diagnostic(minimaxMissing, `video-codec:${minimax.codec}`, () => requireOption(
+        dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
+        minimax.codec,
+        `video-codec:${minimax.codec}`
+      ));
+    }
+    uploadDiagnostic(minimaxMissing);
+    return {
+      template: minimax,
+      available: minimaxMissing.length === 0,
+      missing: unique(minimaxMissing)
+    };
+  });
   return {
     spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
     templates: [
@@ -257,11 +276,7 @@ export async function loadInlineSceneVideoCapabilities(
         available: ltxMissing.length === 0,
         missing: unique(ltxMissing)
       },
-      {
-        template: minimax,
-        available: minimaxMissing.length === 0,
-        missing: unique(minimaxMissing)
-      }
+      ...minimaxCapabilities
     ],
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
     durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]
@@ -509,7 +524,7 @@ export async function runComfyInlineSceneVideo(
   let id = '';
   let completed = false;
   try {
-    if (request.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+    if (isMiniMaxH3InlineSceneVideoTemplate(request.modelTemplate)) {
       for (const entry of inlineSceneH3ReferencePlan(request)) {
         if (entry.kind === 'canonical_identity' || entry.kind === 'body_identity') {
           await assertComfyIdentityReference(fetcher, baseUrl, entry.referenceImage, signal);

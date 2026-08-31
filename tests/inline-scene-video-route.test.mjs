@@ -21,6 +21,8 @@ import {
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
   buildInlineSceneVideoRequest,
   inlineSceneVideoSourceRequestSha256
 } from '../src/lib/inline-scene-video.ts';
@@ -35,6 +37,7 @@ const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const comfyPromptId = '33333333-3333-4333-8333-333333333333';
 const staticPrompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const mp4Bytes = buildH264AacMp4Fixture();
+const previewMp4Bytes = buildH264AacMp4Fixture({ width: 960, height: 544 });
 const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 1344, height: 768, frames: 121, includeAudio: false });
 const sceneLora = Object.freeze({
   path: 'zimage/jenna6.safetensors',
@@ -146,6 +149,7 @@ function motionRequest(imageSha256, modelTemplate, continuityMaster) {
 function capabilityResponse(nodeName) {
   const ltx = LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
   const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const preview = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE;
   const required = {};
   const optional = {};
   if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet], {}];
@@ -168,8 +172,9 @@ function capabilityResponse(nodeName) {
       }
     }];
   }
-  if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler], {}];
-  if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler], {}];
+  if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler, preview.sampler], {}];
+  if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler, preview.scheduler], {}];
+  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[preview.modelFiles.lora], {}];
   if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
   if (nodeName === 'SaveVideo') {
     required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'mp4' }, { key: 'auto' }] }];
@@ -248,7 +253,7 @@ function fakeComfy() {
       if (url.pathname === '/prompt' && request.method === 'POST') {
         const queued = JSON.parse((await requestBytes(request)).toString('utf8'));
         state.prompts.push(queued);
-        state.selectedModel = queued.prompt['36'] ? 'ltx' : 'minimax';
+        state.selectedModel = queued.prompt['36'] ? 'ltx' : queued.prompt['30'] ? 'preview' : 'minimax';
         responseJson(response, 200, { prompt_id: comfyPromptId, node_errors: {} });
         return;
       }
@@ -301,7 +306,7 @@ function fakeComfy() {
           return;
         }
         const isLtx = state.selectedModel === 'ltx';
-        const bytes = isLtx ? ltxMp4Bytes : mp4Bytes;
+        const bytes = isLtx ? ltxMp4Bytes : state.selectedModel === 'preview' ? previewMp4Bytes : mp4Bytes;
         const contentType = 'video/mp4';
         if (state.mode === 'oversized') {
           response.writeHead(200, {
@@ -407,10 +412,11 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(response.status, 200, responseText);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v5');
+    assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v6');
     assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
       ['ltx-2.5-distilled-scene-v2', true],
-      ['minimax-h3-ref2va-scene-v1', true]
+      ['minimax-h3-ref2va-scene-v1', true],
+      ['minimax-h3-ref2va-lightx-preview-v1', true]
     ]);
     assert.deepEqual(capabilities.aspectRatios, [
       { aspectRatio: '3:2', width: 1152, height: 768 },
@@ -515,6 +521,35 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(JSON.stringify(queued).includes('fl2va'), false);
     assert.equal(JSON.stringify(queued).includes('i2v'), false);
     assert.equal(JSON.stringify(queued).includes('turbo'), false);
+  });
+
+  await context.test('POST keeps the published LightX Ref2VA profile as a separate 544p preview', async () => {
+    fake.reset();
+    const previewRequest = motionRequest(imageSha256, MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    const response = await post(formFor(previewRequest, imageBytes));
+    const responseBytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
+    assert.deepEqual(responseBytes, previewMp4Bytes);
+    assert.equal(response.headers.get('x-mullet-model-template'), MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    assert.equal(response.headers.get('x-mullet-width'), '960');
+    assert.equal(response.headers.get('x-mullet-height'), '544');
+    assert.equal(response.headers.get('x-mullet-frames'), '124');
+    assert.equal(response.headers.get('x-mullet-audio-tracks'), '1');
+    const queued = fake.state.prompts[0];
+    assert.equal(queued.prompt['20'].inputs.width, 960);
+    assert.equal(queued.prompt['20'].inputs.height, 544);
+    assert.equal(queued.prompt['22'].inputs.sampler_name, 'euler');
+    assert.equal(queued.prompt['23'].inputs.scheduler, 'simple');
+    assert.equal(queued.prompt['23'].inputs.steps, 4);
+    assert.deepEqual(queued.prompt['23'].inputs.model, ['1', 0]);
+    assert.equal(queued.prompt['30'].inputs.lora_name, MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.lora);
+    assert.equal(queued.prompt['30'].inputs.strength_model, 1);
+    assert.deepEqual(queued.prompt['31'].inputs, {
+      model: ['30', 0],
+      shift_video: 12,
+      shift_audio: 3
+    });
+    assert.deepEqual(queued.prompt['21'].inputs.model, ['31', 0]);
   });
 
   await context.test('POST binds a byte-verified prior master between the current scene and canonical identity', async () => {

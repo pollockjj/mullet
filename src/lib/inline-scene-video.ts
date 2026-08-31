@@ -10,9 +10,10 @@ import {
 import { sha256Hex } from './sha256.ts';
 
 export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v6' as const;
-export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v5' as const;
+export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v6' as const;
 export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-scene-v2' as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-ref2va-scene-v1' as const;
+export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-ref2va-lightx-preview-v1' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 5 as const;
@@ -29,6 +30,13 @@ export const INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
   { aspectRatio: '4:3', width: 1024, height: 768 },
   { aspectRatio: '5:4', width: 960, height: 768 },
   { aspectRatio: '16:9', width: 1344, height: 768 }
+] as const);
+
+export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
+  { aspectRatio: '3:2', width: 832, height: 544 },
+  { aspectRatio: '4:3', width: 736, height: 544 },
+  { aspectRatio: '5:4', width: 672, height: 544 },
+  { aspectRatio: '16:9', width: 960, height: 544 }
 ] as const);
 
 export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
@@ -69,6 +77,7 @@ export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   ],
   outputNode: '36',
   mode: LTX25_INLINE_SCENE_VIDEO_MODE,
+  dimensions: INLINE_SCENE_VIDEO_DIMENSIONS,
   durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
   frames: LTX25_INLINE_SCENE_VIDEO_FRAMES,
   multiple: 64,
@@ -83,7 +92,7 @@ export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
 
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   id: MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  label: 'MiniMax H3 Ref2VA',
+  label: 'MiniMax H3 Ref2VA · Quality (20-step)',
   modelFamily: 'minimax-h3-ref2va',
   modelFiles: {
     unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
@@ -109,6 +118,7 @@ export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   ],
   outputNode: '29',
   mode: MINIMAX_H3_INLINE_SCENE_VIDEO_MODE,
+  dimensions: INLINE_SCENE_VIDEO_DIMENSIONS,
   durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
   frames: MINIMAX_H3_INLINE_SCENE_VIDEO_FRAMES,
   multiple: 32,
@@ -126,9 +136,35 @@ export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   promptGuide: 'official six-section Ref2VA prompt, generated scene as Picture 1, canonical cast references in stable order, one restrained continuous shot, native ambience without dialogue, narration, or music'
 } as const);
 
+export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
+  ...MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  id: MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  label: 'MiniMax H3 Ref2VA · Fast preview (LightX 4-step)',
+  modelFiles: {
+    ...MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles,
+    lora: 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors'
+  },
+  requiredNodes: [
+    ...MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.requiredNodes,
+    'LoraLoaderModelOnly',
+    'MiniMaxH3SigmaShift'
+  ],
+  sampler: 'euler',
+  scheduler: 'simple',
+  steps: 4,
+  loraStrength: 1,
+  shiftVideo: 12,
+  shiftAudio: 3,
+  dimensions: MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS,
+  shortEdge: 544,
+  maxPixels: 960 * 544,
+  promptGuide: 'official LightX Ref2VA four-step preview profile, generated scene as Picture 1, canonical cast references in stable order, one restrained continuous shot, native ambience without dialogue, narration, or music'
+} as const);
+
 export const INLINE_SCENE_VIDEO_TEMPLATES = Object.freeze([
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
-  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE
 ] as const);
 
 export type InlineSceneVideoTemplate = (typeof INLINE_SCENE_VIDEO_TEMPLATES)[number];
@@ -254,7 +290,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const INPUT_IMAGE_PATTERN = /^scene-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
 const PRIOR_MASTER_IMAGE_PATTERN = /^scene-motion-prior-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
-const dimensionMap = new Map(INLINE_SCENE_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
 const LTX_NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, cluttered background, camera cuts, camera shake, black frames, talking, lip movement, speech gestures';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -276,6 +311,12 @@ export function inlineSceneVideoTemplate(
   return template;
 }
 
+export function isMiniMaxH3InlineSceneVideoTemplate(
+  modelTemplate: InlineSceneVideoTemplateId
+): boolean {
+  return inlineSceneVideoTemplate(modelTemplate).modelFamily === 'minimax-h3-ref2va';
+}
+
 export function inlineSceneVideoTemplateCapability(
   capabilities: InlineSceneVideoCapabilities | null,
   modelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID
@@ -294,9 +335,9 @@ export function inlineSceneVideoDimensions(
   aspectRatio: InlineSceneAspectRatio,
   modelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID
 ): { width: number; height: number; frames: number; fps: number } {
-  const dimensions = dimensionMap.get(aspectRatio);
-  if (!dimensions) throw new Error('unsupported inline-scene video aspect ratio');
   const template = inlineSceneVideoTemplate(modelTemplate);
+  const dimensions = template.dimensions.find((entry) => entry.aspectRatio === aspectRatio);
+  if (!dimensions) throw new Error('unsupported inline-scene video aspect ratio');
   return {
     width: dimensions.width,
     height: dimensions.height,
@@ -361,7 +402,10 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
   if (sceneWidth !== staticDimensions.width || sceneHeight !== staticDimensions.height) {
     throw new Error('inline-scene video source dimensions do not match its static request');
   }
-  if (value.aspectRatio !== sceneRequest.aspectRatio || !dimensionMap.has(value.aspectRatio as InlineSceneAspectRatio)) {
+  if (
+    value.aspectRatio !== sceneRequest.aspectRatio
+    || !template.dimensions.some(({ aspectRatio }) => aspectRatio === value.aspectRatio)
+  ) {
     throw new Error('inline-scene video aspect ratio does not match its static source');
   }
   if (value.durationSeconds !== INLINE_SCENE_VIDEO_DURATION_SECONDS) throw new Error('unsupported inline-scene video duration');
@@ -390,7 +434,7 @@ export function inlineSceneH3ReferencePlan(
   request: InlineSceneVideoRequest
 ): InlineSceneH3ReferencePlanEntry[] {
   const normalized = normalizeInlineSceneVideoRequest(request);
-  if (normalized.modelTemplate !== MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+  if (!isMiniMaxH3InlineSceneVideoTemplate(normalized.modelTemplate)) {
     throw new Error('H3 reference planning requires a MiniMax H3 inline-scene video request');
   }
   const plan: InlineSceneH3ReferencePlanEntry[] = [];
@@ -756,7 +800,7 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
   priorMasterInput?: InlineSceneVideoPriorMasterInput
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneVideoRequest(request);
-  if (normalized.modelTemplate !== MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+  if (!isMiniMaxH3InlineSceneVideoTemplate(normalized.modelTemplate)) {
     throw new Error('inline-scene video request does not select MiniMax H3');
   }
   validateInlineSceneVideoInputReference(sceneInput, normalized.source.sceneImageSha256);
@@ -770,7 +814,10 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
   }
   const validatedSeed = integer(seed, 'inline-scene video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = inlineSceneVideoDimensions(normalized.aspectRatio, normalized.modelTemplate);
-  const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const previewTemplate = normalized.modelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ? MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE
+    : null;
+  const template = previewTemplate ?? MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
   const loadImageNodes = Object.fromEntries(plan.map((entry, index) => {
     const nodeId = String(5 + index);
     if (entry.kind === 'current_scene') {
@@ -789,11 +836,31 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
     `ref_images.ref_image_${index}`,
     [String(5 + index), 0]
   ]));
+  const modelPatchNodes = previewTemplate ? {
+    '30': {
+      class_type: 'LoraLoaderModelOnly',
+      inputs: {
+        model: ['1', 0],
+        lora_name: previewTemplate.modelFiles.lora,
+        strength_model: previewTemplate.loraStrength
+      }
+    },
+    '31': {
+      class_type: 'MiniMaxH3SigmaShift',
+      inputs: {
+        model: ['30', 0],
+        shift_video: previewTemplate.shiftVideo,
+        shift_audio: previewTemplate.shiftAudio
+      }
+    }
+  } : {};
+  const guidedModelNode = previewTemplate ? '31' : '1';
   return {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
     '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
+    ...modelPatchNodes,
     ...loadImageNodes,
     '20': { class_type: 'MiniMaxH3ReferenceToVideo', inputs: {
       clip: ['2', 0],
@@ -806,7 +873,7 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
       ref_image_size: template.referenceImageSize,
       ...referenceInputs
     } },
-    '21': { class_type: 'BasicGuider', inputs: { model: ['1', 0], conditioning: ['20', 0] } },
+    '21': { class_type: 'BasicGuider', inputs: { model: [guidedModelNode, 0], conditioning: ['20', 0] } },
     '22': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
     '23': { class_type: 'BasicScheduler', inputs: { model: ['1', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
     '24': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },

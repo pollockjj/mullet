@@ -298,7 +298,7 @@ test('H3 page multipart inherits eligible inclusion plus no-overlap and same-has
   );
   assert.match(
     generation,
-    /const priorMasterRequired = selectedRequest\.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID\s+&& inlineSceneH3ReferencePlan\(selectedRequest\)\.some\(\(\{ kind \}\) => kind === 'prior_master'\);/
+    /const priorMasterRequired = isMiniMaxH3InlineSceneVideoTemplate\(selectedRequest\.modelTemplate\)\s+&& inlineSceneH3ReferencePlan\(selectedRequest\)\.some\(\(\{ kind \}\) => kind === 'prior_master'\);/
   );
   assert.match(generation, /if \(priorMasterRequired\) \{/);
   assert.match(generation, /if \(!selectedScene\.continuityMasterImage\)/);

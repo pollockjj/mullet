@@ -2,7 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   INLINE_SCENE_VIDEO_TIMEOUT_MS,
-  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  isMiniMaxH3InlineSceneVideoTemplate,
   inlineSceneH3ReferencePlan,
   inlineSceneVideoDimensions,
   inlineSceneVideoSourceRequestSha256,
@@ -93,7 +93,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene video request');
   }
-  const isH3 = videoRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+  const isH3 = isMiniMaxH3InlineSceneVideoTemplate(videoRequest.modelTemplate);
   const h3ReferencePlan = isH3 ? inlineSceneH3ReferencePlan(videoRequest) : [];
   const priorMaster = h3ReferencePlan.find((entry) => entry.kind === 'prior_master');
   if (parts.master && !priorMaster) {

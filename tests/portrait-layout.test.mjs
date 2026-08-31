@@ -72,6 +72,7 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.doesNotMatch(pageSource, /mullet\.inline-scene-video-model-template(?:'|\.v0|\.v1)/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
+  assert.match(pageSource, /savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
   assert.match(pageSource, /: INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
   assert.match(pageSource, /localStorage\.setItem\(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate\)/);
   assert.match(pageSource, /bind:value=\{inlineSceneVideoModelTemplate\}/);
@@ -80,7 +81,9 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.doesNotMatch(pageSource, /value=\{capability\.template\.id\} disabled=/);
   assert.match(pageSource, /buildInlineSceneVideoRequest\(scene, modelTemplate\)/);
   assert.match(pageSource, /LTX 2\.5 Distilled · silent/);
-  assert.match(pageSource, /MiniMax H3 Ref2VA · \{inlineSceneH3ReferenceSummary \|\| 'reference plan resolves after the current scene'\} · native audio/);
+  assert.match(pageSource, /LightX four-step preview · 544p training envelope · Euler\/simple · shifts 12\/3/);
+  assert.match(pageSource, /'20-step quality'/);
+  assert.match(pageSource, /\{inlineSceneH3ReferenceSummary \|\| 'reference plan resolves after the current scene'\} · native audio/);
   assert.match(inlineSceneVideoSource, /const references = \['P1 scene'\];/);
   assert.match(inlineSceneVideoSource, /`P\$\{priorMaster\.picture\} prior`/);
   assert.match(inlineSceneVideoSource, /`\$\{identity\.displayName\} \$\{slots\.join\('\/'\)\}`/);
