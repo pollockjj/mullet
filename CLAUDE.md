@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+## Shared ComfyUI boundary
+
+- `IMAGE_COMFY_BASE_URL` and `VIDEO_COMFY_BASE_URL` are shared ComfyUI services. MULLET does not own either installation, GPU, queue, model inventory, input root, output root, or service lifecycle.
+- The `mullet/...` values in submitted workflows are per-job artifact namespaces inside the shared ComfyUI roots. They do not authorize changing a ComfyUI process's global directories or touching artifacts outside that namespace.
+- Never reconfigure, restart, stop, upgrade, clean, interrupt, unload, or otherwise mutate a shared ComfyUI installation for MULLET without an exact current-turn operator order.
+- On failure, cancel only the exact prompt ID submitted by MULLET. Never use queue-wide interruption, queue clearing, model unloading, or output cleanup as recovery.
+
 ## Definition of done
 
 - If a change is not deployed on the operator's served build, visible in the operator's browser, and available for the operator to playtest, it is not done.

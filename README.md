@@ -17,7 +17,7 @@ npm run start
 
 Copy `.env.example` values into the service environment. Model credentials and private network addresses belong in the runtime environment, never in the repository.
 
-Image generation is isolated on Firestorm CUDA0 through `IMAGE_COMFY_BASE_URL`; video generation is isolated on CUDA1 through `VIDEO_COMFY_BASE_URL`. Qwen Image Edit 2511 with its fixed four-step Lightning LoRA is the reference editor for portraits, scenes, and generated motion end frames. LTX 2.5 Distilled is the default for both portrait and inline-scene motion, with MiniMax H3 retained as a selectable alternative. Mage-Flow and FLUX.2 are not part of the supported model inventory.
+Image jobs are routed through the shared Firestorm CUDA0 ComfyUI service at `IMAGE_COMFY_BASE_URL`; video jobs are routed through the shared CUDA1 service at `VIDEO_COMFY_BASE_URL`. MULLET owns only its submitted prompt IDs and its namespaced job artifacts, not either ComfyUI installation, queue, GPU, model inventory, or global input/output roots. Qwen Image Edit 2511 with its fixed four-step Lightning LoRA is the reference editor for portraits, scenes, and generated motion end frames. LTX 2.5 Distilled is the default for both portrait and inline-scene motion, with MiniMax H3 retained as a selectable alternative. Mage-Flow and FLUX.2 are not part of the supported model inventory.
 
 ## MiniMax H3 model provenance
 
