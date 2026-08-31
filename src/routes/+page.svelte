@@ -106,6 +106,11 @@
     type StoredInlineSceneVideo
   } from '$lib/inline-scene-video-storage';
   import {
+    MEDIA_PLAYBACK_START_TIMEOUT_MS,
+    mediaPlaybackTimeAdvanced,
+    type PlaybackState
+  } from '$lib/media-playback';
+  import {
     STORED_INLINE_SCENE_SPEC,
     StoredInlineSceneIntegrityError,
     clearStoredInlineScene,
@@ -330,6 +335,15 @@
   let portraitVideoTiming = portraitVideoDimensions('9:16', PORTRAIT_VIDEO_DURATION_SECONDS);
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
+  let portraitVideoElement: HTMLVideoElement | null = null;
+  let portraitVideoPlaybackState: PlaybackState = 'idle';
+  let portraitVideoPlaybackError = '';
+  let portraitVideoPlaybackToken = 0;
+  let portraitVideoPlaybackAttemptedToken = -1;
+  let portraitVideoPlaybackStartSeconds = 0;
+  let portraitVideoPlaybackTimer: number | null = null;
+  let portraitVideoMounted = false;
+  let portraitVideoVisible = false;
   let portraitVideoCapabilities: PortraitVideoCapabilities | null = null;
   let portraitVideoCapabilitiesLoading = false;
   let portraitVideoPersistenceReady = false;
@@ -407,6 +421,14 @@
   let inlineSceneVideoRequest: InlineSceneVideoRequest | null = null;
   let generatedInlineSceneVideo: StoredInlineSceneVideo | null = null;
   let generatedInlineSceneVideoUrl = '';
+  let inlineSceneVideoElement: HTMLVideoElement | null = null;
+  let inlineSceneVideoPlaybackState: PlaybackState = 'idle';
+  let inlineSceneVideoPlaybackError = '';
+  let inlineSceneVideoPlaybackToken = 0;
+  let inlineSceneVideoPlaybackAttemptedToken = -1;
+  let inlineSceneVideoPlaybackStartSeconds = 0;
+  let inlineSceneVideoPlaybackTimer: number | null = null;
+  let inlineSceneVideoMounted = false;
   let inlineSceneVideoCurrent = false;
   let inlineSceneVideoVisible = false;
   let inlineSceneVideoGeneration = 0;
@@ -599,6 +621,15 @@
     && portraitVideoRequest
     && generatedPortraitVideo.requestKey === portraitVideoRequestKey(portraitVideoRequest)
   );
+  $: portraitVideoMounted = Boolean(
+    expressionsEnabled
+    && portraitMotionEnabled
+    && generatedPortraitVideoUrl
+    && portraitVideoCurrent
+    && !portraitBusy
+    && !portraitVideoBusy
+  );
+  $: portraitVideoVisible = portraitVideoMounted && portraitVideoPlaybackState === 'playing';
   $: inlineSceneSidecarRequest = conversationMode === CONVERSATION_MODE_FICTION
     ? currentInlineSceneSidecarRequest(
         conversationId,
@@ -629,14 +660,14 @@
     && inlineSceneVideoRequest
     && generatedInlineSceneVideo.requestKey === inlineSceneVideoRequestKey(inlineSceneVideoRequest)
   );
-  $: inlineSceneVideoVisible = Boolean(
+  $: inlineSceneVideoMounted = Boolean(
     inlineSceneMotionEnabled
     && generatedInlineSceneVideoUrl
     && inlineSceneVideoCurrent
     && !inlineSceneBusy
     && !inlineSceneVideoBusy
-    && !inlineSceneVideoError
   );
+  $: inlineSceneVideoVisible = inlineSceneVideoMounted && inlineSceneVideoPlaybackState === 'playing';
   $: scheduleExpressionReconciliation(
     conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
     sidecarPersistenceReady,
@@ -721,10 +752,19 @@
 
   function handleInlineSceneVideoPageHide() {
     inlineSceneVideoComponentDestroying = true;
+    portraitVideoElement?.pause();
+    inlineSceneVideoElement?.pause();
+    resetPortraitVideoPlayback();
+    resetInlineSceneVideoPlayback();
   }
 
-  function handleInlineSceneVideoPageShow() {
+  async function handleInlineSceneVideoPageShow() {
     inlineSceneVideoComponentDestroying = false;
+    if (portraitVideoMounted) resetPortraitVideoPlayback('starting');
+    if (inlineSceneVideoMounted) resetInlineSceneVideoPlayback('starting');
+    await tick();
+    if (portraitVideoElement && portraitVideoMounted) attemptPortraitVideoPlayback(portraitVideoElement);
+    if (inlineSceneVideoElement && inlineSceneVideoMounted) attemptInlineSceneVideoPlayback(inlineSceneVideoElement);
   }
 
   onMount(() => {
@@ -863,6 +903,12 @@
 
   onDestroy(() => {
     inlineSceneVideoComponentDestroying = true;
+    portraitVideoPlaybackToken += 1;
+    inlineSceneVideoPlaybackToken += 1;
+    clearPortraitVideoPlaybackTimer();
+    clearInlineSceneVideoPlaybackTimer();
+    portraitVideoElement?.pause();
+    inlineSceneVideoElement?.pause();
     if (browser) window.removeEventListener('pagehide', handleInlineSceneVideoPageHide);
     if (browser) window.removeEventListener('pageshow', handleInlineSceneVideoPageShow);
     if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
@@ -1057,7 +1103,119 @@
     generatedInlineScene = null;
   }
 
+  function clearInlineSceneVideoPlaybackTimer() {
+    if (inlineSceneVideoPlaybackTimer === null) return;
+    window.clearTimeout(inlineSceneVideoPlaybackTimer);
+    inlineSceneVideoPlaybackTimer = null;
+  }
+
+  function resetInlineSceneVideoPlayback(nextState: PlaybackState = 'idle') {
+    clearInlineSceneVideoPlaybackTimer();
+    inlineSceneVideoPlaybackToken += 1;
+    inlineSceneVideoPlaybackAttemptedToken = -1;
+    inlineSceneVideoPlaybackStartSeconds = 0;
+    inlineSceneVideoPlaybackState = nextState;
+    inlineSceneVideoPlaybackError = '';
+  }
+
+  function inlineSceneVideoPlaybackContextIsCurrent(
+    element: HTMLVideoElement,
+    sourceUrl: string,
+    token: number
+  ): boolean {
+    return Boolean(
+      !inlineSceneVideoComponentDestroying
+      && element === inlineSceneVideoElement
+      && sourceUrl === generatedInlineSceneVideoUrl
+      && token === inlineSceneVideoPlaybackToken
+      && inlineSceneVideoMounted
+      && inlineSceneVideoCurrent
+    );
+  }
+
+  function showInlineSceneVideoStaticFallback(
+    element: HTMLVideoElement,
+    sourceUrl: string,
+    token: number
+  ) {
+    if (!inlineSceneVideoPlaybackContextIsCurrent(element, sourceUrl, token)) return;
+    const transition = inlineSceneVideoDecodeFailureTransition(
+      inlineSceneVideoComponentDestroying,
+      inlineSceneVideoRequest
+    );
+    if (transition.action === 'ignore') return;
+    clearInlineSceneVideoPlaybackTimer();
+    element.pause();
+    inlineSceneVideoPlaybackState = 'fallback';
+    inlineSceneVideoPlaybackError = transition.error;
+    if (transition.attemptKey) lastInlineSceneVideoAttemptKey = transition.attemptKey;
+  }
+
+  function attemptInlineSceneVideoPlayback(element: HTMLVideoElement) {
+    if (element !== inlineSceneVideoElement || !inlineSceneVideoMounted) return;
+    const sourceUrl = generatedInlineSceneVideoUrl;
+    const token = inlineSceneVideoPlaybackToken;
+    const elementSourceUrl = element.currentSrc || element.src;
+    if (
+      !sourceUrl
+      || elementSourceUrl !== sourceUrl
+      || inlineSceneVideoPlaybackAttemptedToken === token
+    ) return;
+    inlineSceneVideoPlaybackAttemptedToken = token;
+    inlineSceneVideoPlaybackState = 'starting';
+    inlineSceneVideoPlaybackError = '';
+    element.muted = true;
+    element.defaultMuted = true;
+    element.loop = true;
+    element.playsInline = true;
+    try {
+      element.currentTime = 0;
+    } catch {
+      // A not-yet-seekable element can still begin from its current media time.
+    }
+    inlineSceneVideoPlaybackStartSeconds = element.currentTime;
+    clearInlineSceneVideoPlaybackTimer();
+    inlineSceneVideoPlaybackTimer = window.setTimeout(
+      () => showInlineSceneVideoStaticFallback(element, sourceUrl, token),
+      MEDIA_PLAYBACK_START_TIMEOUT_MS
+    );
+    void element.play().catch(() => showInlineSceneVideoStaticFallback(element, sourceUrl, token));
+  }
+
+  function handleInlineSceneVideoCanPlay(event: Event) {
+    attemptInlineSceneVideoPlayback(event.currentTarget as HTMLVideoElement);
+  }
+
+  function handleInlineSceneVideoTimeUpdate(event: Event) {
+    const element = event.currentTarget as HTMLVideoElement;
+    const sourceUrl = generatedInlineSceneVideoUrl;
+    const token = inlineSceneVideoPlaybackToken;
+    if (
+      inlineSceneVideoPlaybackState !== 'starting'
+      || !inlineSceneVideoPlaybackContextIsCurrent(element, sourceUrl, token)
+      || !generatedInlineSceneVideo
+      || !mediaPlaybackTimeAdvanced(
+        inlineSceneVideoPlaybackStartSeconds,
+        element.currentTime,
+        generatedInlineSceneVideo.fps,
+        generatedInlineSceneVideo.durationSeconds
+      )
+    ) return;
+    clearInlineSceneVideoPlaybackTimer();
+    inlineSceneVideoPlaybackState = 'playing';
+    inlineSceneVideoPlaybackError = '';
+  }
+
+  function retryInlineSceneVideoPlayback() {
+    const element = inlineSceneVideoElement;
+    if (!element || !inlineSceneVideoMounted) return;
+    resetInlineSceneVideoPlayback('starting');
+    attemptInlineSceneVideoPlayback(element);
+  }
+
   function removeInstalledInlineSceneVideo() {
+    inlineSceneVideoElement?.pause();
+    resetInlineSceneVideoPlayback();
     if (generatedInlineSceneVideoUrl) URL.revokeObjectURL(generatedInlineSceneVideoUrl);
     generatedInlineSceneVideoUrl = '';
     generatedInlineSceneVideo = null;
@@ -1067,6 +1225,7 @@
     removeInstalledInlineSceneVideo();
     generatedInlineSceneVideo = video;
     generatedInlineSceneVideoUrl = URL.createObjectURL(video.video);
+    resetInlineSceneVideoPlayback('starting');
   }
 
   function installGeneratedInlineScene(scene: StoredInlineScene, preserveStoredMotion = false) {
@@ -1510,7 +1669,10 @@
       inlineSceneVideoController?.abort();
       inlineSceneVideoController = null;
       inlineSceneVideoBusy = false;
+      inlineSceneVideoElement?.pause();
+      resetInlineSceneVideoPlayback();
     } else {
+      resetInlineSceneVideoPlayback('starting');
       void runInlineSceneVideoRestoration(restoreGeneratedInlineSceneVideo);
     }
   }
@@ -1532,19 +1694,13 @@
     }
   }
 
-  function handleInlineSceneVideoDecodeError() {
-    const transition = inlineSceneVideoDecodeFailureTransition(
-      inlineSceneVideoComponentDestroying,
-      inlineSceneVideoRequest
+  function handleInlineSceneVideoDecodeError(event: Event) {
+    const element = event.currentTarget as HTMLVideoElement;
+    showInlineSceneVideoStaticFallback(
+      element,
+      element.currentSrc || element.src,
+      inlineSceneVideoPlaybackToken
     );
-    if (transition.action === 'ignore') return;
-    inlineSceneVideoGeneration += 1;
-    inlineSceneVideoController?.abort();
-    inlineSceneVideoController = null;
-    inlineSceneVideoBusy = false;
-    inlineSceneVideoError = transition.error;
-    if (transition.attemptKey) lastInlineSceneVideoAttemptKey = transition.attemptKey;
-    removeInstalledInlineSceneVideo();
   }
 
   async function loadInlineSceneGenerator() {
@@ -2006,7 +2162,121 @@
     return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
   }
 
+  function clearPortraitVideoPlaybackTimer() {
+    if (portraitVideoPlaybackTimer === null) return;
+    window.clearTimeout(portraitVideoPlaybackTimer);
+    portraitVideoPlaybackTimer = null;
+  }
+
+  function resetPortraitVideoPlayback(nextState: PlaybackState = 'idle') {
+    clearPortraitVideoPlaybackTimer();
+    portraitVideoPlaybackToken += 1;
+    portraitVideoPlaybackAttemptedToken = -1;
+    portraitVideoPlaybackStartSeconds = 0;
+    portraitVideoPlaybackState = nextState;
+    portraitVideoPlaybackError = '';
+  }
+
+  function portraitVideoPlaybackContextIsCurrent(
+    element: HTMLVideoElement,
+    sourceUrl: string,
+    token: number
+  ): boolean {
+    return Boolean(
+      element === portraitVideoElement
+      && sourceUrl === generatedPortraitVideoUrl
+      && token === portraitVideoPlaybackToken
+      && portraitVideoMounted
+      && portraitVideoCurrent
+    );
+  }
+
+  function showPortraitVideoStaticFallback(
+    element: HTMLVideoElement,
+    sourceUrl: string,
+    token: number
+  ) {
+    if (!portraitVideoPlaybackContextIsCurrent(element, sourceUrl, token)) return;
+    clearPortraitVideoPlaybackTimer();
+    element.pause();
+    portraitVideoPlaybackState = 'fallback';
+    portraitVideoPlaybackError = 'Portrait motion did not begin playing; showing the static portrait.';
+  }
+
+  function attemptPortraitVideoPlayback(element: HTMLVideoElement) {
+    if (element !== portraitVideoElement || !portraitVideoMounted) return;
+    const sourceUrl = generatedPortraitVideoUrl;
+    const token = portraitVideoPlaybackToken;
+    const elementSourceUrl = element.currentSrc || element.src;
+    if (
+      !sourceUrl
+      || elementSourceUrl !== sourceUrl
+      || portraitVideoPlaybackAttemptedToken === token
+    ) return;
+    portraitVideoPlaybackAttemptedToken = token;
+    portraitVideoPlaybackState = 'starting';
+    portraitVideoPlaybackError = '';
+    element.muted = true;
+    element.defaultMuted = true;
+    element.loop = true;
+    element.playsInline = true;
+    try {
+      element.currentTime = 0;
+    } catch {
+      // A not-yet-seekable element can still begin from its current media time.
+    }
+    portraitVideoPlaybackStartSeconds = element.currentTime;
+    clearPortraitVideoPlaybackTimer();
+    portraitVideoPlaybackTimer = window.setTimeout(
+      () => showPortraitVideoStaticFallback(element, sourceUrl, token),
+      MEDIA_PLAYBACK_START_TIMEOUT_MS
+    );
+    void element.play().catch(() => showPortraitVideoStaticFallback(element, sourceUrl, token));
+  }
+
+  function handlePortraitVideoCanPlay(event: Event) {
+    attemptPortraitVideoPlayback(event.currentTarget as HTMLVideoElement);
+  }
+
+  function handlePortraitVideoTimeUpdate(event: Event) {
+    const element = event.currentTarget as HTMLVideoElement;
+    const sourceUrl = generatedPortraitVideoUrl;
+    const token = portraitVideoPlaybackToken;
+    if (
+      portraitVideoPlaybackState !== 'starting'
+      || !portraitVideoPlaybackContextIsCurrent(element, sourceUrl, token)
+      || !generatedPortraitVideo
+      || !mediaPlaybackTimeAdvanced(
+        portraitVideoPlaybackStartSeconds,
+        element.currentTime,
+        generatedPortraitVideo.fps,
+        generatedPortraitVideo.encodedDurationSeconds
+      )
+    ) return;
+    clearPortraitVideoPlaybackTimer();
+    portraitVideoPlaybackState = 'playing';
+    portraitVideoPlaybackError = '';
+  }
+
+  function handlePortraitVideoPlaybackError(event: Event) {
+    const element = event.currentTarget as HTMLVideoElement;
+    showPortraitVideoStaticFallback(
+      element,
+      element.currentSrc || element.src,
+      portraitVideoPlaybackToken
+    );
+  }
+
+  function retryPortraitVideoPlayback() {
+    const element = portraitVideoElement;
+    if (!element || !portraitVideoMounted) return;
+    resetPortraitVideoPlayback('starting');
+    attemptPortraitVideoPlayback(element);
+  }
+
   function removeInstalledPortraitVideo() {
+    portraitVideoElement?.pause();
+    resetPortraitVideoPlayback();
     if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
     generatedPortraitVideoUrl = '';
     generatedPortraitVideo = null;
@@ -2016,6 +2286,7 @@
     removeInstalledPortraitVideo();
     generatedPortraitVideo = video;
     generatedPortraitVideoUrl = URL.createObjectURL(video.video);
+    resetPortraitVideoPlayback('starting');
   }
 
   function disablePortraitVideoPersistence(cause: unknown) {
@@ -2464,6 +2735,10 @@
       portraitVideoGeneration += 1;
       portraitVideoController?.abort();
       portraitVideoBusy = false;
+      portraitVideoElement?.pause();
+      resetPortraitVideoPlayback();
+    } else {
+      resetPortraitVideoPlayback('starting');
     }
   }
 
@@ -4291,12 +4566,25 @@
       <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || (generatedPortraitUrl && portraitCurrent)} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl && portraitCurrent} class="portrait">
         {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
           <span class="initial">A</span>
-        {:else if expressionsEnabled && portraitMotionEnabled && generatedPortraitVideoUrl && portraitVideoCurrent && !portraitBusy && !portraitVideoBusy && !portraitVideoError}
-          <video src={generatedPortraitVideoUrl} autoplay muted loop playsinline aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}></video>
-          <span class="portrait-status">{portraitVideoBusy ? 'Animating…' : generatedPortrait?.source.expression}</span>
         {:else if expressionsEnabled && generatedPortraitUrl && portraitCurrent}
           <img src={generatedPortraitUrl} alt={`${generatedPortrait?.source.expression ?? 'Current'} generated expression portrait`} />
-          <span class:stale={!portraitCurrent || (portraitMotionEnabled && Boolean(generatedPortraitVideo) && !portraitVideoCurrent)} class="portrait-status">{portraitBusy ? 'Updating…' : portraitVideoBusy ? 'Animating…' : portraitCurrent ? generatedPortrait?.source.expression : 'Stale'}</span>
+          {#if portraitVideoMounted}
+            <video
+              class="portrait-motion"
+              class:playback-confirmed={portraitVideoVisible}
+              bind:this={portraitVideoElement}
+              src={generatedPortraitVideoUrl}
+              preload="auto"
+              muted
+              loop
+              playsinline
+              on:canplay={handlePortraitVideoCanPlay}
+              on:timeupdate={handlePortraitVideoTimeUpdate}
+              on:error={handlePortraitVideoPlaybackError}
+              aria-label={`${generatedPortrait?.source.expression ?? 'Current'} generated expression motion portrait`}
+            ></video>
+          {/if}
+          <span class:stale={!portraitCurrent || (portraitMotionEnabled && Boolean(generatedPortraitVideo) && !portraitVideoCurrent) || portraitVideoPlaybackState === 'fallback'} class="portrait-status">{portraitBusy ? 'Updating…' : portraitVideoBusy ? 'Animating…' : portraitVideoPlaybackState === 'starting' && portraitVideoMounted ? 'Starting motion…' : portraitVideoPlaybackState === 'fallback' && portraitVideoMounted ? 'Static fallback' : portraitCurrent ? generatedPortrait?.source.expression : 'Stale'}</span>
         {:else if portraitDataUrl && activeCard}
           <img src={portraitDataUrl} alt={`${activeCard.data.name} character portrait`} />
         {:else if activeCard}
@@ -4585,7 +4873,7 @@
         <div class="portrait-heading">
           <div>
             <span class="eyebrow">Portrait motion</span>
-            <strong>{portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoError ? 'Static fallback' : portraitVideoCurrent ? 'Current motion' : generatedPortraitVideo ? 'Stale' : 'No motion yet'}</strong>
+            <strong>{portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoPlaybackState === 'starting' && portraitVideoMounted ? 'Starting playback…' : portraitVideoPlaybackState === 'playing' && portraitVideoCurrent ? 'Motion playing' : portraitVideoPlaybackState === 'fallback' && portraitVideoCurrent ? 'Static fallback' : portraitVideoError ? 'Generation failed' : portraitVideoCurrent ? 'Motion ready' : generatedPortraitVideo ? 'Stale' : 'No motion yet'}</strong>
           </div>
           <label class="toggle">
             <input
@@ -4657,6 +4945,12 @@
           {/if}
           {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded · zero audio tracks</small>{/if}
           {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
+          {#if portraitVideoPlaybackError}
+            <div class="playback-fallback" role="alert">
+              <span>{portraitVideoPlaybackError}</span>
+              <button class="error-retry" on:click={retryPortraitVideoPlayback}>Retry playback</button>
+            </div>
+          {/if}
           <button
             on:click={() => void generatePortraitVideo()}
             disabled={portraitVideoBusy || portraitBusy || !portraitVideoRequest || !portraitVideoSelectedModeAvailable || !portraitMotionEnabled || !expressionsEnabled || !portraitVideoPersistenceAvailable}
@@ -4729,7 +5023,7 @@
             <div class="portrait-heading">
               <div>
                 <span class="eyebrow">Scene motion</span>
-                <strong>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoError ? 'Static fallback' : inlineSceneVideoCurrent ? 'Current loop' : generatedInlineSceneVideo ? 'Stale' : 'No loop yet'}</strong>
+                <strong>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting playback…' : inlineSceneVideoPlaybackState === 'playing' && inlineSceneVideoCurrent ? 'Motion playing' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Static fallback' : inlineSceneVideoError ? 'Generation failed' : inlineSceneVideoCurrent ? 'Motion ready' : generatedInlineSceneVideo ? 'Stale' : 'No loop yet'}</strong>
               </div>
               <label class="toggle">
                 <input
@@ -4773,6 +5067,12 @@
               {/if}
               {#if generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.frames} frames</small>{/if}
               {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
+              {#if inlineSceneVideoPlaybackError}
+                <div class="playback-fallback" role="alert">
+                  <span>{inlineSceneVideoPlaybackError}</span>
+                  <button class="error-retry" on:click={retryInlineSceneVideoPlayback}>Retry playback</button>
+                </div>
+              {/if}
               <button
                 on:click={() => void generateInlineSceneVideo()}
                 disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable || !inlineSceneVideoSelectedModelAvailable}
@@ -5006,26 +5306,32 @@
                   aria-busy={inlineSceneBusy || inlineSceneVideoBusy}
                   style:--scene-ratio={inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.width + ' / ' + generatedInlineSceneVideo.height : generatedInlineScene && inlineSceneApplies ? generatedInlineScene.width + ' / ' + generatedInlineScene.height : '16 / 9'}
                 >
-                  {#if inlineSceneVideoVisible}
-                    <video
-                      src={generatedInlineSceneVideoUrl}
-                      autoplay
-                      muted
-                      loop
-                      controls
-                      playsinline
-                      on:error={handleInlineSceneVideoDecodeError}
-                      aria-label="Generated landscape motion for this finalized response"
-                    ></video>
-                  {:else if generatedInlineSceneUrl && inlineSceneApplies}
+                  {#if generatedInlineSceneUrl && inlineSceneApplies}
                     <img src={generatedInlineSceneUrl} alt="Generated landscape still for this finalized response" />
                   {:else}
                     <div class:error-state={Boolean(inlineSceneError)} class="scene-placeholder">
                       <span>{inlineSceneError ? 'Static scene unavailable' : inlineSceneBusy ? 'Directing and rendering…' : 'Waiting for scene generation'}</span>
                     </div>
                   {/if}
+                  {#if inlineSceneVideoMounted}
+                    <video
+                      class="scene-motion"
+                      class:playback-confirmed={inlineSceneVideoVisible}
+                      bind:this={inlineSceneVideoElement}
+                      src={generatedInlineSceneVideoUrl}
+                      preload="auto"
+                      muted
+                      loop
+                      controls
+                      playsinline
+                      on:canplay={handleInlineSceneVideoCanPlay}
+                      on:timeupdate={handleInlineSceneVideoTimeUpdate}
+                      on:error={handleInlineSceneVideoDecodeError}
+                      aria-label="Generated landscape motion for this finalized response"
+                    ></video>
+                  {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Qwen Image Edit') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 motion with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? (inlineSceneApplies ? 'Updating landscape…' : 'Gemma sidecar → Qwen Image Edit') : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : 'Current response · static landscape') : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded · {generatedInlineSceneVideo.audioTracks === 0 ? 'silent' : 'native audio'}</small>{:else if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>
@@ -5117,6 +5423,8 @@
   .portrait.active { border-style: solid; border-color: #5c4b38; }
   .portrait.generated { aspect-ratio: 9 / 16; border-color: #49614d; }
   .portrait img, .portrait video { width: 100%; height: 100%; object-fit: cover; }
+  .portrait .portrait-motion { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+  .portrait .portrait-motion.playback-confirmed { opacity: 1; pointer-events: auto; }
   .portrait-status { position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border: 1px solid rgba(126,184,141,.65); border-radius: 999px; color: #d9efdd; background: rgba(17,29,20,.82); font: 700 9px/1 ui-monospace, monospace; text-transform: capitalize; backdrop-filter: blur(8px); }
   .portrait-status.stale { border-color: rgba(181,135,84,.65); color: #efd0a8; background: rgba(43,31,20,.82); }
   .initial { color: #e7aa61; font: 500 72px/1 Georgia, serif; text-shadow: 0 0 42px rgba(231,170,97,.25); }
@@ -5180,6 +5488,7 @@
   .error-retry { flex: 0 0 auto; width: auto; padding: 3px 6px; border: 1px solid #785047; border-radius: 999px; color: #e6b9ae; background: #211714; font-size: 8px; font-weight: 700; cursor: pointer; }
   .error-retry:hover:not(:disabled) { border-color: #b87a6b; color: #ffe6df; }
   .error-retry:disabled { opacity: .4; cursor: default; }
+  .playback-fallback { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: #d4a99e; font-size: 9px; line-height: 1.35; }
   .portrait-panel { display: grid; gap: 8px; padding: 15px 0 2px; border-top: 1px solid #34302b; }
   .portrait-heading { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
   .portrait-heading > div { display: grid; gap: 4px; }
@@ -5264,6 +5573,8 @@
   .scene-card { position: relative; overflow: hidden; margin: 18px 0 0; border: 1px solid #435344; border-radius: 13px; background: #171b18; box-shadow: 0 18px 42px rgba(0,0,0,.24); }
   .scene-card.stale { border-color: #6d573d; }
   .scene-card img, .scene-card video, .scene-placeholder { display: block; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
+  .scene-card .scene-motion { position: absolute; inset: 0 auto auto 0; z-index: 1; opacity: 0; pointer-events: none; }
+  .scene-card .scene-motion.playback-confirmed { opacity: 1; pointer-events: auto; }
   .scene-motion-controls { display: grid; gap: 7px; margin-top: 4px; padding-top: 10px; border-top: 1px solid #3c3731; }
   .scene-placeholder { min-height: 180px; display: grid; place-items: center; color: #8ea491; font: 700 10px/1.4 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
   .scene-placeholder:not(.error-state) { background: linear-gradient(110deg, #171918 25%, #263028 45%, #171918 65%); background-size: 240% 100%; animation: scene-shimmer 1.8s linear infinite; }

@@ -28,7 +28,7 @@ test('reload holds automatic scene-motion reconciliation until static and motion
   );
 });
 
-test('page teardown and DOM playback errors never delete verified persisted scene motion', () => {
+test('page teardown and DOM playback failures never delete or replace verified persisted scene motion', () => {
   const mount = sourceBetween('onMount(() => {', 'function restoreWorkspaceState()');
   assert.match(mount, /window\.addEventListener\('pagehide', handleInlineSceneVideoPageHide\);/);
   assert.match(mount, /window\.addEventListener\('pageshow', handleInlineSceneVideoPageShow\);/);
@@ -50,15 +50,75 @@ test('page teardown and DOM playback errors never delete verified persisted scen
     'the teardown guard must be set before revoking the scene-motion Blob URL'
   );
 
+  const playback = sourceBetween(
+    'function clearInlineSceneVideoPlaybackTimer()',
+    'function removeInstalledInlineSceneVideo()'
+  );
+  assert.match(playback, /element\.muted = true;/);
+  assert.match(playback, /element\.defaultMuted = true;/);
+  assert.match(playback, /element\.play\(\)\.catch\(\(\) => showInlineSceneVideoStaticFallback\(element, sourceUrl, token\)\)/);
+  assert.match(
+    playback,
+    /window\.setTimeout\([\s\S]*?showInlineSceneVideoStaticFallback\(element, sourceUrl, token\)[\s\S]*?MEDIA_PLAYBACK_START_TIMEOUT_MS/
+  );
+  assert.match(
+    playback,
+    /mediaPlaybackTimeAdvanced\([\s\S]*?inlineSceneVideoPlaybackStartSeconds,[\s\S]*?element\.currentTime,[\s\S]*?generatedInlineSceneVideo\.fps,[\s\S]*?generatedInlineSceneVideo\.durationSeconds[\s\S]*?\)/
+  );
+  assert.ok(
+    playback.indexOf("inlineSceneVideoPlaybackState = 'playing';")
+      > playback.indexOf('mediaPlaybackTimeAdvanced('),
+    'scene motion may become visible only after measured media-time advancement'
+  );
+
+  const fallback = sourceBetween(
+    'function showInlineSceneVideoStaticFallback(',
+    'function attemptInlineSceneVideoPlayback('
+  );
+  assert.match(fallback, /inlineSceneVideoDecodeFailureTransition\([\s\S]*?inlineSceneVideoComponentDestroying,[\s\S]*?inlineSceneVideoRequest[\s\S]*?\);/);
+  assert.match(fallback, /if \(transition\.action === 'ignore'\) return;/);
+  assert.match(fallback, /inlineSceneVideoPlaybackState = 'fallback';/);
+  assert.match(fallback, /inlineSceneVideoPlaybackError = transition\.error;/);
+  assert.match(fallback, /lastInlineSceneVideoAttemptKey = transition\.attemptKey;/);
+
+  const retry = sourceBetween(
+    'function retryInlineSceneVideoPlayback()',
+    'function removeInstalledInlineSceneVideo()'
+  );
+  assert.match(retry, /resetInlineSceneVideoPlayback\('starting'\);/);
+  assert.match(retry, /attemptInlineSceneVideoPlayback\(element\);/);
+
   const decodeHandler = sourceBetween(
-    'function handleInlineSceneVideoDecodeError()',
+    'function handleInlineSceneVideoDecodeError(event: Event)',
     'async function loadInlineSceneGenerator()'
   );
-  assert.match(decodeHandler, /inlineSceneVideoDecodeFailureTransition\([\s\S]*?inlineSceneVideoComponentDestroying,[\s\S]*?inlineSceneVideoRequest[\s\S]*?\);/);
-  assert.match(decodeHandler, /if \(transition\.action === 'ignore'\) return;/);
-  assert.match(decodeHandler, /lastInlineSceneVideoAttemptKey = transition\.attemptKey;/);
-  assert.match(decodeHandler, /removeInstalledInlineSceneVideo\(\);/);
-  assert.doesNotMatch(decodeHandler, /clearInlineSceneVideoAtGeneration|clearStoredInlineSceneVideo/);
+  assert.match(decodeHandler, /showInlineSceneVideoStaticFallback\([\s\S]*?inlineSceneVideoPlaybackToken[\s\S]*?\);/);
+
+  for (const nonMutatingPlaybackPath of [fallback, retry, decodeHandler]) {
+    assert.doesNotMatch(
+      nonMutatingPlaybackPath,
+      /removeInstalledInlineSceneVideo|clearInlineSceneVideoAtGeneration|clearStoredInlineSceneVideo|saveStoredInlineSceneVideo|rollbackStoredInlineSceneVideoWrite|commitStoredInlineSceneVideo|restoreStoredInlineSceneVideo|generateInlineSceneVideo|fetch\(/
+    );
+  }
+});
+
+test('scene motion stays behind its static source until explicit playback measurably advances', () => {
+  const sceneMedia = sourceBetween(
+    '{#if generatedInlineSceneUrl && inlineSceneApplies}',
+    '<figcaption>'
+  );
+  assert.ok(
+    sceneMedia.indexOf('<img src={generatedInlineSceneUrl}')
+      < sceneMedia.indexOf('{#if inlineSceneVideoMounted}'),
+    'the verified static scene must render beneath pending motion'
+  );
+  assert.match(sceneMedia, /class:playback-confirmed=\{inlineSceneVideoVisible\}/);
+  assert.match(sceneMedia, /bind:this=\{inlineSceneVideoElement\}/);
+  assert.match(sceneMedia, /preload="auto"/);
+  assert.match(sceneMedia, /on:canplay=\{handleInlineSceneVideoCanPlay\}/);
+  assert.match(sceneMedia, /on:timeupdate=\{handleInlineSceneVideoTimeUpdate\}/);
+  assert.match(sceneMedia, /on:error=\{handleInlineSceneVideoDecodeError\}/);
+  assert.doesNotMatch(sceneMedia, /\bautoplay\b/);
 });
 
 test('installing a genuinely new static scene still invalidates its predecessor motion', () => {
