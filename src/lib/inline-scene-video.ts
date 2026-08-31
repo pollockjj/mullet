@@ -588,7 +588,7 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
         ? pictureForHash(identity.bodyReferenceImage.sha256)
         : null;
       const bodyDirection = bodyPicture && bodyPicture !== canonicalPicture
-        ? ` and body and wardrobe appearance from <Picture ${bodyPicture}>`
+        ? ` and body proportions, hair silhouette, and invariant accessories from <Picture ${bodyPicture}>`
         : '';
       return `<Subject ${index + 1}> is ${identity.displayName}; preserve this person's exact identity, face, and hair from <Picture ${canonicalPicture}>${bodyDirection} while retaining the attire and placement established in <Picture 1>.`;
     })
@@ -605,9 +605,9 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
         ? pictureForHash(identity.bodyReferenceImage.sha256)
         : null;
       const bodyRetention = bodyPicture === canonicalPicture
-        ? ', plus applicable body proportions and wardrobe details from that same picture'
+        ? ', plus applicable body proportions, hair silhouette, and invariant accessories from that same picture'
         : bodyPicture
-          ? `, plus body proportions and applicable wardrobe details from <Picture ${bodyPicture}>`
+          ? `, plus body proportions, hair silhouette, and invariant accessories from <Picture ${bodyPicture}>`
           : '';
       return `<Subject ${index + 1}> (appears in [Shot 1]): fully_preserved - retain ${identity.displayName}'s exact identity, facial structure, face, and hair from <Picture ${canonicalPicture}>${bodyRetention}, while preserving the attire and placement established in <Picture 1>.`;
     })

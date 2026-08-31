@@ -467,6 +467,9 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
     assert.equal(graph['29'].inputs.format, 'auto');
     assert.equal(Object.values(graph).some((node) => node.class_type === 'LoraLoaderModelOnly'), false);
     assert.doesNotMatch(graph['20'].inputs.prompt, /opens exactly on the supplied first frame/i);
+    assert.doesNotMatch(graph['20'].inputs.prompt, /body and wardrobe appearance/);
+    assert.match(graph['20'].inputs.prompt, /body proportions, hair silhouette, and invariant accessories/);
+    assert.match(graph['20'].inputs.prompt, /attire and placement established in <Picture 1>/);
     assert.doesNotMatch(graph['20'].inputs.prompt, /selectively_preserved/);
     const initialRetention = graph['20'].inputs.prompt
       .split('retention_analysis:\n')[1]
