@@ -245,21 +245,33 @@ test('ships the private cabin lore with three byte-exact references and latest Z
   const references = new Map([
     ['jan-pollock', {
       name: 'cabin-jan-v1.png',
-      lora: 'zimage/jan6.safetensors',
+      lora: {
+        name: 'zimage/jan6.safetensors',
+        trigger: 'janpollock',
+        sha256: '5aa76c01fab06cbf89e80dcb1e3bfdaddc5cbdd1a287512650226dff3686687f'
+      },
       sha256: '5fb84b3a0a3a2cff07488e3799d89e5a3539e90bd01932c7bb44e58fad4a832f',
       width: 1024,
       height: 1024
     }],
     ['kristi-bentler', {
       name: 'cabin-kristi-v1.png',
-      lora: 'zimage/kristi6.safetensors',
+      lora: {
+        name: 'zimage/kristi6.safetensors',
+        trigger: 'kristibentler',
+        sha256: '42ad2ba10023183cb5f38bc2db1f196a266ca9c13c19f83b368ac5568d78f4a9'
+      },
       sha256: 'faea3ae4289d2443a9bd22b8d3c329972470d97b9488c2c7f549431a0159f4ea',
       width: 2048,
       height: 2048
     }],
     ['angela-pollock', {
       name: 'cabin-angela-v1.png',
-      lora: 'zimage/angela3_000001500.safetensors',
+      lora: {
+        name: 'zimage/angela3_000001500.safetensors',
+        trigger: 'angelapollock',
+        sha256: 'a0c7ab07b11bf1661906a5309b8763c175b4d62d80461c9a9b4f6a3c24e51328'
+      },
       sha256: '73615e29527ff93f93f4371e614decbc66dfb07d35b1f420cfe5f4d4ef40fcf3',
       width: 1024,
       height: 1024
@@ -269,7 +281,7 @@ test('ships the private cabin lore with three byte-exact references and latest Z
     const expected = references.get(profile.id);
     assert.ok(expected, `unexpected cabin portrait profile ${profile.id}`);
     assert.equal(profile.modelTemplate, PORTRAIT_TEMPLATE_ID);
-    assert.equal(profile.subjectLora, expected.lora);
+    assert.deepEqual(profile.subjectLora, expected.lora);
     assert.match(profile.subject, new RegExp(`^${profile.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`));
     assert.deepEqual(profile.referenceImage, {
       name: expected.name,
@@ -383,7 +395,7 @@ test('enforces model-specific subject-LoRA linkage and fingerprints its exact ve
   );
 
   const unsafeLore = structuredClone(cabin.lorebookRaw);
-  unsafeLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = '../jan6.safetensors';
+  unsafeLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora.name = '../jan6.safetensors';
   const unsafeCard = structuredClone(cabin.cardRaw);
   unsafeCard.data.character_book = structuredClone(unsafeLore.data);
   assert.throws(
@@ -392,7 +404,7 @@ test('enforces model-specific subject-LoRA linkage and fingerprints its exact ve
   );
 
   const changedLore = structuredClone(cabin.lorebookRaw);
-  changedLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = 'zimage/jan7.safetensors';
+  changedLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora.name = 'zimage/jan7.safetensors';
   const changedCard = structuredClone(cabin.cardRaw);
   changedCard.data.character_book = structuredClone(changedLore.data);
   const changed = validateScenarioPackage(cabin.entry, changedCard, changedLore);
@@ -400,12 +412,25 @@ test('enforces model-specific subject-LoRA linkage and fingerprints its exact ve
 
   const blakes = bundledScenario();
   const qwenLore = structuredClone(blakes.lorebookRaw);
-  qwenLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = 'zimage/jenna.safetensors';
+  qwenLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = {
+    name: 'zimage/jenna.safetensors',
+    trigger: 'jenna',
+    sha256: '1'.repeat(64)
+  };
   const qwenCard = structuredClone(blakes.cardRaw);
   qwenCard.data.character_book = structuredClone(qwenLore.data);
   assert.throws(
     () => validateScenarioPackage(blakes.entry, qwenCard, qwenLore),
     /reference-conditioned template cannot use subject_lora/
+  );
+
+  const invalidTriggerLore = structuredClone(cabin.lorebookRaw);
+  invalidTriggerLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora.trigger = 'Jan Pollock';
+  const invalidTriggerCard = structuredClone(cabin.cardRaw);
+  invalidTriggerCard.data.character_book = structuredClone(invalidTriggerLore.data);
+  assert.throws(
+    () => validateScenarioPackage(cabin.entry, invalidTriggerCard, invalidTriggerLore),
+    /trigger must be a lowercase token/
   );
 });
 

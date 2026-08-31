@@ -566,7 +566,7 @@
   $: portraitSelectedSubjectLoraAvailable = Boolean(
     !scenarioPortraitProfile?.subjectLora
     || portraitSelectedModelUsesReference
-    || portraitCapabilities?.loras.includes(scenarioPortraitProfile.subjectLora)
+    || portraitCapabilities?.loras.includes(scenarioPortraitProfile.subjectLora.name)
   );
   $: selectedPortraitVideoTemplateCapability = portraitVideoTemplateCapability(
     portraitVideoCapabilities,
@@ -2825,10 +2825,12 @@
         if (!profile) return null;
         return buildPortraitRequest(result, {
           modelTemplate,
-          subject: profile.subject,
+          subject: !modelUsesReference && profile.subjectLora
+            ? `${profile.subjectLora.trigger}, ${profile.subject}`
+            : profile.subject,
           setting: profile.setting,
           attire: profile.attire,
-          lora: modelUsesReference ? null : profile.subjectLora,
+          lora: modelUsesReference ? null : profile.subjectLora?.name ?? null,
           referenceImage: modelUsesReference ? profile.referenceImage : null,
           characterId: profile.id,
           profileFingerprint: profile.fingerprint,
@@ -4815,7 +4817,7 @@
                 value={portraitSelectedModelUsesReference
                   ? `Canonical reference · ${scenarioPortraitProfile.referenceImage.width}×${scenarioPortraitProfile.referenceImage.height} · ${scenarioPortraitProfile.referenceImage.aspectRatio}`
                   : scenarioPortraitProfile.subjectLora
-                    ? `Z-Image LoRA · ${scenarioPortraitProfile.subjectLora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}`
+                    ? `Z-Image LoRA · ${scenarioPortraitProfile.subjectLora.name.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · trigger ${scenarioPortraitProfile.subjectLora.trigger}`
                     : 'Text prompt · no reference or LoRA'}
                 disabled
                 aria-label="Portrait identity source"
@@ -4869,7 +4871,7 @@
             </div>
           {:else if scenarioPortraitProfile?.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable}
             <div class="sidecar-error capability-error" role="alert">
-              <span>Linked identity LoRA is unavailable · {scenarioPortraitProfile.subjectLora}</span>
+              <span>Linked identity LoRA is unavailable · {scenarioPortraitProfile.subjectLora.name}</span>
               <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
                 {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
               </button>

@@ -71,9 +71,15 @@ export type ScenarioPortraitProfile = {
   seed: number;
   expressionPrompts: Partial<Record<ExpressionLabel, string>>;
   modelTemplate: PortraitModelTemplate;
-  subjectLora: string | null;
+  subjectLora: ScenarioPortraitSubjectLora | null;
   referenceImage: PortraitReferenceImage;
   fingerprint: string;
+};
+
+export type ScenarioPortraitSubjectLora = {
+  name: string;
+  trigger: string;
+  sha256: string;
 };
 
 export type ScenarioPortraitCast = {
@@ -205,11 +211,32 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       throw new Error(`scenario portrait profile ${index} model_template is unsupported`);
     }
     const modelTemplate: PortraitModelTemplate = visual.model_template;
-    const subjectLora = visual.subject_lora === undefined || visual.subject_lora === null
-      ? null
-      : requiredString(visual.subject_lora, `scenario portrait profile ${index} subject_lora`, 200);
-    if (subjectLora !== null && !isPortraitLoraName(subjectLora)) {
-      throw new Error(`scenario portrait profile ${index} subject_lora must be a safe Z-Image LoRA path`);
+    let subjectLora: ScenarioPortraitSubjectLora | null = null;
+    if (visual.subject_lora !== undefined && visual.subject_lora !== null) {
+      if (!isRecord(visual.subject_lora)) {
+        throw new Error(`scenario portrait profile ${index} subject_lora must be an object`);
+      }
+      const name = requiredString(visual.subject_lora.name, `scenario portrait profile ${index} subject_lora name`, 200);
+      if (!isPortraitLoraName(name)) {
+        throw new Error(`scenario portrait profile ${index} subject_lora name must be a safe Z-Image LoRA path`);
+      }
+      const trigger = requiredString(
+        visual.subject_lora.trigger,
+        `scenario portrait profile ${index} subject_lora trigger`,
+        100
+      );
+      if (!/^[a-z0-9][a-z0-9_-]*$/.test(trigger)) {
+        throw new Error(`scenario portrait profile ${index} subject_lora trigger must be a lowercase token`);
+      }
+      const sha256 = requiredString(
+        visual.subject_lora.sha256,
+        `scenario portrait profile ${index} subject_lora sha256`,
+        64
+      );
+      if (!/^[0-9a-f]{64}$/.test(sha256)) {
+        throw new Error(`scenario portrait profile ${index} subject_lora sha256 must be lowercase hexadecimal`);
+      }
+      subjectLora = { name, trigger, sha256 };
     }
     if (modelTemplate === PORTRAIT_TEMPLATE_ID && subjectLora === null) {
       throw new Error(`scenario portrait profile ${index} Z-Image template requires subject_lora`);
@@ -278,7 +305,9 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
         String(seed),
         ...promptFingerprintFields,
         modelTemplate,
-        subjectLora ?? '',
+        subjectLora?.name ?? '',
+        subjectLora?.trigger ?? '',
+        subjectLora?.sha256 ?? '',
         referenceImage.name,
         referenceImage.sha256,
         String(referenceImage.width),

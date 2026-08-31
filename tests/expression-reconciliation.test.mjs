@@ -25,7 +25,7 @@ test('an unavailable scenario identity LoRA blocks portrait requests and exposes
     pageSource,
     /scenarioPortraitProfile\?\.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable/
   );
-  assert.match(pageSource, /Linked identity LoRA is unavailable · \{scenarioPortraitProfile\.subjectLora\}/);
+  assert.match(pageSource, /Linked identity LoRA is unavailable · \{scenarioPortraitProfile\.subjectLora\.name\}/);
   assert.match(pageSource, /portraitCapabilitiesLoading \? 'Checking…' : 'Refresh models'/);
 });
 
