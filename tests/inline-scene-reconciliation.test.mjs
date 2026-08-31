@@ -104,7 +104,7 @@ test('page teardown and DOM playback failures never delete or replace verified p
 
 test('scene motion stays behind its static source until explicit playback measurably advances', () => {
   const sceneMedia = sourceBetween(
-    '{#if generatedInlineSceneUrl && inlineSceneApplies}',
+    '{#if generatedInlineSceneUrl}',
     '<figcaption>'
   );
   assert.ok(
@@ -119,6 +119,37 @@ test('scene motion stays behind its static source until explicit playback measur
   assert.match(sceneMedia, /on:timeupdate=\{handleInlineSceneVideoTimeUpdate\}/);
   assert.match(sceneMedia, /on:error=\{handleInlineSceneVideoDecodeError\}/);
   assert.doesNotMatch(sceneMedia, /\bautoplay\b/);
+});
+
+test('an ancestral scene restores and remains visible as stale fallback without becoming current', () => {
+  const applies = sourceBetween(
+    'function inlineSceneAppliesToTranscript(',
+    'function inlineSceneSourceBelongsToCurrentAncestry('
+  );
+  assert.match(applies, /scene\.epoch === epoch/);
+  assert.match(applies, /inlineSceneSourcesMatch\(scene\.request\.source, source\)/);
+  assert.match(
+    pageSource,
+    /\$: inlineSceneCurrent = inlineSceneApplies && inlineSceneMatchesSettings\(/
+  );
+
+  const restoration = sourceBetween(
+    'async function restoreGeneratedInlineScene()',
+    'async function restoreInlineSceneAndMotion()'
+  );
+  assert.match(restoration, /inlineSceneSourceBelongsToCurrentAncestry\(/);
+  assert.doesNotMatch(restoration, /accepts: \(scene\) => scene\.epoch === epoch/);
+  assert.doesNotMatch(restoration, /inlineSceneSourcesMatch\(scene\.request\.source, source\)/);
+
+  const sceneCard = sourceBetween(
+    '<figure\n                  class:stale=',
+    '</figure>'
+  );
+  assert.match(sceneCard, /\{#if generatedInlineSceneUrl\}/);
+  assert.doesNotMatch(sceneCard, /\{#if generatedInlineSceneUrl && inlineSceneApplies\}/);
+  assert.match(sceneCard, /Prior response · verified static fallback/);
+  assert.match(sceneCard, /Updating landscape · prior verified scene shown/);
+  assert.match(sceneCard, /generatedInlineScene \? generatedInlineScene\.width/);
 });
 
 test('installing a genuinely new static scene still invalidates its predecessor motion', () => {
@@ -136,6 +167,143 @@ test('installing a genuinely new static scene still invalidates its predecessor 
   );
   assert.match(suspension, /inlineSceneVideoError = '';/);
   assert.match(suspension, /lastInlineSceneVideoAttemptKey = '';/);
+});
+
+test('publishing the next finalized source retains the prior verified static master', () => {
+  const publication = sourceBetween(
+    'function publishFinalizedInlineSceneSource(source: InlineSceneSource)',
+    'function scenarioOpeningIdentity()'
+  );
+  assert.match(publication, /invalidateInlineSceneVideoForNewStaticScene\(\);/);
+  assert.match(publication, /finalizedInlineSceneSource = normalizedSource;/);
+  assert.match(publication, /inlineSceneEpoch = epoch;/);
+  assert.doesNotMatch(publication, /removeInstalledInlineScene\(\)/);
+  assert.doesNotMatch(publication, /clearStoredInlineScene\(\)/);
+});
+
+test('scene reconciliation supplies the complete scenario cast and compiles the selected solo, duo, or trio', () => {
+  assert.match(
+    pageSource,
+    /\$: scenarioSceneProfiles = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard\(activeCard\)[\s\S]*?scenarioPortraitCast\(activeCard\)\?\.profiles \?\? \[\]/
+  );
+
+  const sidecarRequest = sourceBetween(
+    'function currentInlineSceneSidecarRequest(',
+    'function inlineSceneAppliesToTranscript('
+  );
+  assert.match(sidecarRequest, /const candidates: InlineSceneSubjectCandidate\[\] = profiles\.map\(\(profile\) => \(\{/);
+  assert.match(sidecarRequest, /id: profile\.id,/);
+  assert.match(sidecarRequest, /displayName: profile\.displayName,/);
+  assert.match(sidecarRequest, /aliases: profile\.aliases,/);
+  assert.match(sidecarRequest, /profileFingerprint: profile\.fingerprint/);
+  assert.match(sidecarRequest, /buildInlineSceneRequest\(currentConversationId, currentMessages, source, candidates\)/);
+
+  const castCompiler = sourceBetween(
+    'function inlineSceneCastForResult(',
+    'function inlineSceneMatchesSettings('
+  );
+  assert.match(castCompiler, /result\.output\.subjectIds\.map/);
+  assert.match(castCompiler, /resultCandidate\.profileFingerprint !== profile\.fingerprint/);
+  assert.match(castCompiler, /bodyReferenceImage: profile\.bodyReferenceImage/);
+  assert.match(castCompiler, /if \(identities\.length === 1\) return \{ kind: 'solo'/);
+  assert.match(castCompiler, /if \(identities\.length === 2\) return \{ kind: 'duo'/);
+  assert.match(castCompiler, /if \(identities\.length === 3\) return \{ kind: 'trio'/);
+  assert.doesNotMatch(castCompiler, /scenarioStarterPortraitProfile/);
+
+  const reconciliation = sourceBetween(
+    'function inlineSceneAttemptKey(',
+    'function inlineSceneResponseHash('
+  );
+  assert.match(reconciliation, /profiles: readonly ScenarioPortraitProfile\[\]/);
+  assert.match(reconciliation, /inlineSceneCastForResult\(result, scenarioSceneProfiles\)/);
+  assert.match(reconciliation, /inlineSceneDriverForCast\(cast, scenarioSceneProfiles, continuityMaster\)/);
+  assert.match(reconciliation, /\.\.\.driver,/);
+  assert.doesNotMatch(reconciliation, /inlineSceneProfileDriver/);
+});
+
+test('static driver deterministically keeps initial LoRA solos on Z-Image and all other casts on Qwen', () => {
+  const driver = sourceBetween(
+    'function inlineSceneDriverForCast(',
+    'function inlineSceneDriverAvailable('
+  );
+  assert.match(driver, /cast\.kind === 'solo' && !continuityMaster/);
+  assert.match(driver, /candidate\.id === identity\.profileId/);
+  assert.match(driver, /candidate\.fingerprint === identity\.profileFingerprint/);
+  assert.match(driver, /if \(profile\?\.subjectLora\)/);
+  assert.match(driver, /modelTemplate: INLINE_SCENE_TEMPLATE_ID/);
+  assert.match(driver, /path: profile\.subjectLora\.name/);
+  assert.match(driver, /trigger: profile\.subjectLora\.trigger/);
+  assert.match(driver, /modelHash: profile\.subjectLora\.sha256/);
+  assert.match(driver, /return \{ modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID, lora: null \};/);
+
+  const matching = sourceBetween(
+    'function inlineSceneMatchesSettings(',
+    'function removeInstalledInlineScene()'
+  );
+  assert.match(matching, /inlineSceneDriverForCast\(/);
+  assert.match(matching, /scene\.request\.continuityMaster \?\? null/);
+  assert.match(matching, /scene\.request\.modelTemplate === driver\.modelTemplate/);
+  assert.match(matching, /scene\.request\.lora\?\.modelHash/);
+
+  const potential = sourceBetween(
+    'function inlineScenePotentialDriverAvailable(',
+    'function inlineSceneCastForResult('
+  );
+  assert.match(potential, /if \(continuityScene\)/);
+  assert.match(potential, /INLINE_SCENE_QWEN_TEMPLATE_ID/);
+  assert.match(potential, /INLINE_SCENE_TEMPLATE_ID/);
+  assert.match(potential, /capabilities\.loras\.includes\(profile\.subjectLora\.name\)/);
+
+  const generation = sourceBetween(
+    'async function generateInlineScene(',
+    'function persistInlineScenesEnabled()'
+  );
+  assert.match(generation, /const driver = inlineSceneDriverForCast\(cast, selectedProfiles, continuityMaster\);/);
+  assert.match(generation, /if \(!inlineSceneDriverAvailable\(selectedCapabilities, driver\)\)/);
+  assert.match(generation, /Linked scene identity LoRA is unavailable/);
+  assert.match(generation, /is unavailable for the selected scene cast/);
+  assert.match(generation, /const imageRequest = buildInlineSceneImageRequest\(result, \{\s+\.\.\.driver,/);
+  assert.doesNotMatch(generation, /driver\s*=\s*\{ modelTemplate:/);
+});
+
+test('scene continuity uses an eligible strict ancestor and falls back fresh for three new subjects', () => {
+  const ancestry = sourceBetween(
+    'function inlineSceneSourceBelongsToCurrentAncestry(',
+    'function inlineSceneCastForResult('
+  );
+  assert.match(ancestry, /candidate\.messageCount <= current\.messageCount/);
+  assert.match(ancestry, /scene\.request\.source\.messageCount >= request\.source\.messageCount/);
+  assert.match(ancestry, /createInlineSceneContinuityMaster\(scene\.request/);
+
+  const generation = sourceBetween(
+    'async function generateInlineScene(',
+    'function persistInlineScenesEnabled()'
+  );
+  assert.match(generation, /await verifyStoredInlineScene\(selectedContinuityScene\)/);
+  assert.match(generation, /if \(inlineSceneContinuityMasterEligible\(cast, candidateMaster\)\)/);
+  assert.match(generation, /continuityMaster = candidateMaster;/);
+  assert.match(generation, /continuityMasterImage = verifiedMasterScene\.image;/);
+  assert.match(generation, /\.\.\.\(continuityMaster \? \{ continuityMaster \} : \{\}\)/);
+  assert.match(generation, /imageForm\.append\('request', JSON\.stringify\(imageRequest\)\)/);
+  assert.match(generation, /if \(continuityMasterImage\) imageForm\.append\('master'/);
+  assert.match(generation, /continuityMasterImage\n/);
+
+});
+
+test('H3 page multipart inherits eligible inclusion plus no-overlap and same-hash omission from the exact reference plan', () => {
+  assert.match(pageSource, /inlineSceneH3ReferencePlan,/);
+  const generation = sourceBetween(
+    'async function generateInlineSceneVideo(',
+    'function persistInlineSceneMotionEnabled()'
+  );
+  assert.match(
+    generation,
+    /const priorMasterRequired = selectedRequest\.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID\s+&& inlineSceneH3ReferencePlan\(selectedRequest\)\.some\(\(\{ kind \}\) => kind === 'prior_master'\);/
+  );
+  assert.match(generation, /if \(priorMasterRequired\) \{/);
+  assert.match(generation, /if \(!selectedScene\.continuityMasterImage\)/);
+  assert.match(generation, /form\.append\('master', selectedScene\.continuityMasterImage/);
+  assert.doesNotMatch(generation, /&& selectedScene\.request\.continuityMaster/);
 });
 
 test('restores or republishes a packaged opening source without inventing a user turn', () => {

@@ -10,6 +10,9 @@ const portraitImagePanel = pageSource.match(
 const portraitMotionPanel = pageSource.match(
   /<section class="portrait-panel motion-panel" aria-label="Generated portrait motion">[\s\S]*?<\/section>/
 )?.[0] ?? '';
+const inlineScenePanel = pageSource.match(
+  /<section class="portrait-panel scene-panel" aria-label="Inline landscape scene">[\s\S]*?<\/section>/
+)?.[0] ?? '';
 
 test('generated expression stage is fixed 9:16 at the 0.5 MP default with no aspect selector', () => {
   assert.match(pageSource, /const portraitAspectRatio: PortraitAspectRatio = '9:16';/);
@@ -64,8 +67,8 @@ test('portrait motion defaults to the bound LTX template and persists a real add
 
 test('scene motion visibly defaults to LTX after refresh while retaining additive MiniMax selection', () => {
   assert.match(pageSource, /let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
-  assert.match(pageSource, /inlineSceneVideoModelTemplateStorageKey = 'mullet\.inline-scene-video-model-template\.v1'/);
-  assert.doesNotMatch(pageSource, /mullet\.inline-scene-video-model-template(?:'|\.v0)/);
+  assert.match(pageSource, /inlineSceneVideoModelTemplateStorageKey = 'mullet\.inline-scene-video-model-template\.v2'/);
+  assert.doesNotMatch(pageSource, /mullet\.inline-scene-video-model-template(?:'|\.v0|\.v1)/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
   assert.match(pageSource, /: INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
@@ -76,9 +79,27 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.doesNotMatch(pageSource, /value=\{capability\.template\.id\} disabled=/);
   assert.match(pageSource, /buildInlineSceneVideoRequest\(scene, modelTemplate\)/);
   assert.match(pageSource, /LTX 2\.5 Distilled · silent/);
-  assert.match(pageSource, /MiniMax H3 FL2VA Turbo · native audio/);
+  assert.match(pageSource, /MiniMax H3 Ref2VA · current scene \+ prior master \+ canonical cast · native audio/);
+  assert.doesNotMatch(pageSource, /MiniMax H3 FL2VA Turbo/);
   assert.match(pageSource, /!inlineSceneVideoSelectedModelAvailable\}[\s\S]*?Retry scene motion models/);
   assert.match(pageSource, /on:click=\{\(\) => void loadInlineSceneVideoGenerator\(\)\}/);
+});
+
+test('scene cast readiness is one compact status instead of permanent disabled model and identity controls', () => {
+  assert.match(inlineScenePanel, /<small class="scene-cast-status">/);
+  assert.match(inlineScenePanel, /Selecting visible cast…/);
+  assert.match(inlineScenePanel, /generatedInlineScene\.request\.cast\.kind === 'solo' \? 'Solo'/);
+  assert.match(inlineScenePanel, /generatedInlineScene\.request\.cast\.identities\.map\(\(identity\) => identity\.displayName\)\.join\(' \+ '\)/);
+  assert.match(inlineScenePanel, /generatedInlineScene\.request\.modelTemplate === INLINE_SCENE_TEMPLATE_ID \? 'Z-Image \+ exact linked LoRA' : 'Qwen multi-reference master'/);
+  assert.match(inlineScenePanel, /Qwen multi-reference master/);
+  assert.match(inlineScenePanel, /No deterministic static-scene driver is currently available for this scenario state/);
+  assert.doesNotMatch(inlineScenePanel, /H3 \{generatedInlineScene/);
+  assert.match(inlineScenePanel, /scenarioSceneProfiles\.length < 1\}[\s\S]*A validated scenario cast is required/);
+  assert.doesNotMatch(inlineScenePanel, /aria-label="Inline scene image model"/);
+  assert.doesNotMatch(inlineScenePanel, /aria-label="Inline scene identity driver"/);
+  assert.doesNotMatch(inlineScenePanel, /<span>Image model<\/span>/);
+  assert.doesNotMatch(inlineScenePanel, /<span>Identity driver<\/span>/);
+  assert.doesNotMatch(inlineScenePanel, /inlineSceneProfileDriver/);
 });
 
 test('selected portrait-video template controls modes and durations without hiding unavailable options', () => {

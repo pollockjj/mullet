@@ -6,8 +6,16 @@ import {
   inlineSceneModelTemplateAvailable,
   normalizeInlineSceneImageRequest
 } from '$lib/inline-scene';
-import { ComfyInlineSceneOutputTooLargeError, loadInlineSceneCapabilities, runComfyInlineScene } from '$lib/server/comfy-inline-scene';
+import {
+  ComfyInlineSceneOutputTooLargeError,
+  loadInlineSceneCapabilities,
+  runComfyInlineScene,
+  uploadInlineSceneContinuityMasterInput,
+  validateInlineScenePng
+} from '$lib/server/comfy-inline-scene';
 import { runtime } from '$lib/server/runtime';
+
+const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
 function configuredImageComfyBaseUrl(): string {
   if (!runtime.imageComfyBaseUrl) throw error(503, 'Inline scene generation is not configured.');
@@ -18,6 +26,35 @@ function randomSeed(): number {
   const words = new Uint32Array(2);
   crypto.getRandomValues(words);
   return (words[0] % 65_536) * 2 ** 32 + words[1];
+}
+
+function exactMultipartParts(form: FormData): { requestJson: string; master: Blob | null } {
+  const keys = [...form.keys()];
+  const requests = form.getAll('request');
+  const masters = form.getAll('master');
+  if (
+    requests.length !== 1
+    || masters.length > 1
+    || keys.length !== requests.length + masters.length
+    || keys.some((key) => key !== 'request' && key !== 'master')
+  ) throw error(400, 'multipart body must contain exactly one request and at most one master');
+  const requestJson = requests[0];
+  const master = masters[0] ?? null;
+  if (typeof requestJson !== 'string' || requestJson.length < 1 || requestJson.length > 100_000) {
+    throw error(400, 'inline-scene request JSON is invalid');
+  }
+  if (master !== null && (!(master instanceof Blob) || master.type !== 'image/png' || master.size < 24)) {
+    throw error(400, 'inline-scene continuity master must be a PNG');
+  }
+  if (master instanceof Blob && master.size > INPUT_LIMIT_BYTES) {
+    throw error(413, 'inline-scene continuity master exceeds 20 MiB');
+  }
+  return { requestJson, master: master instanceof Blob ? master : null };
+}
+
+async function sha256Bytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
@@ -37,14 +74,40 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
   const baseUrl = configuredImageComfyBaseUrl();
-  const body = await request.json().catch(() => {
-    throw error(400, 'request body must be JSON');
+  if (!request.headers.get('content-type')?.toLowerCase().startsWith('multipart/form-data')) {
+    throw error(400, 'inline-scene request must be multipart form data');
+  }
+  const form = await request.formData().catch(() => {
+    throw error(400, 'inline-scene multipart body is invalid');
   });
+  const parts = exactMultipartParts(form);
   let sceneRequest;
   try {
-    sceneRequest = normalizeInlineSceneImageRequest(body);
+    sceneRequest = normalizeInlineSceneImageRequest(JSON.parse(parts.requestJson));
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene image request');
+  }
+  if (sceneRequest.continuityMaster && !parts.master) {
+    throw error(400, 'inline-scene continuity metadata requires exactly one master PNG');
+  }
+  if (!sceneRequest.continuityMaster && parts.master) {
+    throw error(400, 'inline-scene request has an unexpected continuity master PNG');
+  }
+  let continuityMasterBytes: Uint8Array | null = null;
+  if (sceneRequest.continuityMaster && parts.master) {
+    continuityMasterBytes = new Uint8Array(await parts.master.arrayBuffer());
+    try {
+      validateInlineScenePng(
+        continuityMasterBytes,
+        sceneRequest.continuityMaster.width,
+        sceneRequest.continuityMaster.height
+      );
+    } catch {
+      throw error(400, 'inline-scene continuity master dimensions do not match its bytes');
+    }
+    if (await sha256Bytes(continuityMasterBytes) !== sceneRequest.continuityMaster.imageSha256) {
+      throw error(400, 'inline-scene continuity master hash does not match its bytes');
+    }
   }
   const seed = sceneRequest.seed ?? randomSeed();
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(INLINE_SCENE_IMAGE_TIMEOUT_MS)]);
@@ -56,7 +119,24 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     if (sceneRequest.lora && !capabilities.loras.includes(sceneRequest.lora.path)) {
       throw error(400, 'The selected inline-scene LoRA is unavailable.');
     }
-    const result = await runComfyInlineScene(fetch, baseUrl, sceneRequest, capabilities, seed, signal);
+    const uploadedMaster = sceneRequest.continuityMaster && continuityMasterBytes
+      ? await uploadInlineSceneContinuityMasterInput(
+          fetch,
+          baseUrl,
+          continuityMasterBytes,
+          sceneRequest.continuityMaster,
+          signal
+        )
+      : undefined;
+    const result = await runComfyInlineScene(
+      fetch,
+      baseUrl,
+      sceneRequest,
+      capabilities,
+      seed,
+      signal,
+      uploadedMaster
+    );
     const dimensions = inlineSceneDimensions(sceneRequest.aspectRatio, sceneRequest.megapixels);
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
       headers: {

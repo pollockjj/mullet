@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
@@ -21,8 +22,10 @@ import {
   buildLtx25InlineSceneVideoWorkflow,
   buildInlineSceneVideoPrompt,
   buildInlineSceneVideoRequest,
+  buildInlineSceneVideoWorkflow,
   buildMiniMaxH3InlineSceneVideoWorkflow,
   inlineSceneMasterToggleEnabled,
+  inlineSceneH3ReferencePlan,
   inlineSceneVideoDecodeFailureTransition,
   inlineSceneVideoDimensions,
   inlineSceneVideoMasterToggleAction,
@@ -46,19 +49,135 @@ const sceneLora = Object.freeze({
   trigger: 'jennastannis',
   modelHash: 'c'.repeat(64)
 });
+const sceneCandidate = Object.freeze({
+  id: 'jenna',
+  displayName: 'Jenna Stannis',
+  aliases: ['Jenna', 'Jenna Stannis'],
+  profileFingerprint: 'd'.repeat(64)
+});
+const soloCast = Object.freeze({
+  kind: 'solo',
+  identities: [{
+    profileId: sceneCandidate.id,
+    profileFingerprint: sceneCandidate.profileFingerprint,
+    displayName: sceneCandidate.displayName,
+    subject: 'Jenna Stannis',
+    referenceImage: {
+      name: 'jenna-stannis-v1.jpg',
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: 'e'.repeat(64),
+      width: 400,
+      height: 600,
+      aspectRatio: '2:3'
+    },
+    bodyReferenceImage: {
+      name: 'jenna-stannis-body-v1.png',
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: '4'.repeat(64),
+      width: 512,
+      height: 768,
+      aspectRatio: '2:3'
+    }
+  }]
+});
+const trioCandidates = Object.freeze([
+  sceneCandidate,
+  Object.freeze({
+    id: 'cally',
+    displayName: 'Cally',
+    aliases: ['Cally'],
+    profileFingerprint: 'f'.repeat(64)
+  }),
+  Object.freeze({
+    id: 'servalan',
+    displayName: 'Servalan',
+    aliases: ['Servalan'],
+    profileFingerprint: '9'.repeat(64)
+  })
+]);
+const trioCast = Object.freeze({
+  kind: 'trio',
+  identities: trioCandidates.map((candidate, index) => ({
+    profileId: candidate.id,
+    profileFingerprint: candidate.profileFingerprint,
+    displayName: candidate.displayName,
+    subject: candidate.displayName,
+    referenceImage: {
+      name: `${candidate.id}-canonical.png`,
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: String(index + 1).repeat(64),
+      width: 400,
+      height: 600,
+      aspectRatio: '2:3'
+    },
+    bodyReferenceImage: {
+      name: `${candidate.id}-body.png`,
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: String(index + 4).repeat(64),
+      width: 512,
+      height: 768,
+      aspectRatio: '2:3'
+    }
+  }))
+});
 
-function staticScene(aspectRatio = '16:9', megapixels = 1) {
+function castForCount(count) {
+  const identities = trioCast.identities.slice(0, count);
+  return {
+    kind: count === 1 ? 'solo' : count === 2 ? 'duo' : 'trio',
+    identities
+  };
+}
+
+function continuityMasterFor(cast) {
+  return {
+    requestKey: `sha256:${'8'.repeat(64)}`,
+    promptId: '44444444-4444-4444-8444-444444444444',
+    seed: 41,
+    generatedAt: 123456788,
+    width: 1328,
+    height: 752,
+    imageSha256: '7'.repeat(64),
+    cast: cast.identities.map(({ profileId, profileFingerprint }) => ({ profileId, profileFingerprint }))
+  };
+}
+
+function priorMasterInput(master) {
+  return {
+    name: 'scene-motion-prior-55555555-5555-4555-8555-555555555555.png',
+    subfolder: 'mullet/motion-inputs',
+    type: 'input',
+    imageSha256: master.imageSha256,
+    width: master.width,
+    height: master.height
+  };
+}
+
+function staticScene(
+  aspectRatio = '16:9',
+  megapixels = 1,
+  { candidates = [sceneCandidate], cast = soloCast, continuityMaster } = {}
+) {
   const sidecarRequest = buildInlineSceneRequest(
     conversationId,
     messages,
-    livingHistorySourceForMessages(conversationId, messages)
+    livingHistorySourceForMessages(conversationId, messages),
+    candidates
   );
-  const result = createInlineSceneResult(sidecarRequest, 'gemma-4-ortenzya', prompt);
+  const result = createInlineSceneResult(sidecarRequest, 'gemma-4-ortenzya', {
+    prompt,
+    subjectIds: candidates.map(({ id }) => id)
+  });
+  const usesQwen = cast.kind !== 'solo' || Boolean(continuityMaster);
   const request = buildInlineSceneImageRequest(result, {
-    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
-    subject: 'Jenna Stannis',
-    referenceImage: null,
-    lora: sceneLora,
+    modelTemplate: usesQwen ? INLINE_SCENE_QWEN_TEMPLATE_ID : INLINE_SCENE_TEMPLATE_ID,
+    cast,
+    ...(continuityMaster ? { continuityMaster } : {}),
+    lora: usesQwen ? null : sceneLora,
     aspectRatio,
     megapixels
   });
@@ -89,15 +208,18 @@ function openingStaticScene(aspectRatio = '16:9', megapixels = 1) {
     expectedGreeting: opening[0].content
   });
   const result = createInlineSceneResult({
-    spec: 'mullet_inline_scene_request_v2',
+    spec: 'mullet_inline_scene_request_v3',
     kind: 'inline_scene',
     source,
-    turns: opening
-  }, 'gemma-4-ortenzya', prompt);
+    turns: opening,
+    candidates: [sceneCandidate]
+  }, 'gemma-4-ortenzya', {
+    prompt,
+    subjectIds: [sceneCandidate.id]
+  });
   const request = buildInlineSceneImageRequest(result, {
     modelTemplate: INLINE_SCENE_TEMPLATE_ID,
-    subject: 'Jenna Stannis',
-    referenceImage: null,
+    cast: soloCast,
     lora: sceneLora,
     aspectRatio,
     megapixels
@@ -120,7 +242,7 @@ function openingStaticScene(aspectRatio = '16:9', megapixels = 1) {
 test('binds motion to every static-scene provenance field', () => {
   const scene = staticScene();
   const request = buildInlineSceneVideoRequest(scene);
-  assert.equal(request.spec, 'mullet_inline_scene_video_request_v5');
+  assert.equal(request.spec, 'mullet_inline_scene_video_request_v6');
   assert.equal(request.modelTemplate, LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID);
   assert.equal(request.mode, 'flf2v_loop');
   assert.equal(request.source.sceneRequestKey, scene.requestKey);
@@ -154,6 +276,21 @@ test('binds motion to every static-scene provenance field', () => {
   assert.notEqual(
     inlineSceneVideoRequestKey(request),
     inlineSceneVideoRequestKey({ ...request, source: { ...request.source, sceneSeed: 43 } })
+  );
+  assert.throws(
+    () => normalizeInlineSceneVideoRequest({ ...request, spec: 'mullet_inline_scene_video_request_v5' }),
+    /request spec/
+  );
+  const h3 = buildInlineSceneVideoRequest(scene, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+  assert.equal(h3.modelTemplate, 'minimax-h3-ref2va-scene-v1');
+  assert.equal(h3.mode, 'ref2va');
+  assert.throws(
+    () => normalizeInlineSceneVideoRequest({ ...h3, mode: 'i2v' }),
+    /mode/
+  );
+  assert.throws(
+    () => normalizeInlineSceneVideoRequest({ ...h3, modelTemplate: 'minimax-h3-fl2va-i2v-turbo-v1' }),
+    /model template/
   );
 });
 
@@ -279,37 +416,158 @@ test('accepts only a canonical finite encoded-duration header', () => {
   }
 });
 
-test('builds the pinned MiniMax H3 FL2VA I2V graph with native audio', () => {
-  const request = buildInlineSceneVideoRequest(
-    staticScene('3:2', 0.5),
-    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
-  );
+test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, and three subjects', () => {
   const input = {
     name: 'scene-motion-33333333-3333-4333-8333-333333333333.png',
     subfolder: 'mullet/motion-inputs',
     type: 'input',
-    imageSha256: request.source.sceneImageSha256
+    imageSha256: 'a'.repeat(64)
   };
-  const graph = buildMiniMaxH3InlineSceneVideoWorkflow(request, input, 42);
-  assert.equal(graph['1'].inputs.unet_name, 'minimax_h3_fl2va_pruned_int8_convrot.safetensors');
-  assert.equal(graph['2'].inputs.type, 'minimax');
-  assert.deepEqual(graph['6'].inputs.first_frame, ['5', 0]);
-  assert.equal(graph['6'].inputs.width, 1152);
-  assert.equal(graph['6'].inputs.height, 768);
-  assert.equal(graph['6'].inputs.length, 124);
-  assert.equal(graph['8'].inputs.sampler_name, 'res_multistep');
-  assert.deepEqual(graph['9'].inputs, { model: ['16', 0], scheduler: 'simple', steps: 4, denoise: 1 });
-  assert.deepEqual(graph['14'].inputs.audio, ['13', 0]);
-  assert.equal(graph['15'].inputs.filename_prefix, 'mullet/scene-motion');
-  assert.equal(graph['15'].inputs.format, 'auto');
-  assert.equal(graph['16'].inputs.lora_name, 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors');
-  assert.match(graph['6'].inputs.prompt, /damaged starship flight deck/);
-  assert.match(graph['6'].inputs.prompt, /Preserve every visible subject/);
-  assert.match(buildInlineSceneVideoPrompt(request), /synchronized diegetic room tone/);
+  for (const count of [1, 2, 3]) {
+    const cast = castForCount(count);
+    const candidates = trioCandidates.slice(0, count);
+    const request = buildInlineSceneVideoRequest(
+      staticScene('3:2', 0.5, { candidates, cast }),
+      MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    );
+    const plan = inlineSceneH3ReferencePlan(request);
+    assert.deepEqual(plan.map(({ picture, kind }) => ({ picture, kind })), [
+      { picture: 1, kind: 'current_scene' },
+      ...Array.from({ length: count }, (_unused, index) => ({ picture: index + 2, kind: 'canonical_identity' })),
+      ...Array.from({ length: count }, (_unused, index) => ({ picture: count + index + 2, kind: 'body_identity' }))
+    ]);
+    assert.ok(plan.length <= MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.maxReferenceImages);
+    const graph = buildMiniMaxH3InlineSceneVideoWorkflow(request, input, 42);
+    assert.equal(graph['1'].inputs.unet_name, 'minimax_h3_ref2va_pruned_int8_convrot.safetensors');
+    assert.equal(graph['2'].inputs.type, 'minimax');
+    for (let index = 0; index < count; index += 1) {
+      const nodeId = String(6 + index);
+      const bodyNodeId = String(6 + count + index);
+      assert.equal(graph[nodeId].inputs.image, `mullet/identity/${candidates[index].id}-canonical.png`);
+      assert.equal(graph[bodyNodeId].inputs.image, `mullet/identity/${candidates[index].id}-body.png`);
+      assert.deepEqual(graph['20'].inputs[`ref_images.ref_image_${index + 1}`], [nodeId, 0]);
+      assert.deepEqual(graph['20'].inputs[`ref_images.ref_image_${count + index + 1}`], [bodyNodeId, 0]);
+      assert.match(graph['20'].inputs.prompt, new RegExp(`<Subject ${index + 1}> is .*<Picture ${index + 2}>.*<Picture ${count + index + 2}>`));
+    }
+    assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
+    assert.equal(Object.keys(graph['20'].inputs).filter((key) => key.startsWith('ref_images.ref_image_')).length, count * 2 + 1);
+    assert.equal(graph['20'].inputs.ref_image_size, 'match');
+    assert.equal(graph['20'].inputs.width, 1152);
+    assert.equal(graph['20'].inputs.height, 768);
+    assert.equal(graph['20'].inputs.length, 124);
+    assert.equal(graph['22'].inputs.sampler_name, 'res_multistep');
+    assert.deepEqual(graph['23'].inputs, { model: ['1', 0], scheduler: 'beta', steps: 20, denoise: 1 });
+    assert.deepEqual(graph['28'].inputs.audio, ['27', 0]);
+    assert.equal(graph['29'].inputs.filename_prefix, 'mullet/scene-motion');
+    assert.equal(graph['29'].inputs.format, 'auto');
+    assert.equal(Object.values(graph).some((node) => node.class_type === 'LoraLoaderModelOnly'), false);
+    assert.doesNotMatch(graph['20'].inputs.prompt, /opens exactly on the supplied first frame/i);
+
+    const master = continuityMasterFor(cast);
+    const continuedRequest = buildInlineSceneVideoRequest(
+      staticScene('3:2', 0.5, { candidates, cast, continuityMaster: master }),
+      MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    );
+    const masterInput = priorMasterInput(master);
+    const continuedPlan = inlineSceneH3ReferencePlan(continuedRequest);
+    assert.deepEqual(continuedPlan.map(({ picture, kind }) => ({ picture, kind })), [
+      { picture: 1, kind: 'current_scene' },
+      { picture: 2, kind: 'prior_master' },
+      ...Array.from({ length: count }, (_unused, index) => ({ picture: index + 3, kind: 'canonical_identity' })),
+      ...Array.from({ length: count }, (_unused, index) => ({ picture: count + index + 3, kind: 'body_identity' }))
+    ]);
+    const continuedGraph = buildMiniMaxH3InlineSceneVideoWorkflow(continuedRequest, input, 43, masterInput);
+    assert.equal(continuedGraph['6'].inputs.image, `mullet/motion-inputs/${masterInput.name}`);
+    assert.deepEqual(continuedGraph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
+    assert.deepEqual(continuedGraph['20'].inputs['ref_images.ref_image_1'], ['6', 0]);
+    for (let index = 0; index < count; index += 1) {
+      const nodeId = String(7 + index);
+      const bodyNodeId = String(7 + count + index);
+      assert.deepEqual(continuedGraph['20'].inputs[`ref_images.ref_image_${index + 2}`], [nodeId, 0]);
+      assert.deepEqual(continuedGraph['20'].inputs[`ref_images.ref_image_${count + index + 2}`], [bodyNodeId, 0]);
+      assert.match(continuedGraph['20'].inputs.prompt, new RegExp(`<Subject ${index + 1}> is .*<Picture ${index + 3}>.*<Picture ${count + index + 3}>`));
+    }
+    assert.equal(Object.keys(continuedGraph['20'].inputs).filter((key) => key.startsWith('ref_images.ref_image_')).length, count * 2 + 2);
+    assert.match(continuedGraph['20'].inputs.prompt, /<Picture 2> is the verified prior scene master/);
+    assert.doesNotMatch(continuedGraph['20'].inputs.prompt, /opens exactly on the supplied first frame/i);
+    assert.throws(
+      () => buildMiniMaxH3InlineSceneVideoWorkflow(continuedRequest, input, 43),
+      /prior master input presence/
+    );
+    assert.throws(
+      () => buildMiniMaxH3InlineSceneVideoWorkflow(continuedRequest, input, 43, {
+        ...masterInput,
+        imageSha256: '6'.repeat(64)
+      }),
+      /prior master input/
+    );
+    assert.throws(
+      () => buildMiniMaxH3InlineSceneVideoWorkflow(request, input, 43, masterInput),
+      /prior master input presence/
+    );
+  }
+  const request = buildInlineSceneVideoRequest(
+    staticScene('3:2', 0.5, { candidates: trioCandidates, cast: trioCast }),
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  );
+  const refPrompt = buildInlineSceneVideoPrompt(request);
+  assert.match(refPrompt, /^subject_definitions:/);
+  assert.match(refPrompt, /detailed_description:[\s\S]*damaged starship flight deck/);
+  assert.match(refPrompt, /overall_soundscape:[\s\S]*native stereo room tone/);
+  assert.match(refPrompt, /non_diegetic_music:\nN\/A\. No music/);
+  assert.match(refPrompt, /No dialogue, voices, narration, singing, or speech-like sound/);
   assert.throws(
     () => buildMiniMaxH3InlineSceneVideoWorkflow(request, { ...input, imageSha256: 'b'.repeat(64) }, 42),
     /input reference/
   );
+
+  const noOverlapMaster = {
+    ...continuityMasterFor(soloCast),
+    cast: [{ profileId: 'not-jenna', profileFingerprint: 'b'.repeat(64) }]
+  };
+  const noOverlapRequest = buildInlineSceneVideoRequest(
+    staticScene('3:2', 0.5, { continuityMaster: noOverlapMaster }),
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  );
+  assert.equal(inlineSceneH3ReferencePlan(noOverlapRequest).some(({ kind }) => kind === 'prior_master'), false);
+  assert.doesNotThrow(() => buildMiniMaxH3InlineSceneVideoWorkflow(noOverlapRequest, input, 42));
+  assert.throws(
+    () => buildMiniMaxH3InlineSceneVideoWorkflow(noOverlapRequest, input, 42, priorMasterInput(noOverlapMaster)),
+    /presence/
+  );
+
+  const sameHashMaster = { ...continuityMasterFor(soloCast), imageSha256: input.imageSha256 };
+  const sameHashRequest = buildInlineSceneVideoRequest(
+    staticScene('3:2', 0.5, { continuityMaster: sameHashMaster }),
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  );
+  assert.equal(inlineSceneH3ReferencePlan(sameHashRequest).some(({ kind }) => kind === 'prior_master'), false);
+
+  const duplicateReference = trioCast.identities[0].referenceImage;
+  const dedupedCast = {
+    kind: 'duo',
+    identities: trioCast.identities.slice(0, 2).map((identity) => ({
+      ...identity,
+      bodyReferenceImage: duplicateReference
+    }))
+  };
+  const dedupedRequest = buildInlineSceneVideoRequest(
+    staticScene('3:2', 0.5, {
+      candidates: trioCandidates.slice(0, 2),
+      cast: dedupedCast
+    }),
+    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  );
+  const dedupedPlan = inlineSceneH3ReferencePlan(dedupedRequest);
+  assert.deepEqual(dedupedPlan.map(({ picture, kind }) => ({ picture, kind })), [
+    { picture: 1, kind: 'current_scene' },
+    { picture: 2, kind: 'canonical_identity' },
+    { picture: 3, kind: 'canonical_identity' }
+  ]);
+  assert.equal(new Set(dedupedPlan.map(({ sha256 }) => sha256)).size, dedupedPlan.length);
+  const dedupedPrompt = buildInlineSceneVideoPrompt(dedupedRequest);
+  assert.match(dedupedPrompt, /<Subject 1> is Jenna Stannis;[^\n]*<Picture 2>/);
+  assert.match(dedupedPrompt, /<Subject 2> is Cally;[^\n]*<Picture 3>[^\n]*<Picture 2>/);
 });
 
 test('builds the pinned two-pass LTX FLF graph with identical supplied first and last frames and no output audio', () => {
@@ -339,4 +597,10 @@ test('builds the pinned two-pass LTX FLF graph with identical supplied first and
   assert.deepEqual(graph['36'].inputs.video, ['35', 0]);
   assert.match(buildInlineSceneVideoPrompt(request), /Silent video only/);
   assert.match(buildInlineSceneVideoPrompt(request), /no talking, no lip or mouth movement/);
+  assert.match(buildInlineSceneVideoPrompt(request), /opens exactly on the supplied first frame/);
+  const master = continuityMasterFor(soloCast);
+  assert.throws(
+    () => buildInlineSceneVideoWorkflow(request, input, 42, priorMasterInput(master)),
+    /does not accept a prior master/
+  );
 });

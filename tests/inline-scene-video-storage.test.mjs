@@ -45,6 +45,30 @@ const sceneLora = Object.freeze({
   trigger: 'jennastannis',
   modelHash: 'c'.repeat(64)
 });
+const sceneCandidate = Object.freeze({
+  id: 'jenna',
+  displayName: 'Jenna Stannis',
+  aliases: ['Jenna', 'Jenna Stannis'],
+  profileFingerprint: 'd'.repeat(64)
+});
+const soloCast = Object.freeze({
+  kind: 'solo',
+  identities: [{
+    profileId: sceneCandidate.id,
+    profileFingerprint: sceneCandidate.profileFingerprint,
+    displayName: sceneCandidate.displayName,
+    subject: 'Jenna Stannis',
+    referenceImage: {
+      name: 'jenna-stannis-v1.jpg',
+      subfolder: 'mullet/identity',
+      type: 'input',
+      sha256: 'e'.repeat(64),
+      width: 400,
+      height: 600,
+      aspectRatio: '2:3'
+    }
+  }]
+});
 
 function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
   const messages = sourceKind === 'scenario_opening'
@@ -58,7 +82,7 @@ function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCE
       ];
   const sidecar = sourceKind === 'scenario_opening'
     ? {
-        spec: 'mullet_inline_scene_request_v2',
+        spec: 'mullet_inline_scene_request_v3',
         kind: 'inline_scene',
         source: inlineSceneSourceForScenarioOpening(conversationId, messages, {
           scenarioId: 'blakes-7-after-false-control',
@@ -66,14 +90,22 @@ function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCE
           starterId: 'jenna',
           expectedGreeting: messages[0].content
         }),
-        turns: messages
+        turns: messages,
+        candidates: [sceneCandidate]
       }
-    : buildInlineSceneRequest(conversationId, messages, livingHistorySourceForMessages(conversationId, messages));
-  const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', prompt);
+    : buildInlineSceneRequest(
+        conversationId,
+        messages,
+        livingHistorySourceForMessages(conversationId, messages),
+        [sceneCandidate]
+      );
+  const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', {
+    prompt,
+    subjectIds: [sceneCandidate.id]
+  });
   const sceneRequest = buildInlineSceneImageRequest(result, {
     modelTemplate: INLINE_SCENE_TEMPLATE_ID,
-    subject: 'Jenna Stannis',
-    referenceImage: null,
+    cast: soloCast,
     lora: sceneLora,
     aspectRatio: '16:9',
     megapixels: 1
@@ -123,8 +155,8 @@ function stored(overrides = {}, motionRequest = request()) {
 
 test('normalizes and byte-verifies the default static-scene-bound silent H.264 MP4', async () => {
   const normalized = normalizeStoredInlineSceneVideo(stored());
-  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v7');
-  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v7');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v9');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v9');
   assert.equal(normalized.requestKey, inlineSceneVideoRequestKey(normalized.request));
   assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/mp4');
   assert.equal(normalized.audioTracks, 0);
@@ -261,7 +293,7 @@ test('discards a malformed writer envelope inside its restore lock', async () =>
   assert.equal(discardedInsideLock, true);
 });
 
-test('silently discards obsolete v1 through v6 motion inside the restore lock', async () => {
+test('silently discards obsolete v1 through v8 motion inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_video_v1',
     'mullet_stored_inline_scene_video_envelope_v1',
@@ -274,7 +306,11 @@ test('silently discards obsolete v1 through v6 motion inside the restore lock', 
     'mullet_stored_inline_scene_video_v5',
     'mullet_stored_inline_scene_video_envelope_v5',
     'mullet_stored_inline_scene_video_v6',
-    'mullet_stored_inline_scene_video_envelope_v6'
+    'mullet_stored_inline_scene_video_envelope_v6',
+    'mullet_stored_inline_scene_video_v7',
+    'mullet_stored_inline_scene_video_envelope_v7',
+    'mullet_stored_inline_scene_video_v8',
+    'mullet_stored_inline_scene_video_envelope_v8'
   ]) {
     let lockHeld = false;
     let discardedInsideLock = false;

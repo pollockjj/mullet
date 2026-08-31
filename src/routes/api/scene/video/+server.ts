@@ -2,6 +2,8 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   INLINE_SCENE_VIDEO_TIMEOUT_MS,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  inlineSceneH3ReferencePlan,
   inlineSceneVideoDimensions,
   inlineSceneVideoSourceRequestSha256,
   inlineSceneVideoTemplateAvailable,
@@ -14,6 +16,8 @@ import {
   runComfyInlineSceneVideo,
   sha256InlineSceneVideoBytes,
   uploadInlineSceneVideoInput,
+  uploadInlineSceneVideoPriorMasterInput,
+  validateInlineSceneVideoPriorMasterBytes,
   validateInlineSceneVideoPng
 } from '$lib/server/comfy-inline-scene-video';
 import { runtime } from '$lib/server/runtime';
@@ -31,16 +35,18 @@ function randomSeed(): number {
   return (words[0] % 65_536) * 2 ** 32 + words[1];
 }
 
-function exactMultipartParts(form: FormData): { requestJson: string; image: Blob } {
+function exactMultipartParts(form: FormData): { requestJson: string; image: Blob; master: Blob | null } {
   const keys = [...form.keys()];
   if (
-    keys.length !== 2
+    (keys.length !== 2 && keys.length !== 3)
     || form.getAll('request').length !== 1
     || form.getAll('image').length !== 1
-    || keys.some((key) => key !== 'request' && key !== 'image')
-  ) throw error(400, 'multipart body must contain exactly one request and one image');
+    || form.getAll('master').length > 1
+    || keys.some((key) => key !== 'request' && key !== 'image' && key !== 'master')
+  ) throw error(400, 'multipart body must contain one request, one image, and at most one master');
   const requestJson = form.get('request');
   const image = form.get('image');
+  const master = form.get('master');
   if (typeof requestJson !== 'string' || requestJson.length < 1 || requestJson.length > 100_000) {
     throw error(400, 'inline-scene video request JSON is invalid');
   }
@@ -48,7 +54,13 @@ function exactMultipartParts(form: FormData): { requestJson: string; image: Blob
     throw error(400, 'inline-scene video image must be a PNG');
   }
   if (image.size > INPUT_LIMIT_BYTES) throw error(413, 'inline-scene video image exceeds 20 MiB');
-  return { requestJson, image };
+  if (master !== null && (!(master instanceof Blob) || master.type !== 'image/png' || master.size < 24)) {
+    throw error(400, 'inline-scene video master must be a PNG');
+  }
+  if (master instanceof Blob && master.size > INPUT_LIMIT_BYTES) {
+    throw error(413, 'inline-scene video master exceeds 20 MiB');
+  }
+  return { requestJson, image, master: master instanceof Blob ? master : null };
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
@@ -81,6 +93,15 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene video request');
   }
+  const isH3 = videoRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+  const h3ReferencePlan = isH3 ? inlineSceneH3ReferencePlan(videoRequest) : [];
+  const priorMaster = h3ReferencePlan.find((entry) => entry.kind === 'prior_master');
+  if (parts.master && !priorMaster) {
+    throw error(400, 'inline-scene video master is not expected for this request');
+  }
+  if (priorMaster && !parts.master) {
+    throw error(400, 'inline-scene video request is missing its prior master');
+  }
   const imageBytes = new Uint8Array(await parts.image.arrayBuffer());
   try {
     validateInlineSceneVideoPng(
@@ -95,6 +116,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (imageSha256 !== videoRequest.source.sceneImageSha256) {
     throw error(400, 'inline-scene video image hash does not match its static source');
   }
+  const masterBytes = parts.master ? new Uint8Array(await parts.master.arrayBuffer()) : null;
+  if (masterBytes && priorMaster) {
+    try {
+      await validateInlineSceneVideoPriorMasterBytes(masterBytes, priorMaster.master);
+    } catch (cause) {
+      throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene video prior master');
+    }
+  }
   const seed = randomSeed();
   const timeoutSignal = AbortSignal.timeout(INLINE_SCENE_VIDEO_TIMEOUT_MS);
   const signal = AbortSignal.any([request.signal, timeoutSignal]);
@@ -106,7 +135,18 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       throw error(503, `The selected inline-scene motion model is unavailable.${diagnostics}`);
     }
     const input = await uploadInlineSceneVideoInput(fetch, baseUrl, imageBytes, imageSha256, signal);
-    const result = await runComfyInlineSceneVideo(fetch, baseUrl, videoRequest, input, seed, signal);
+    const priorMasterInput = masterBytes && priorMaster
+      ? await uploadInlineSceneVideoPriorMasterInput(fetch, baseUrl, masterBytes, priorMaster.master, signal)
+      : undefined;
+    const result = await runComfyInlineSceneVideo(
+      fetch,
+      baseUrl,
+      videoRequest,
+      input,
+      seed,
+      signal,
+      priorMasterInput
+    );
     const dimensions = inlineSceneVideoDimensions(videoRequest.aspectRatio, videoRequest.modelTemplate);
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
       headers: {

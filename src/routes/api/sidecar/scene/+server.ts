@@ -26,12 +26,12 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       baseUrl: runtime.modelBaseUrl,
       model: runtime.modelId,
       systemPrompt: INLINE_SCENE_SYSTEM_PROMPT,
-      input: JSON.stringify(sceneRequest.turns),
+      input: JSON.stringify({ candidates: sceneRequest.candidates, turns: sceneRequest.turns }),
       maxTokens: 384,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(INLINE_SCENE_TIMEOUT_MS)])
     });
-    const prompt = parseInlineSceneResponse(completion);
-    return json(createInlineSceneResult(sceneRequest, runtime.modelId, prompt), {
+    const direction = parseInlineSceneResponse(completion, sceneRequest.candidates);
+    return json(createInlineSceneResult(sceneRequest, runtime.modelId, direction), {
       headers: { 'cache-control': 'no-store' }
     });
   } catch (cause) {

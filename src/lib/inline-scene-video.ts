@@ -3,14 +3,16 @@ import {
   inlineSceneImageRequestKey,
   normalizeInlineSceneImageRequest,
   type InlineSceneAspectRatio,
+  type InlineSceneContinuityMaster,
+  type InlineSceneIdentity,
   type InlineSceneImageRequest
 } from './inline-scene.ts';
 import { sha256Hex } from './sha256.ts';
 
-export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v5' as const;
-export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v4' as const;
+export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v6' as const;
+export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v5' as const;
 export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-scene-v2' as const;
-export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-i2v-turbo-v1' as const;
+export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-ref2va-scene-v1' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 5 as const;
@@ -19,7 +21,7 @@ export const LTX25_INLINE_SCENE_VIDEO_FRAMES = 121 as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_FRAMES = 124 as const;
 export const INLINE_SCENE_VIDEO_FRAMES = LTX25_INLINE_SCENE_VIDEO_FRAMES;
 export const LTX25_INLINE_SCENE_VIDEO_MODE = 'flf2v_loop' as const;
-export const MINIMAX_H3_INLINE_SCENE_VIDEO_MODE = 'i2v' as const;
+export const MINIMAX_H3_INLINE_SCENE_VIDEO_MODE = 'ref2va' as const;
 export const INLINE_SCENE_VIDEO_MODE = LTX25_INLINE_SCENE_VIDEO_MODE;
 
 export const INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
@@ -81,21 +83,20 @@ export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
 
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   id: MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  label: 'MiniMax H3 FL2VA Turbo',
-  modelFamily: 'minimax-h3-fl2va',
+  label: 'MiniMax H3 Ref2VA',
+  modelFamily: 'minimax-h3-ref2va',
   modelFiles: {
-    unet: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
+    unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
     clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
     videoVae: 'minimax_h3_video_vae_fp16.safetensors',
-    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
-    turboLora: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors'
+    audioVae: 'minimax_h3_audio_vae_fp32.safetensors'
   },
   requiredNodes: [
     'UNETLoader',
     'CLIPLoader',
     'VAELoader',
     'LoadImage',
-    'MiniMaxH3ImageToVideo',
+    'MiniMaxH3ReferenceToVideo',
     'BasicGuider',
     'KSamplerSelect',
     'BasicScheduler',
@@ -104,10 +105,9 @@ export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
     'VAEDecode',
     'VAEDecodeAudio',
     'CreateVideo',
-    'SaveVideo',
-    'LoraLoaderModelOnly'
+    'SaveVideo'
   ],
-  outputNode: '15',
+  outputNode: '29',
   mode: MINIMAX_H3_INLINE_SCENE_VIDEO_MODE,
   durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
   frames: MINIMAX_H3_INLINE_SCENE_VIDEO_FRAMES,
@@ -115,13 +115,15 @@ export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   shortEdge: 768,
   maxPixels: 768 * 1344,
   sampler: 'res_multistep',
-  scheduler: 'simple',
-  steps: 4,
+  scheduler: 'beta',
+  steps: 20,
   denoise: 1,
   format: 'auto',
   codec: 'auto',
   bitDepth: 8,
-  promptGuide: 'one continuous shot from the supplied first frame, coherent physical motion, native synchronized stereo ambience, no cuts'
+  maxReferenceImages: 9,
+  referenceImageSize: 'match',
+  promptGuide: 'official six-section Ref2VA prompt, generated scene as Picture 1, canonical cast references in stable order, one restrained continuous shot, native ambience without dialogue, narration, or music'
 } as const);
 
 export const INLINE_SCENE_VIDEO_TEMPLATES = Object.freeze([
@@ -213,9 +215,45 @@ export type InlineSceneVideoInputReference = {
   imageSha256: string;
 };
 
+export type InlineSceneVideoPriorMasterInput = {
+  name: string;
+  subfolder: 'mullet/motion-inputs';
+  type: 'input';
+  imageSha256: string;
+  width: number;
+  height: number;
+};
+
+export type InlineSceneH3ReferencePlanEntry =
+  | {
+      picture: number;
+      kind: 'current_scene';
+      sha256: string;
+    }
+  | {
+      picture: number;
+      kind: 'prior_master';
+      sha256: string;
+      master: InlineSceneContinuityMaster;
+    }
+  | {
+      picture: number;
+      kind: 'canonical_identity' | 'body_identity';
+      sha256: string;
+      identityIndex: number;
+      identity: InlineSceneIdentity;
+      referenceImage: InlineSceneIdentity['referenceImage'];
+    };
+
+type InlineSceneH3ReferencePlanCandidate =
+  | Omit<Extract<InlineSceneH3ReferencePlanEntry, { kind: 'current_scene' }>, 'picture'>
+  | Omit<Extract<InlineSceneH3ReferencePlanEntry, { kind: 'prior_master' }>, 'picture'>
+  | Omit<Extract<InlineSceneH3ReferencePlanEntry, { kind: 'canonical_identity' | 'body_identity' }>, 'picture'>;
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const INPUT_IMAGE_PATTERN = /^scene-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
+const PRIOR_MASTER_IMAGE_PATTERN = /^scene-motion-prior-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
 const dimensionMap = new Map(INLINE_SCENE_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
 const LTX_NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, cluttered background, camera cuts, camera shake, black frames, talking, lip movement, speech gestures';
 
@@ -348,6 +386,57 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
   };
 }
 
+export function inlineSceneH3ReferencePlan(
+  request: InlineSceneVideoRequest
+): InlineSceneH3ReferencePlanEntry[] {
+  const normalized = normalizeInlineSceneVideoRequest(request);
+  if (normalized.modelTemplate !== MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+    throw new Error('H3 reference planning requires a MiniMax H3 inline-scene video request');
+  }
+  const plan: InlineSceneH3ReferencePlanEntry[] = [];
+  const selectedHashes = new Set<string>();
+  const append = (entry: InlineSceneH3ReferencePlanCandidate): void => {
+    if (
+      plan.length >= MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.maxReferenceImages
+      || selectedHashes.has(entry.sha256)
+    ) return;
+    selectedHashes.add(entry.sha256);
+    plan.push({ ...entry, picture: plan.length + 1 } as InlineSceneH3ReferencePlanEntry);
+  };
+
+  append({ kind: 'current_scene', sha256: normalized.source.sceneImageSha256 });
+  const master = normalized.source.sceneRequest.continuityMaster;
+  if (master && master.imageSha256 !== normalized.source.sceneImageSha256) {
+    const currentProfiles = new Set(normalized.source.sceneRequest.cast.identities.map((identity) => (
+      `${identity.profileId}\u001f${identity.profileFingerprint}`
+    )));
+    const overlapsCurrentCast = master.cast.some(({ profileId, profileFingerprint }) => (
+      currentProfiles.has(`${profileId}\u001f${profileFingerprint}`)
+    ));
+    if (overlapsCurrentCast) append({ kind: 'prior_master', sha256: master.imageSha256, master });
+  }
+  normalized.source.sceneRequest.cast.identities.forEach((identity, identityIndex) => {
+    append({
+      kind: 'canonical_identity',
+      sha256: identity.referenceImage.sha256,
+      identityIndex,
+      identity,
+      referenceImage: identity.referenceImage
+    });
+  });
+  normalized.source.sceneRequest.cast.identities.forEach((identity, identityIndex) => {
+    if (!identity.bodyReferenceImage) return;
+    append({
+      kind: 'body_identity',
+      sha256: identity.bodyReferenceImage.sha256,
+      identityIndex,
+      identity,
+      referenceImage: identity.bodyReferenceImage
+    });
+  });
+  return plan;
+}
+
 export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): string {
   const normalized = normalizeInlineSceneVideoRequest(request);
   return [
@@ -457,22 +546,81 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
   const normalized = normalizeInlineSceneVideoRequest(request);
   const common = [
     normalized.source.sceneRequest.prompt,
-    'The video opens exactly on the supplied first frame.',
     'Preserve every visible subject, identity, attire, object, and spatial relationship while continuing only restrained physical motion implied by the scene.',
     'Use one continuous landscape shot with no cuts, no new subjects, no new objects, no text, and no black frames.'
   ];
-  return normalized.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? [
+  if (normalized.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+    return [
         ...common,
+        'The video opens exactly on the supplied first frame.',
         'The identical supplied scene is the first and final keyframe; all restrained motion returns exactly to that final keyframe.',
         'Ambient physical motion only: no talking, no lip or mouth movement, and no speech gestures.',
         'Silent video only; no dialogue, narration, music, room tone, ambience, or sound effects.'
-      ].join(' ')
-    : [
-        ...common,
-        'End in a composition close to the opening frame for clean replay.',
-        'Audio: generate synchronized diegetic room tone, environmental ambience, and quiet physical sounds implied by visible movement; no dialogue, narration, or music.'
       ].join(' ');
+  }
+  const cast = normalized.source.sceneRequest.cast.identities;
+  const plan = inlineSceneH3ReferencePlan(normalized);
+  const pictureForHash = (sha256: string): number => {
+    const entry = plan.find((candidate) => candidate.sha256 === sha256);
+    if (!entry) throw new Error('H3 reference plan omitted a required cast reference');
+    return entry.picture;
+  };
+  const priorMaster = plan.find((entry) => entry.kind === 'prior_master');
+  const subjectDefinitions = [
+    '<Picture 1> is the generated scene reference and composition anchor, defining the setting, framing, lighting, attire, objects, and spatial relationships for [Shot 1].',
+    ...(priorMaster
+      ? [`<Picture ${priorMaster.picture}> is the verified prior scene master and continuity reference; preserve compatible identity, wardrobe, setting, object, and spatial continuity without overriding the current composition in <Picture 1>.`]
+      : []),
+    ...cast.map((identity, index) => {
+      const canonicalPicture = pictureForHash(identity.referenceImage.sha256);
+      const bodyPicture = identity.bodyReferenceImage
+        ? pictureForHash(identity.bodyReferenceImage.sha256)
+        : null;
+      const bodyDirection = bodyPicture && bodyPicture !== canonicalPicture
+        ? ` and body and wardrobe appearance from <Picture ${bodyPicture}>`
+        : '';
+      return `<Subject ${index + 1}> is ${identity.displayName}; preserve this person's exact identity, face, and hair from <Picture ${canonicalPicture}>${bodyDirection} while retaining the attire and placement established in <Picture 1>.`;
+    })
+  ];
+  const subjectLabels = cast.map((_identity, index) => `<Subject ${index + 1}>`).join(', ');
+  const retention = plan.map((entry): string => {
+    if (entry.kind === 'current_scene') {
+      return `<Picture ${entry.picture}> ([Shot 1] composition anchor): fully_preserved - retain its setting, camera framing, lighting, attire, objects, and spatial relationships throughout the shot.`;
+    }
+    if (entry.kind === 'prior_master') {
+      return `<Picture ${entry.picture}> (prior scene continuity reference for [Shot 1]): selectively_preserved - retain compatible identity, wardrobe, setting, object, and spatial continuity while the current <Picture 1> remains authoritative.`;
+    }
+    if (entry.kind === 'canonical_identity') {
+      return `<Picture ${entry.picture}> (canonical identity for <Subject ${entry.identityIndex + 1}>): fully_preserved - retain ${entry.identity.displayName}'s facial structure, hair, and recognizable identity without substitution or blending.`;
+    }
+    return `<Picture ${entry.picture}> (body and wardrobe reference for <Subject ${entry.identityIndex + 1}>): selectively_preserved - retain ${entry.identity.displayName}'s body proportions and applicable wardrobe details without overriding the current composition.`;
+  });
+  const referenceSummary = priorMaster
+    ? `<Picture 1> as the current composition anchor, <Picture ${priorMaster.picture}> as the prior continuity reference,`
+    : '<Picture 1> as the current composition anchor';
+  const continuityDirection = priorMaster
+    ? ` Use <Picture ${priorMaster.picture}> only to preserve compatible continuity from the immediately prior scene master.`
+    : '';
+  return [
+    'subject_definitions:',
+    subjectDefinitions.join('\n'),
+    '',
+    'summary:',
+    `[reference generation] Create one restrained continuous five-second scene using ${referenceSummary} and ${subjectLabels} as the complete visible cast, with each identity bound to its numbered canonical picture.`,
+    '',
+    'retention_analysis:',
+    retention.join('\n'),
+    '',
+    'detailed_description:',
+    'The target video is realistic and cinematic, preserving the exact visual language of <Picture 1>.',
+    `[Shot 1] Use <Picture 1> as the setting, composition, lighting, attire, object, and spatial anchor.${continuityDirection} ${normalized.source.sceneRequest.prompt} Keep ${subjectLabels} continuously recognizable from their assigned canonical pictures. Over five seconds, allow only restrained natural breathing, blinking, small posture adjustments, subtle fabric and environmental movement, and a steady or nearly static camera. Maintain one continuous landscape shot with no cuts, transitions, new subjects, new objects, text, or black frames. Nobody speaks; mouths remain naturally closed or still, with no lip movement or speech gestures.`,
+    '',
+    'overall_soundscape:',
+    'Generate synchronized native stereo room tone, restrained environmental ambience, and only quiet physical sounds implied by visible movement. No dialogue, voices, narration, singing, or speech-like sound.',
+    '',
+    'non_diegetic_music:',
+    'N/A. No music or audience-only score.'
+  ].join('\n');
 }
 
 function validateInlineSceneVideoInputReference(
@@ -485,6 +633,20 @@ function validateInlineSceneVideoInputReference(
     || sceneInput.imageSha256 !== expectedImageSha256
     || !INPUT_IMAGE_PATTERN.test(sceneInput.name)
   ) throw new Error('inline-scene video input reference is invalid');
+}
+
+function validateInlineSceneVideoPriorMasterInput(
+  input: InlineSceneVideoPriorMasterInput,
+  master: InlineSceneContinuityMaster
+): void {
+  if (
+    input.subfolder !== 'mullet/motion-inputs'
+    || input.type !== 'input'
+    || input.imageSha256 !== master.imageSha256
+    || input.width !== master.width
+    || input.height !== master.height
+    || !PRIOR_MASTER_IMAGE_PATTERN.test(input.name)
+  ) throw new Error('inline-scene video prior master input does not match its request');
 }
 
 function nextInlineSceneVideoSeed(seed: number): number {
@@ -562,53 +724,84 @@ export function buildLtx25InlineSceneVideoWorkflow(
 export function buildMiniMaxH3InlineSceneVideoWorkflow(
   request: InlineSceneVideoRequest,
   sceneInput: InlineSceneVideoInputReference,
-  seed: number
+  seed: number,
+  priorMasterInput?: InlineSceneVideoPriorMasterInput
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneVideoRequest(request);
   if (normalized.modelTemplate !== MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
     throw new Error('inline-scene video request does not select MiniMax H3');
   }
   validateInlineSceneVideoInputReference(sceneInput, normalized.source.sceneImageSha256);
+  const plan = inlineSceneH3ReferencePlan(normalized);
+  const priorMaster = plan.find((entry) => entry.kind === 'prior_master');
+  if (Boolean(priorMaster) !== Boolean(priorMasterInput)) {
+    throw new Error('inline-scene video prior master input presence does not match its request');
+  }
+  if (priorMaster && priorMasterInput) {
+    validateInlineSceneVideoPriorMasterInput(priorMasterInput, priorMaster.master);
+  }
   const validatedSeed = integer(seed, 'inline-scene video seed', 0, Number.MAX_SAFE_INTEGER);
   const { width, height, frames, fps } = inlineSceneVideoDimensions(normalized.aspectRatio, normalized.modelTemplate);
   const template = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
+  const loadImageNodes = Object.fromEntries(plan.map((entry, index) => {
+    const nodeId = String(5 + index);
+    if (entry.kind === 'current_scene') {
+      return [nodeId, { class_type: 'LoadImage', inputs: { image: `${sceneInput.subfolder}/${sceneInput.name}` } }];
+    }
+    if (entry.kind === 'prior_master') {
+      if (!priorMasterInput) throw new Error('inline-scene video request is missing its prior master input');
+      return [nodeId, { class_type: 'LoadImage', inputs: { image: `${priorMasterInput.subfolder}/${priorMasterInput.name}` } }];
+    }
+    return [nodeId, {
+      class_type: 'LoadImage',
+      inputs: { image: `${entry.referenceImage.subfolder}/${entry.referenceImage.name}` }
+    }];
+  }));
+  const referenceInputs = Object.fromEntries(plan.map((entry, index) => [
+    `ref_images.ref_image_${index}`,
+    [String(5 + index), 0]
+  ]));
   return {
     '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
     '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
     '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
-    '5': { class_type: 'LoadImage', inputs: { image: sceneInput.subfolder + '/' + sceneInput.name } },
-    '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
+    ...loadImageNodes,
+    '20': { class_type: 'MiniMaxH3ReferenceToVideo', inputs: {
       clip: ['2', 0],
       vae: ['3', 0],
+      audio_vae: ['4', 0],
       prompt: buildInlineSceneVideoPrompt(normalized),
       width,
       height,
       length: frames,
-      first_frame: ['5', 0]
+      ref_image_size: template.referenceImageSize,
+      ...referenceInputs
     } },
-    '7': { class_type: 'BasicGuider', inputs: { model: ['16', 0], conditioning: ['6', 0] } },
-    '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
-    '9': { class_type: 'BasicScheduler', inputs: { model: ['16', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
-    '10': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
-    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
-    '13': { class_type: 'VAEDecodeAudio', inputs: { samples: ['11', 0], vae: ['4', 0] } },
-    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps, audio: ['13', 0], bit_depth: template.bitDepth } },
-    '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: 'mullet/scene-motion', format: template.format, codec: template.codec } },
-    '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } }
+    '21': { class_type: 'BasicGuider', inputs: { model: ['1', 0], conditioning: ['20', 0] } },
+    '22': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '23': { class_type: 'BasicScheduler', inputs: { model: ['1', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
+    '24': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
+    '25': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['24', 0], guider: ['21', 0], sampler: ['22', 0], sigmas: ['23', 0], latent_image: ['20', 1] } },
+    '26': { class_type: 'VAEDecode', inputs: { samples: ['25', 0], vae: ['3', 0] } },
+    '27': { class_type: 'VAEDecodeAudio', inputs: { samples: ['25', 0], vae: ['4', 0] } },
+    '28': { class_type: 'CreateVideo', inputs: { images: ['26', 0], fps, audio: ['27', 0], bit_depth: template.bitDepth } },
+    '29': { class_type: 'SaveVideo', inputs: { video: ['28', 0], filename_prefix: 'mullet/scene-motion', format: template.format, codec: template.codec } }
   };
 }
 
 export function buildInlineSceneVideoWorkflow(
   request: InlineSceneVideoRequest,
   sceneInput: InlineSceneVideoInputReference,
-  seed: number
+  seed: number,
+  priorMasterInput?: InlineSceneVideoPriorMasterInput
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneVideoRequest(request);
-  return normalized.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? buildLtx25InlineSceneVideoWorkflow(normalized, sceneInput, seed)
-    : buildMiniMaxH3InlineSceneVideoWorkflow(normalized, sceneInput, seed);
+  if (normalized.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+    if (priorMasterInput) throw new Error('LTX inline-scene video does not accept a prior master input');
+    return buildLtx25InlineSceneVideoWorkflow(normalized, sceneInput, seed);
+  }
+  return buildMiniMaxH3InlineSceneVideoWorkflow(normalized, sceneInput, seed, priorMasterInput);
 }
 
 export function inlineSceneVideoOutputNode(request: InlineSceneVideoRequest): string {

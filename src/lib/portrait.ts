@@ -562,6 +562,7 @@ export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number)
 
 export type QwenReferenceEditSettings = {
   referencePath: string;
+  additionalReferencePaths?: readonly string[];
   prompt: string;
   width: number;
   height: number;
@@ -580,9 +581,16 @@ export function buildQwenReferenceEditWorkflow(settings: QwenReferenceEditSettin
   if (width % template.multiple !== 0 || height % template.multiple !== 0) {
     throw new Error(`Qwen edit dimensions must be divisible by ${template.multiple}`);
   }
-  if (!/^mullet\/(?:identity|motion-inputs)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(settings.referencePath)) {
+  const referencePathPattern = /^mullet\/(?:identity|motion-inputs)\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i;
+  if (!referencePathPattern.test(settings.referencePath)) {
     throw new Error('Qwen edit reference path is invalid');
   }
+  const additionalReferencePaths = settings.additionalReferencePaths ?? [];
+  if (
+    additionalReferencePaths.length > 2
+    || additionalReferencePaths.some((path) => !referencePathPattern.test(path))
+    || new Set([settings.referencePath, ...additionalReferencePaths]).size !== 1 + additionalReferencePaths.length
+  ) throw new Error('Qwen edit additional reference paths are invalid');
   const prompt = textField(settings.prompt, 'Qwen edit prompt', 1, 2000);
   let referenceSource: [string, number] = ['5', 0];
   const graph: Record<string, unknown> = {
@@ -611,6 +619,13 @@ export function buildQwenReferenceEditWorkflow(settings: QwenReferenceEditSettin
     '13': { class_type: 'VAEDecode', inputs: { samples: ['12', 0], vae: ['3', 0] } },
     '14': { class_type: 'SaveImage', inputs: { images: ['13', 0], filename_prefix: settings.filenamePrefix } }
   };
+  additionalReferencePaths.forEach((path, index) => {
+    const nodeId = String(16 + index);
+    const inputName = `image${index + 2}`;
+    graph[nodeId] = { class_type: 'LoadImage', inputs: { image: path } };
+    (graph['9'] as { inputs: Record<string, unknown> }).inputs[inputName] = [nodeId, 0];
+    (graph['10'] as { inputs: Record<string, unknown> }).inputs[inputName] = [nodeId, 0];
+  });
   if (settings.containReference) {
     const referenceWidth = integer(settings.referenceWidth, 'Qwen edit reference width', 16, 8192);
     const referenceHeight = integer(settings.referenceHeight, 'Qwen edit reference height', 16, 8192);

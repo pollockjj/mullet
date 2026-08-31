@@ -6,8 +6,8 @@ import {
   type InlineSceneModelTemplate
 } from './inline-scene.ts';
 
-export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v4' as const;
-export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v4' as const;
+export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v6' as const;
+export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v6' as const;
 
 export class StoredInlineSceneIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -30,6 +30,7 @@ export type StoredInlineScene = {
   generatedAt: number;
   imageSha256: string;
   image: Blob;
+  continuityMasterImage: Blob | null;
 };
 
 type StoredInlineSceneEnvelope = {
@@ -69,7 +70,11 @@ const OBSOLETE_INLINE_SCENE_SPECS = new Set([
   'mullet_stored_inline_scene_v2',
   'mullet_stored_inline_scene_envelope_v2',
   'mullet_stored_inline_scene_v3',
-  'mullet_stored_inline_scene_envelope_v3'
+  'mullet_stored_inline_scene_envelope_v3',
+  'mullet_stored_inline_scene_v4',
+  'mullet_stored_inline_scene_envelope_v4',
+  'mullet_stored_inline_scene_v5',
+  'mullet_stored_inline_scene_envelope_v5'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,6 +111,17 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
   if (!(value.image instanceof Blob) || value.image.type !== 'image/png' || value.image.size < 24 || value.image.size > 20 * 1024 * 1024) {
     throw new Error('stored inline-scene image is invalid');
   }
+  const continuityMasterImage = value.continuityMasterImage;
+  if (request.continuityMaster) {
+    if (
+      !(continuityMasterImage instanceof Blob)
+      || continuityMasterImage.type !== 'image/png'
+      || continuityMasterImage.size < 24
+      || continuityMasterImage.size > 20 * 1024 * 1024
+    ) throw new Error('stored inline-scene continuity master image is invalid');
+  } else if (continuityMasterImage !== null) {
+    throw new Error('stored inline-scene has an unexpected continuity master image');
+  }
   return {
     spec: STORED_INLINE_SCENE_SPEC,
     conversationId: value.conversationId,
@@ -119,7 +135,8 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
     height,
     generatedAt: safeInteger(value.generatedAt, 'stored inline-scene timestamp', 1, Number.MAX_SAFE_INTEGER),
     imageSha256: value.imageSha256,
-    image: value.image
+    image: value.image,
+    continuityMasterImage: request.continuityMaster ? continuityMasterImage as Blob : null
   };
 }
 
@@ -156,6 +173,14 @@ export async function verifyStoredInlineScene(value: unknown): Promise<StoredInl
   const bytes = new Uint8Array(await scene.image.arrayBuffer());
   validatePngHeader(bytes, scene.width, scene.height);
   if (await blobSha256(scene.image) !== scene.imageSha256) throw new Error('stored inline-scene image hash does not match its bytes');
+  if (scene.request.continuityMaster && scene.continuityMasterImage) {
+    const master = scene.request.continuityMaster;
+    const masterBytes = new Uint8Array(await scene.continuityMasterImage.arrayBuffer());
+    validatePngHeader(masterBytes, master.width, master.height);
+    if (await blobSha256(scene.continuityMasterImage) !== master.imageSha256) {
+      throw new Error('stored inline-scene continuity master hash does not match its bytes');
+    }
+  }
   return scene;
 }
 

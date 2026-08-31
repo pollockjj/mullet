@@ -73,6 +73,7 @@ export type ScenarioPortraitProfile = {
   modelTemplate: PortraitModelTemplate;
   subjectLora: ScenarioPortraitSubjectLora | null;
   referenceImage: PortraitReferenceImage;
+  bodyReferenceImage: PortraitReferenceImage | null;
   fingerprint: string;
 };
 
@@ -145,6 +146,40 @@ function positiveInteger(value: unknown, field: string): number {
     throw new Error(`${field} must be a positive safe integer`);
   }
   return Number(value);
+}
+
+function normalizeScenarioPortraitReference(
+  value: unknown,
+  index: number,
+  fieldName: 'reference_image' | 'body_reference_image'
+): PortraitReferenceImage {
+  const field = `scenario portrait profile ${index} ${fieldName}`;
+  if (!isRecord(value)) throw new Error(`${field} must be an object`);
+  if (typeof value.name !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(value.name)
+    || value.subfolder !== 'mullet/identity'
+    || value.type !== 'input'
+    || typeof value.sha256 !== 'string'
+    || !/^[0-9a-f]{64}$/.test(value.sha256)) {
+    throw new Error(`${field} is invalid`);
+  }
+  const width = positiveInteger(value.width, `${field} width`);
+  const height = positiveInteger(value.height, `${field} height`);
+  const suppliedAspectRatio = requiredString(value.aspect_ratio, `${field} aspect_ratio`, 50);
+  const aspectDivisor = greatestCommonDivisor(width, height);
+  const aspectRatio = `${width / aspectDivisor}:${height / aspectDivisor}`;
+  if (suppliedAspectRatio !== aspectRatio) {
+    throw new Error(`${field} aspect_ratio must be the exact GCD-reduced dimensions ${aspectRatio}`);
+  }
+  return {
+    name: value.name,
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: value.sha256,
+    width,
+    height,
+    aspectRatio
+  };
 }
 
 function starterId(value: unknown, field: string): string {
@@ -244,45 +279,10 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
     if (isPortraitReferenceTemplateId(modelTemplate) && subjectLora !== null) {
       throw new Error(`scenario portrait profile ${index} reference-conditioned template cannot use subject_lora`);
     }
-    if (!isRecord(visual.reference_image)) throw new Error(`scenario portrait profile ${index} reference_image must be an object`);
-    const reference = visual.reference_image;
-    if (typeof reference.name !== 'string'
-      || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(reference.name)
-      || reference.subfolder !== 'mullet/identity'
-      || reference.type !== 'input'
-      || typeof reference.sha256 !== 'string'
-      || !/^[0-9a-f]{64}$/.test(reference.sha256)) {
-      throw new Error(`scenario portrait profile ${index} reference_image is invalid`);
-    }
-    const referenceWidth = positiveInteger(
-      reference.width,
-      `scenario portrait profile ${index} reference_image width`
-    );
-    const referenceHeight = positiveInteger(
-      reference.height,
-      `scenario portrait profile ${index} reference_image height`
-    );
-    const referenceAspectRatio = requiredString(
-      reference.aspect_ratio,
-      `scenario portrait profile ${index} reference_image aspect_ratio`,
-      50
-    );
-    const aspectDivisor = greatestCommonDivisor(referenceWidth, referenceHeight);
-    const exactAspectRatio = `${referenceWidth / aspectDivisor}:${referenceHeight / aspectDivisor}`;
-    if (referenceAspectRatio !== exactAspectRatio) {
-      throw new Error(
-        `scenario portrait profile ${index} reference_image aspect_ratio must be the exact GCD-reduced dimensions ${exactAspectRatio}`
-      );
-    }
-    const referenceImage: PortraitReferenceImage = {
-      name: reference.name,
-      subfolder: 'mullet/identity',
-      type: 'input',
-      sha256: reference.sha256,
-      width: referenceWidth,
-      height: referenceHeight,
-      aspectRatio: referenceAspectRatio
-    };
+    const referenceImage = normalizeScenarioPortraitReference(visual.reference_image, index, 'reference_image');
+    const bodyReferenceImage = visual.body_reference_image === undefined || visual.body_reference_image === null
+      ? null
+      : normalizeScenarioPortraitReference(visual.body_reference_image, index, 'body_reference_image');
     return {
       id,
       displayName,
@@ -295,6 +295,7 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       modelTemplate,
       subjectLora,
       referenceImage,
+      bodyReferenceImage,
       fingerprint: profileFingerprint([
         id,
         displayName,
@@ -312,7 +313,14 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
         referenceImage.sha256,
         String(referenceImage.width),
         String(referenceImage.height),
-        referenceImage.aspectRatio
+        referenceImage.aspectRatio,
+        ...(bodyReferenceImage ? [
+          bodyReferenceImage.name,
+          bodyReferenceImage.sha256,
+          String(bodyReferenceImage.width),
+          String(bodyReferenceImage.height),
+          bodyReferenceImage.aspectRatio
+        ] : [])
       ])
     };
   });

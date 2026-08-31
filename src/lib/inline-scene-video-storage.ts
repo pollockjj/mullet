@@ -11,8 +11,8 @@ import {
 } from './inline-scene-video.ts';
 import { validateH264AacMp4, validateH264VideoOnlyMp4 } from './mp4.ts';
 
-export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v7' as const;
-export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v7' as const;
+export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v9' as const;
+export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v9' as const;
 
 export class StoredInlineSceneVideoIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -90,7 +90,11 @@ const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
   'mullet_stored_inline_scene_video_v5',
   'mullet_stored_inline_scene_video_envelope_v5',
   'mullet_stored_inline_scene_video_v6',
-  'mullet_stored_inline_scene_video_envelope_v6'
+  'mullet_stored_inline_scene_video_envelope_v6',
+  'mullet_stored_inline_scene_video_v7',
+  'mullet_stored_inline_scene_video_envelope_v7',
+  'mullet_stored_inline_scene_video_v8',
+  'mullet_stored_inline_scene_video_envelope_v8'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

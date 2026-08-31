@@ -9,10 +9,14 @@ import {
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
   buildQwenImageEditSceneWorkflow,
   buildZImageTurboSceneWorkflow,
+  inlineSceneQwenReferencePlan,
   inlineSceneDimensions,
   inlineSceneTemplate,
+  normalizeInlineSceneContinuityMaster,
   type InlineSceneCapabilities,
-  type InlineSceneImageRequest
+  type InlineSceneContinuityMaster,
+  type InlineSceneImageRequest,
+  type InlineSceneUploadedMasterInput
 } from '../inline-scene.ts';
 import { sha256Hex as sha256BytesHex } from './comfy-portrait-video.ts';
 import { assertComfyIdentityReference } from './comfy-portrait.ts';
@@ -65,6 +69,19 @@ function nodeAvailable(value: unknown, nodeName: string): boolean {
   return isRecord(value) && isRecord(value[nodeName]);
 }
 
+function optionalInputHasType(
+  value: unknown,
+  nodeName: string,
+  inputName: string,
+  inputType: string
+): boolean {
+  if (!isRecord(value) || !isRecord(value[nodeName])) return false;
+  const info = value[nodeName];
+  if (!isRecord(info.input) || !isRecord(info.input.optional)) return false;
+  const input = info.input.optional[inputName];
+  return Array.isArray(input) && input[0] === inputType;
+}
+
 export async function loadInlineSceneCapabilities(
   fetcher: Fetcher,
   baseUrl: string,
@@ -95,6 +112,16 @@ export async function loadInlineSceneCapabilities(
     if (!schedulers.includes(template.scheduler)) missing.push(`scheduler:${template.scheduler}`);
     if (template.id === INLINE_SCENE_QWEN_TEMPLATE_ID && !modelOnlyLoras.includes(QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora)) {
       missing.push(`model:lora:${QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora}`);
+    }
+    if (template.id === INLINE_SCENE_QWEN_TEMPLATE_ID) {
+      for (const inputName of ['image1', 'image2', 'image3']) {
+        if (!optionalInputHasType(
+          info.get('TextEncodeQwenImageEditPlus'),
+          'TextEncodeQwenImageEditPlus',
+          inputName,
+          'IMAGE'
+        )) missing.push(`node-input:TextEncodeQwenImageEditPlus:optional:${inputName}:IMAGE`);
+      }
     }
     for (const nodeName of template.requiredNodes) {
       if (!nodeAvailable(info.get(nodeName), nodeName)) missing.push(`node:${nodeName}`);
@@ -244,22 +271,74 @@ export function validateInlineScenePng(bytes: Uint8Array, expectedWidth: number,
   }
 }
 
+export async function uploadInlineSceneContinuityMasterInput(
+  fetcher: Fetcher,
+  baseUrl: string,
+  bytes: Uint8Array,
+  master: InlineSceneContinuityMaster,
+  signal?: AbortSignal
+): Promise<InlineSceneUploadedMasterInput> {
+  const normalized = normalizeInlineSceneContinuityMaster(master);
+  if (!(bytes instanceof Uint8Array)) throw new Error('inline-scene continuity master bytes are invalid');
+  if (bytes.byteLength > OUTPUT_LIMIT_BYTES) {
+    throw new Error('inline-scene continuity master exceeds 20 MiB');
+  }
+  if (await sha256BytesHex(bytes) !== normalized.imageSha256) {
+    throw new Error('inline-scene continuity master hash does not match its bytes');
+  }
+  try {
+    validateInlineScenePng(bytes, normalized.width, normalized.height);
+  } catch {
+    throw new Error('inline-scene continuity master dimensions do not match its bytes');
+  }
+  const name = `scene-continuity-${globalThis.crypto.randomUUID()}.png`;
+  const subfolder = 'mullet/motion-inputs';
+  const form = new FormData();
+  form.append('image', new Blob([bytes.slice().buffer], { type: 'image/png' }), name);
+  form.append('subfolder', subfolder);
+  form.append('type', 'input');
+  form.append('overwrite', 'false');
+  const response = await fetcher(endpoint(baseUrl, '/upload/image'), { method: 'POST', body: form, signal });
+  const body = await responseJson(response, 'inline-scene continuity master upload');
+  if (!isRecord(body) || body.name !== name || body.subfolder !== subfolder || body.type !== 'input') {
+    throw new Error('ComfyUI returned an unexpected inline-scene continuity upload location');
+  }
+  return {
+    name,
+    subfolder,
+    type: 'input',
+    imageSha256: normalized.imageSha256,
+    width: normalized.width,
+    height: normalized.height
+  };
+}
+
 export async function runComfyInlineScene(
   fetcher: Fetcher,
   baseUrl: string,
   request: InlineSceneImageRequest,
   capabilities: InlineSceneCapabilities,
   seed: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  continuityMasterInput?: InlineSceneUploadedMasterInput
 ): Promise<ComfyInlineSceneImage> {
-  if (request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID && request.referenceImage) {
-    await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
+  if (request.modelTemplate !== INLINE_SCENE_QWEN_TEMPLATE_ID && continuityMasterInput) {
+    throw new Error('only Qwen inline scenes can use an uploaded continuity master');
   }
   const workflow = request.modelTemplate === INLINE_SCENE_TEMPLATE_ID
     ? buildZImageTurboSceneWorkflow(request, seed, capabilities)
     : request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
-      ? buildQwenImageEditSceneWorkflow(request, seed, capabilities)
+      ? buildQwenImageEditSceneWorkflow(request, seed, capabilities, continuityMasterInput)
       : (() => { throw new Error('unsupported inline-scene model template'); })();
+  if (request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID) {
+    for (const slot of inlineSceneQwenReferencePlan(request)) {
+      if (slot.kind === 'continuity_master') continue;
+      const referenceImage = slot.kind === 'identity'
+        ? slot.identity.referenceImage
+        : slot.referenceImage;
+      await assertComfyIdentityReference(fetcher, baseUrl, referenceImage, signal);
+    }
+  }
   let id = '';
   let completed = false;
   try {

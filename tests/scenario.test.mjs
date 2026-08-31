@@ -145,6 +145,7 @@ test('validates every bundled package and selects three distinct starter message
     assert.equal(new Set(profiles.map((profile) => profile.fingerprint)).size, 3);
     assert.equal(new Set(profiles.map((profile) => profile.referenceImage.name)).size, 3);
     assert.equal(new Set(profiles.map((profile) => profile.referenceImage.sha256)).size, 3);
+    assert.ok(profiles.every((profile) => profile.bodyReferenceImage === null));
 
     assert.equal(cardRaw.data.extensions.mullet.scenario_id, entry.id);
     assert.equal(cardRaw.data.extensions.mullet.scenario_version, entry.version);
@@ -202,6 +203,7 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   assert.equal(portraitProfile.referenceImage.width, 400);
   assert.equal(portraitProfile.referenceImage.height, 600);
   assert.equal(portraitProfile.referenceImage.aspectRatio, '2:3');
+  assert.equal(portraitProfile.bodyReferenceImage, null);
   assert.match(portraitProfile.fingerprint, /^[0-9a-f]{8}$/);
   const protagonist = lorebookRaw.data.entries.find((loreEntry) => loreEntry.id === 1);
   assert.match(protagonist.content, /protagonist is a woman and uses she\/her pronouns/);
@@ -354,6 +356,42 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   assert.throws(
     () => validateScenarioPackage(entry, wrongGeometryCard, wrongGeometryLore),
     /aspect_ratio must be the exact GCD-reduced dimensions 2:3/
+  );
+
+  const bodyReferenceLore = structuredClone(lorebookRaw);
+  bodyReferenceLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.body_reference_image = {
+    name: 'jenna-stannis-body-v1.png',
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: 'a'.repeat(64),
+    width: 768,
+    height: 1024,
+    aspect_ratio: '3:4'
+  };
+  const bodyReferenceCard = structuredClone(cardRaw);
+  bodyReferenceCard.data.character_book = structuredClone(bodyReferenceLore.data);
+  const bodyReferencePackage = validateScenarioPackage(entry, bodyReferenceCard, bodyReferenceLore);
+  assert.deepEqual(bodyReferencePackage.portraitCast.profiles[0].bodyReferenceImage, {
+    name: 'jenna-stannis-body-v1.png',
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: 'a'.repeat(64),
+    width: 768,
+    height: 1024,
+    aspectRatio: '3:4'
+  });
+  assert.notEqual(
+    bodyReferencePackage.portraitCast.profiles[0].fingerprint,
+    validateScenarioPackage(entry, cardRaw, lorebookRaw).portraitCast.profiles[0].fingerprint
+  );
+
+  const wrongBodyGeometryLore = structuredClone(bodyReferenceLore);
+  wrongBodyGeometryLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.body_reference_image.aspect_ratio = '9:16';
+  const wrongBodyGeometryCard = structuredClone(cardRaw);
+  wrongBodyGeometryCard.data.character_book = structuredClone(wrongBodyGeometryLore.data);
+  assert.throws(
+    () => validateScenarioPackage(entry, wrongBodyGeometryCard, wrongBodyGeometryLore),
+    /body_reference_image aspect_ratio must be the exact GCD-reduced dimensions 3:4/
   );
 });
 

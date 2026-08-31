@@ -6,6 +6,7 @@ import {
   INLINE_SCENE_IMAGE_REQUEST_SPEC,
   INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
+  createInlineSceneContinuityMaster,
   inlineSceneImageRequestKey,
   inlineSceneSourceForScenarioOpening
 } from '../src/lib/inline-scene.ts';
@@ -30,6 +31,25 @@ const canonicalReference = Object.freeze({
   aspectRatio: '2:3'
 });
 
+const candidate = Object.freeze({
+  id: 'jenna-stannis',
+  displayName: 'Jenna Stannis',
+  aliases: Object.freeze(['Jenna', 'Jenna Stannis']),
+  profileFingerprint: '1234abcd'
+});
+
+const soloCast = Object.freeze({
+  kind: 'solo',
+  identities: Object.freeze([Object.freeze({
+    profileId: candidate.id,
+    profileFingerprint: candidate.profileFingerprint,
+    displayName: candidate.displayName,
+    subject: 'Jenna Stannis, an adult blonde woman aboard the Liberator',
+    referenceImage: canonicalReference,
+    bodyReferenceImage: null
+  })])
+});
+
 function request(overrides = {}) {
   return {
     spec: INLINE_SCENE_IMAGE_REQUEST_SPEC,
@@ -45,8 +65,7 @@ function request(overrides = {}) {
       promptSha256: `sha256:${'f'.repeat(64)}`
     },
     prompt: 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.',
-    subject: 'Jenna Stannis',
-    referenceImage: null,
+    cast: soloCast,
     lora: {
       path: 'zimage/jenna6.safetensors',
       trigger: 'jennastannis',
@@ -104,32 +123,88 @@ function stored(overrides = {}, sceneRequest = request()) {
     generatedAt: 17,
     imageSha256: createHash('sha256').update(imageBytes).digest('hex'),
     image: new Blob([imageBytes], { type: 'image/png' }),
+    continuityMasterImage: null,
     ...overrides
   };
 }
 
 test('normalizes and byte-verifies a provenance-bound inline PNG', async () => {
   const scene = normalizeStoredInlineScene(stored());
-  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v4');
-  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v4');
+  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v6');
+  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v6');
   assert.equal(scene.requestKey, inlineSceneImageRequestKey(scene.request));
-  assert.equal(scene.request.referenceImage, null);
+  assert.deepEqual(scene.request.cast, soloCast);
   assert.equal(scene.request.lora.path, 'zimage/jenna6.safetensors');
+  assert.equal(scene.continuityMasterImage, null);
   assert.equal((await verifyStoredInlineScene(scene)).image.type, 'image/png');
   assert.equal(JSON.stringify(scene).includes('transcript'), false);
 });
 
-test('preserves an additive Qwen reference-edit scene in the v4 envelope', async () => {
+test('preserves a Qwen reference-edit solo cast in the v6 envelope', async () => {
   const qwenRequest = request({
     modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-    referenceImage: canonicalReference,
     lora: null
   });
   const scene = normalizeStoredInlineScene(stored({}, qwenRequest));
   assert.equal(scene.modelTemplate, INLINE_SCENE_QWEN_TEMPLATE_ID);
-  assert.deepEqual(scene.request.referenceImage, canonicalReference);
+  assert.equal(scene.request.cast.kind, 'solo');
+  assert.deepEqual(scene.request.cast.identities[0].referenceImage, canonicalReference);
   assert.equal(scene.request.lora, null);
   await verifyStoredInlineScene(scene);
+});
+
+test('persists and verifies exactly one flat continuity-master PNG without recursive scene state', async () => {
+  const priorRequest = request({
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    lora: null
+  });
+  stored({}, priorRequest);
+  const masterBytes = png();
+  const continuityMaster = createInlineSceneContinuityMaster(priorRequest, {
+    promptId: '44444444-4444-4444-8444-444444444444',
+    seed: 73,
+    generatedAt: 19,
+    imageSha256: createHash('sha256').update(masterBytes).digest('hex')
+  });
+  const continuedRequest = request({
+    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    continuityMaster,
+    lora: null
+  });
+  const scene = normalizeStoredInlineScene(stored({
+    continuityMasterImage: new Blob([masterBytes], { type: 'image/png' })
+  }, continuedRequest));
+  const verified = await verifyStoredInlineScene(scene);
+  assert.equal(verified.continuityMasterImage?.type, 'image/png');
+  assert.equal(verified.request.continuityMaster?.imageSha256, continuityMaster.imageSha256);
+  assert.equal('scene' in verified.request.continuityMaster, false);
+  assert.equal('request' in verified.request.continuityMaster, false);
+
+  assert.throws(
+    () => normalizeStoredInlineScene(stored({}, continuedRequest)),
+    /continuity master image is invalid/
+  );
+  assert.throws(
+    () => normalizeStoredInlineScene(stored({
+      continuityMasterImage: new Blob([masterBytes], { type: 'image/png' })
+    }, priorRequest)),
+    /unexpected continuity master image/
+  );
+
+  const tampered = masterBytes.slice();
+  tampered[8] = 1;
+  await assert.rejects(
+    verifyStoredInlineScene(stored({
+      continuityMasterImage: new Blob([tampered], { type: 'image/png' })
+    }, continuedRequest)),
+    /continuity master hash does not match/
+  );
+  await assert.rejects(
+    verifyStoredInlineScene(stored({
+      continuityMasterImage: new Blob([png(800, 576)], { type: 'image/png' })
+    }, continuedRequest)),
+    /PNG dimensions/
+  );
 });
 
 test('preserves scenario-opening identity through static-scene persistence', async () => {
@@ -226,14 +301,18 @@ test('discards corrupt bytes inside the original restore lock', async () => {
   assert.equal(discardedWhileLocked, true);
 });
 
-test('silently discards obsolete v1 through v3 scenes inside the restore lock', async () => {
+test('silently discards obsolete v1 through v5 scenes inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_v1',
     'mullet_stored_inline_scene_envelope_v1',
     'mullet_stored_inline_scene_v2',
     'mullet_stored_inline_scene_envelope_v2',
     'mullet_stored_inline_scene_v3',
-    'mullet_stored_inline_scene_envelope_v3'
+    'mullet_stored_inline_scene_envelope_v3',
+    'mullet_stored_inline_scene_v4',
+    'mullet_stored_inline_scene_envelope_v4',
+    'mullet_stored_inline_scene_v5',
+    'mullet_stored_inline_scene_envelope_v5'
   ]) {
     let lockHeld = false;
     let discardedWhileLocked = false;

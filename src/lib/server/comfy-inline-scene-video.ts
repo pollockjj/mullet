@@ -6,14 +6,22 @@ import {
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   buildInlineSceneVideoWorkflow,
+  inlineSceneH3ReferencePlan,
   inlineSceneVideoDimensions,
   inlineSceneVideoOutputNode,
   type InlineSceneVideoCapabilities,
   type InlineSceneVideoInputReference,
+  type InlineSceneVideoPriorMasterInput,
   type InlineSceneVideoRequest
 } from '../inline-scene-video.ts';
+import {
+  normalizeInlineSceneContinuityMaster,
+  type InlineSceneContinuityMaster
+} from '../inline-scene.ts';
 import { validateH264AacMp4, validateH264VideoOnlyMp4 } from '../mp4.ts';
+import { assertComfyIdentityReference } from './comfy-portrait.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -93,6 +101,33 @@ function dynamicOptionKeys(input: unknown[], nodeName: string, inputName: string
 
 function requireOption(options: readonly string[], expected: string, label: string): void {
   if (!options.includes(expected)) throw new Error('ComfyUI is missing ' + label);
+}
+
+function requireExactAutogrowDefinition(
+  input: unknown[],
+  nodeName: string,
+  inputName: string,
+  prefix: string,
+  maximum: number
+): void {
+  if (input[0] !== 'COMFY_AUTOGROW_V3' || !isRecord(input[1])) {
+    throw new Error('ComfyUI returned invalid ' + nodeName + '.' + inputName + ' autogrow metadata');
+  }
+  const metadata = input[1];
+  const template = metadata.template;
+  if (!isRecord(template) || !isRecord(template.input) || !isRecord(template.input.required)) {
+    throw new Error('ComfyUI returned invalid ' + nodeName + '.' + inputName + ' autogrow metadata');
+  }
+  const required = template.input.required;
+  if (
+    metadata.prefix !== prefix
+    || metadata.min !== 0
+    || metadata.max !== maximum
+    || !Array.isArray(required.ref_image)
+    || required.ref_image[0] !== 'IMAGE'
+  ) {
+    throw new Error('ComfyUI ' + nodeName + '.' + inputName + ' autogrow definition is incompatible');
+  }
 }
 
 export async function sha256InlineSceneVideoBytes(bytes: Uint8Array): Promise<string> {
@@ -182,9 +217,24 @@ export async function loadInlineSceneVideoCapabilities(
   optionDiagnostic(minimaxMissing, 'CLIPLoader', 'type', 'minimax', 'clip-type:minimax');
   optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.videoVae, `model:vae:${minimax.modelFiles.videoVae}`);
   optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.audioVae, `model:vae:${minimax.modelFiles.audioVae}`);
-  optionDiagnostic(minimaxMissing, 'LoraLoaderModelOnly', 'lora_name', minimax.modelFiles.turboLora, `model:lora:${minimax.modelFiles.turboLora}`);
   optionDiagnostic(minimaxMissing, 'KSamplerSelect', 'sampler_name', minimax.sampler, `sampler:${minimax.sampler}`);
   optionDiagnostic(minimaxMissing, 'BasicScheduler', 'scheduler', minimax.scheduler, `scheduler:${minimax.scheduler}`);
+  optionDiagnostic(
+    minimaxMissing,
+    'MiniMaxH3ReferenceToVideo',
+    'ref_image_size',
+    minimax.referenceImageSize,
+    `node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${minimax.referenceImageSize}`
+  );
+  if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
+    diagnostic(minimaxMissing, 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9', () => requireExactAutogrowDefinition(
+      inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
+      'MiniMaxH3ReferenceToVideo',
+      'ref_images',
+      'ref_image_',
+      minimax.maxReferenceImages
+    ));
+  }
   if (nodeAvailable('SaveVideo')) {
     diagnostic(minimaxMissing, `video-format:${minimax.format}`, () => requireOption(
       dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
@@ -264,6 +314,52 @@ export async function uploadInlineSceneVideoInput(
     throw new Error('ComfyUI returned an unexpected inline-scene video upload location');
   }
   return { name, subfolder, type: 'input', imageSha256 };
+}
+
+export async function validateInlineSceneVideoPriorMasterBytes(
+  bytes: Uint8Array,
+  master: InlineSceneContinuityMaster
+): Promise<void> {
+  const normalized = normalizeInlineSceneContinuityMaster(master);
+  if (await sha256InlineSceneVideoBytes(bytes) !== normalized.imageSha256) {
+    throw new Error('inline-scene video prior master hash does not match its bytes');
+  }
+  try {
+    validateInlineSceneVideoPng(bytes, normalized.width, normalized.height);
+  } catch {
+    throw new Error('inline-scene video prior master dimensions do not match its bytes');
+  }
+}
+
+export async function uploadInlineSceneVideoPriorMasterInput(
+  fetcher: Fetcher,
+  baseUrl: string,
+  bytes: Uint8Array,
+  master: InlineSceneContinuityMaster,
+  signal?: AbortSignal
+): Promise<InlineSceneVideoPriorMasterInput> {
+  const normalized = normalizeInlineSceneContinuityMaster(master);
+  await validateInlineSceneVideoPriorMasterBytes(bytes, normalized);
+  const name = 'scene-motion-prior-' + globalThis.crypto.randomUUID() + '.png';
+  const subfolder = 'mullet/motion-inputs';
+  const form = new FormData();
+  form.append('image', new Blob([bytes.slice().buffer], { type: 'image/png' }), name);
+  form.append('subfolder', subfolder);
+  form.append('type', 'input');
+  form.append('overwrite', 'false');
+  const response = await fetcher(endpoint(baseUrl, '/upload/image'), { method: 'POST', body: form, signal });
+  const body = await responseJson(response, 'inline-scene video prior master upload');
+  if (!isRecord(body) || body.name !== name || body.subfolder !== subfolder || body.type !== 'input') {
+    throw new Error('ComfyUI returned an unexpected inline-scene video prior master upload location');
+  }
+  return {
+    name,
+    subfolder,
+    type: 'input',
+    imageSha256: normalized.imageSha256,
+    width: normalized.width,
+    height: normalized.height
+  };
 }
 
 function promptId(value: unknown): string {
@@ -406,16 +502,25 @@ export async function runComfyInlineSceneVideo(
   request: InlineSceneVideoRequest,
   input: InlineSceneVideoInputReference,
   seed: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priorMasterInput?: InlineSceneVideoPriorMasterInput
 ): Promise<ComfyInlineSceneVideo> {
+  const workflow = buildInlineSceneVideoWorkflow(request, input, seed, priorMasterInput);
   let id = '';
   let completed = false;
   try {
+    if (request.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+      for (const entry of inlineSceneH3ReferencePlan(request)) {
+        if (entry.kind === 'canonical_identity' || entry.kind === 'body_identity') {
+          await assertComfyIdentityReference(fetcher, baseUrl, entry.referenceImage, signal);
+        }
+      }
+    }
     const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildInlineSceneVideoWorkflow(request, input, seed),
+        prompt: workflow,
         client_id: 'mullet-inline-scene-video'
       }),
       signal
