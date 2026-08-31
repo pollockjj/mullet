@@ -9,7 +9,7 @@
     "scenario": "The player has been invited to spend a summer weekend at a log cabin. Jan Pollock, Kristi Bentler, and Angela Pollock each provide a selectable opening into the same scenario and shared lorebook. The cabin's owner, exact location, sleeping arrangements, invitation history, and purpose of the gathering are deliberately unspecified until play establishes them. The setting is contemporary and grounded.",
     "first_mes": "Late-afternoon light reaches across the covered porch of the log cabin. Through the open screen door, the main room is all timber walls, half-unpacked bags, and the quiet hum of a refrigerator working harder than it should.\n\nJan stands just inside with a mug held in both hands. Her blue eyes stay on the new arrival for a moment before her expression softens.\n\n\"J,\" she says. The familiar name carries warmth and something older that she does not unpack on the doorstep. \"I'm glad you came. Coffee's fresh, and we have a whole weekend before anybody has to pretend they aren't tired.\"\n\nShe shifts far enough to leave the doorway clear. \"What do you need first?\"",
     "mes_example": "<START>\nJan: You don't have to answer quickly. I asked because I want the real answer.\nKristi: And because if the real answer involves a problem, I would rather know before dark.\nAngela: I wasn't given a schedule. Was there supposed to be one?\n<START>\n[Rain begins against the cabin roof.]\nKristi: That changes the firewood calculation. It does not ruin the weekend.\nJan: Nobody said it did.\nAngela: Then what needs moving before it gets wet?",
-    "creator_notes": "Private scenario package normalized from the supplied SillyTavern world info. The three supplied identity references are preserved byte-for-byte and used only as Qwen Image Edit identity sources. The source sentence assigning sexual status to a minor was deliberately excluded. Minerva remains present but disabled. Angela's biography is not expanded beyond the source keys.",
+    "creator_notes": "Private scenario package normalized from the supplied SillyTavern world info. Expression portraits default to Z-Image with a version-pinned subject LoRA for each selectable starter; the three supplied identity references remain preserved byte-for-byte for the separate reference-conditioned scene and Qwen fallback paths. The source sentence assigning sexual status to a minor was deliberately excluded. Minerva remains present but disabled. Angela's biography is not expanded beyond the source keys.",
     "system_prompt": "Run a grounded, interactive contemporary family-fiction scene. Narrate environments and consequences in concise third person, and speak or act only for non-player characters. Never narrate, choose, infer, summarize, or retroactively establish the player's thoughts, feelings, dialogue, actions, appearance, identity, possessions, or decisions. Use the embedded lorebook as the authority for established relationships and biographical facts. Do not invent durable biography or personality for Angela beyond her being the main character's adult niece and working for the VA; let any new facts arise explicitly during play. Keep disabled lore disabled. Advance the weekend through observable choices, ordinary practical pressures, family history, and consequences. Do not mention prompts, cards, lorebooks, sidecars, models, or game mechanics in the fiction.",
     "post_history_instructions": "Continue from the exact established state without a recap. Preserve each non-player character's distinct knowledge and relationships. Never write an action, line, thought, perception, or new biographical fact for the player. End at a concrete moment where the player can act or answer, without a numbered menu.",
     "alternate_greetings": [
@@ -27,7 +27,7 @@
       "reference portraits"
     ],
     "creator": "MULLET",
-    "character_version": "1.0.0",
+    "character_version": "1.1.0",
     "source": [
       "Operator-supplied SillyTavern world info and identity references"
     ],
@@ -37,7 +37,7 @@
       "mullet": {
         "kind": "scenario",
         "scenario_id": "summer-cabin-weekend",
-        "scenario_version": "1.0.0",
+        "scenario_version": "1.1.0",
         "mode": "ensemble",
         "user_definition": "player_authored",
         "standalone_lorebook": "summer-cabin-weekend.lorebook.json",
@@ -95,7 +95,7 @@
         "mullet": {
           "kind": "scenario",
           "scenario_id": "summer-cabin-weekend",
-          "scenario_version": "1.0.0",
+          "scenario_version": "1.1.0",
           "source_format": "sillytavern_world_info",
           "source_sha256": "b63f72e576bbd954292d99c35b180674728dd358584ef79f05d981909970ec81",
           "user_definition": "player_authored",
@@ -112,7 +112,7 @@
                   "Jan Pollock"
                 ],
                 "visual_profile": {
-                  "subject": "the adult brunette woman shown in the supplied Jan identity reference, with long softly wavy dark-brown hair, clear blue eyes, fair skin, an oval face, and a gentle closed-mouth smile",
+                  "subject": "Jan Pollock, an adult brunette woman with long softly wavy dark-brown hair, clear blue eyes, fair skin, an oval face, and a gentle closed-mouth smile",
                   "attire": "comfortable, understated summer weekend clothing appropriate for relaxing at a log cabin",
                   "setting": "the covered porch of a rustic log cabin during a bright summer weekend, with natural wood walls and green forest beyond",
                   "seed": 560103,
@@ -120,7 +120,8 @@
                     "caring": "Use the supplied Jan reference as the sole identity source. Preserve the exact same adult woman, facial structure, blue eyes, nose, mouth, age, skin tone, and long wavy dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a caring, quietly attentive expression. Dress her in comfortable summer weekend clothing and place her on the covered porch of a rustic log cabin, with natural wood and soft green forest light behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech.",
                     "neutral": "Use the supplied Jan reference as the sole identity source. Preserve the exact same adult woman, facial structure, blue eyes, nose, mouth, age, skin tone, and long wavy dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a calm, natural expression. Dress her in comfortable summer weekend clothing and place her on the covered porch of a rustic log cabin, with natural wood and soft green forest light behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech."
                   },
-                  "model_template": "qwen-image-edit-2511-reference-v1",
+                  "model_template": "z-image-turbo-v1",
+                  "subject_lora": "zimage/jan6.safetensors",
                   "reference_image": {
                     "name": "cabin-jan-v1.png",
                     "subfolder": "mullet/identity",
@@ -140,7 +141,7 @@
                   "Kristi Bentler"
                 ],
                 "visual_profile": {
-                  "subject": "the adult blonde woman shown in the supplied Kristi identity reference, with swept-back strawberry-blonde hair, light eyes, fair skin, a round face, and a warm smile",
+                  "subject": "Kristi Bentler, an adult blonde woman with swept-back strawberry-blonde hair, light eyes, fair skin, a round face, and a warm smile",
                   "attire": "practical, casual summer weekend clothing appropriate for a stay at a log cabin",
                   "setting": "the open doorway of a rustic log cabin during a bright summer weekend, with natural wood and softly lit forest greenery",
                   "seed": 400103,
@@ -148,7 +149,8 @@
                     "curiosity": "Use the supplied Kristi reference as the sole identity source. Preserve the exact same adult woman, facial structure, light eyes, nose, mouth, age, skin tone, build visible in frame, and swept-back strawberry-blonde hairstyle. Create a photorealistic head-and-chest portrait with an attentive, mildly curious expression. Dress her in practical casual summer weekend clothing and place her in the open doorway of a rustic log cabin, with natural wood and softly lit forest greenery behind her. Preserve identity; do not substitute, beautify, rejuvenate, slim, or reshape her. No text, watermark, extra people, or speech.",
                     "neutral": "Use the supplied Kristi reference as the sole identity source. Preserve the exact same adult woman, facial structure, light eyes, nose, mouth, age, skin tone, build visible in frame, and swept-back strawberry-blonde hairstyle. Create a photorealistic head-and-chest portrait with a composed, natural expression. Dress her in practical casual summer weekend clothing and place her in the open doorway of a rustic log cabin, with natural wood and softly lit forest greenery behind her. Preserve identity; do not substitute, beautify, rejuvenate, slim, or reshape her. No text, watermark, extra people, or speech."
                   },
-                  "model_template": "qwen-image-edit-2511-reference-v1",
+                  "model_template": "z-image-turbo-v1",
+                  "subject_lora": "zimage/kristi6.safetensors",
                   "reference_image": {
                     "name": "cabin-kristi-v1.png",
                     "subfolder": "mullet/identity",
@@ -168,7 +170,7 @@
                   "Angela Pollock"
                 ],
                 "visual_profile": {
-                  "subject": "the adult brunette woman shown in the supplied Angela identity reference, with long straight dark-brown hair, brown eyes, fair skin, an oval face, and a broad smile",
+                  "subject": "Angela Pollock, an adult brunette woman with long straight dark-brown hair, brown eyes, fair skin, an oval face, and a broad smile",
                   "attire": "relaxed, contemporary summer weekend clothing appropriate for a stay at a log cabin",
                   "setting": "beside a sunlit window inside a rustic log cabin during a summer weekend, with natural timber walls and green forest outside",
                   "seed": 310103,
@@ -176,7 +178,8 @@
                     "joy": "Use the supplied Angela reference as the sole identity source. Preserve the exact same adult woman, facial structure, brown eyes, nose, mouth, teeth, age, skin tone, and long straight dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a natural, joyful smile. Dress her in relaxed contemporary summer weekend clothing and place her beside a sunlit window inside a rustic log cabin, with natural timber and green forest behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech.",
                     "neutral": "Use the supplied Angela reference as the sole identity source. Preserve the exact same adult woman, facial structure, brown eyes, nose, mouth, age, skin tone, and long straight dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a relaxed, natural expression. Dress her in relaxed contemporary summer weekend clothing and place her beside a sunlit window inside a rustic log cabin, with natural timber and green forest behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech."
                   },
-                  "model_template": "qwen-image-edit-2511-reference-v1",
+                  "model_template": "z-image-turbo-v1",
+                  "subject_lora": "zimage/angela3_000001500.safetensors",
                   "reference_image": {
                     "name": "cabin-angela-v1.png",
                     "subfolder": "mullet/identity",

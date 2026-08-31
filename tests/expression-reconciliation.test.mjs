@@ -16,6 +16,19 @@ test('an unavailable selected expression model exposes an in-place capability re
   assert.match(pageSource, /portraitCapabilitiesLoading \? 'Checking…' : 'Refresh models'/);
 });
 
+test('an unavailable scenario identity LoRA blocks portrait requests and exposes an in-place refresh', () => {
+  assert.match(
+    pageSource,
+    /portraitSelectedModelAvailable && portraitSelectedSubjectLoraAvailable/
+  );
+  assert.match(
+    pageSource,
+    /scenarioPortraitProfile\?\.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable/
+  );
+  assert.match(pageSource, /Linked identity LoRA is unavailable · \{scenarioPortraitProfile\.subjectLora\}/);
+  assert.match(pageSource, /portraitCapabilitiesLoading \? 'Checking…' : 'Refresh models'/);
+});
+
 test('each automatic expression stage receives at most one delayed retry per failed key', () => {
   for (const stage of ['Expression', 'Portrait', 'PortraitVideo']) {
     assert.match(pageSource, new RegExp(`function queue${stage}AutomaticRetry\\(key: string\\)`));

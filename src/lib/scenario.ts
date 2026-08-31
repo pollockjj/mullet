@@ -6,6 +6,9 @@ import {
 } from './character-card.ts';
 import { normalizeLorebook, type ImportedLorebook } from './lorebook.ts';
 import {
+  PORTRAIT_TEMPLATE_ID,
+  isPortraitLoraName,
+  isPortraitModelTemplate,
   isPortraitReferenceTemplateId,
   type PortraitModelTemplate,
   type PortraitReferenceImage
@@ -68,6 +71,7 @@ export type ScenarioPortraitProfile = {
   seed: number;
   expressionPrompts: Partial<Record<ExpressionLabel, string>>;
   modelTemplate: PortraitModelTemplate;
+  subjectLora: string | null;
   referenceImage: PortraitReferenceImage;
   fingerprint: string;
 };
@@ -197,10 +201,22 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       expressionPrompts[expression] = normalizedPrompt;
       promptFingerprintFields.push(expression, normalizedPrompt);
     }
-    if (!isPortraitReferenceTemplateId(visual.model_template)) {
-      throw new Error(`scenario portrait profile ${index} must use the reference-conditioned portrait template`);
+    if (!isPortraitModelTemplate(visual.model_template)) {
+      throw new Error(`scenario portrait profile ${index} model_template is unsupported`);
     }
     const modelTemplate: PortraitModelTemplate = visual.model_template;
+    const subjectLora = visual.subject_lora === undefined || visual.subject_lora === null
+      ? null
+      : requiredString(visual.subject_lora, `scenario portrait profile ${index} subject_lora`, 200);
+    if (subjectLora !== null && !isPortraitLoraName(subjectLora)) {
+      throw new Error(`scenario portrait profile ${index} subject_lora must be a safe Z-Image LoRA path`);
+    }
+    if (modelTemplate === PORTRAIT_TEMPLATE_ID && subjectLora === null) {
+      throw new Error(`scenario portrait profile ${index} Z-Image template requires subject_lora`);
+    }
+    if (isPortraitReferenceTemplateId(modelTemplate) && subjectLora !== null) {
+      throw new Error(`scenario portrait profile ${index} reference-conditioned template cannot use subject_lora`);
+    }
     if (!isRecord(visual.reference_image)) throw new Error(`scenario portrait profile ${index} reference_image must be an object`);
     const reference = visual.reference_image;
     if (typeof reference.name !== 'string'
@@ -250,6 +266,7 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       seed,
       expressionPrompts,
       modelTemplate,
+      subjectLora,
       referenceImage,
       fingerprint: profileFingerprint([
         id,
@@ -261,6 +278,7 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
         String(seed),
         ...promptFingerprintFields,
         modelTemplate,
+        subjectLora ?? '',
         referenceImage.name,
         referenceImage.sha256,
         String(referenceImage.width),

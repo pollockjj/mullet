@@ -95,7 +95,7 @@ test('selected portrait-video template controls modes and durations without hidi
   assert.match(pageSource, /!portraitVideoSelectedModeAvailable \|\| !portraitMotionEnabled/);
 });
 
-test('a scenario uses the selected available model and supplies identity only to reference editors', () => {
+test('a scenario binds its selected starter to Z-Image LoRA or the additive Qwen reference path', () => {
   assert.match(pageSource, /let scenarioCatalogSettled = false;/);
   assert.match(pageSource, /scenarioPortraitGenerationReady\(activeCard, scenarioCatalogSettled\)/);
   assert.match(
@@ -104,10 +104,16 @@ test('a scenario uses the selected available model and supplies identity only to
   );
   assert.match(pageSource, /if \(!result \|\| !current \|\| !modelAvailable\) return null;/);
   assert.match(pageSource, /portraitModelTemplateAvailable\(portraitCapabilities, portraitModelTemplate\)/);
+  assert.match(pageSource, /portraitCapabilities\?\.loras\.includes\(scenarioPortraitProfile\.subjectLora\)/);
+  assert.match(pageSource, /portraitSelectedModelAvailable && portraitSelectedSubjectLoraAvailable/);
+  assert.match(pageSource, /lora: modelUsesReference \? null : profile\.subjectLora/);
   assert.match(pageSource, /referenceImage: modelUsesReference \? profile\.referenceImage : null/);
   assert.match(pageSource, /promptOverride: modelUsesReference\s+\? profile\.expressionPrompts\[result\.output\.expression\] \?\? null\s+: null/);
   assert.match(pageSource, /if \(modelUsesReference\) return null;/);
   assert.match(pageSource, /Canonical reference · \$\{scenarioPortraitProfile\.referenceImage\.width\}×\$\{scenarioPortraitProfile\.referenceImage\.height\} · \$\{scenarioPortraitProfile\.referenceImage\.aspectRatio\}/);
+  assert.match(pageSource, /Z-Image LoRA · \$\{scenarioPortraitProfile\.subjectLora\.replace/);
+  assert.match(pageSource, /portraitModelTemplate = starterProfile\.modelTemplate;/);
+  assert.match(pageSource, /localStorage\.setItem\(portraitModelTemplateStorageKey, portraitModelTemplate\);/);
   assert.doesNotMatch(pageSource, /referenceTemplateAvailable/);
   assert.doesNotMatch(pageSource, /No scenario expression portrait will be generated/);
 });

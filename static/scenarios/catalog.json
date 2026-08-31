@@ -25,9 +25,9 @@
     },
     {
       "id": "summer-cabin-weekend",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "title": "Summer Weekend at the Cabin",
-      "summary": "A contemporary family weekend at a log cabin with separate Jan, Kristi, and Angela openings backed by the supplied SillyTavern lore and identity references.",
+      "summary": "A contemporary family weekend at a log cabin with separate Jan, Kristi, and Angela openings backed by the supplied SillyTavern lore, identity references, and linked Z-Image LoRAs.",
       "card": "summer-cabin-weekend.card.json",
       "lorebook": "summer-cabin-weekend.lorebook.json",
       "starters": [

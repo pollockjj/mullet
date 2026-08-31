@@ -20,6 +20,7 @@ import {
   validateScenarioPackage
 } from '../src/lib/scenario.ts';
 import {
+  PORTRAIT_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
 } from '../src/lib/portrait.ts';
 
@@ -216,7 +217,7 @@ test('ships a canonical CCv3 scenario with an identical standalone Lorebook V3',
   });
 });
 
-test('ships the private cabin lore with three byte-exact Qwen identity references', () => {
+test('ships the private cabin lore with three byte-exact references and latest Z-Image subject LoRAs', () => {
   const { entry, cardRaw, lorebookRaw } = bundledScenarioById('summer-cabin-weekend');
   const packaged = validateScenarioPackage(entry, cardRaw, lorebookRaw);
 
@@ -244,18 +245,21 @@ test('ships the private cabin lore with three byte-exact Qwen identity reference
   const references = new Map([
     ['jan-pollock', {
       name: 'cabin-jan-v1.png',
+      lora: 'zimage/jan6.safetensors',
       sha256: '5fb84b3a0a3a2cff07488e3799d89e5a3539e90bd01932c7bb44e58fad4a832f',
       width: 1024,
       height: 1024
     }],
     ['kristi-bentler', {
       name: 'cabin-kristi-v1.png',
+      lora: 'zimage/kristi6.safetensors',
       sha256: 'faea3ae4289d2443a9bd22b8d3c329972470d97b9488c2c7f549431a0159f4ea',
       width: 2048,
       height: 2048
     }],
     ['angela-pollock', {
       name: 'cabin-angela-v1.png',
+      lora: 'zimage/angela3_000001500.safetensors',
       sha256: '73615e29527ff93f93f4371e614decbc66dfb07d35b1f420cfe5f4d4ef40fcf3',
       width: 1024,
       height: 1024
@@ -264,7 +268,9 @@ test('ships the private cabin lore with three byte-exact Qwen identity reference
   for (const profile of packaged.portraitCast.profiles) {
     const expected = references.get(profile.id);
     assert.ok(expected, `unexpected cabin portrait profile ${profile.id}`);
-    assert.equal(profile.modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
+    assert.equal(profile.modelTemplate, PORTRAIT_TEMPLATE_ID);
+    assert.equal(profile.subjectLora, expected.lora);
+    assert.match(profile.subject, new RegExp(`^${profile.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`));
     assert.deepEqual(profile.referenceImage, {
       name: expected.name,
       subfolder: 'mullet/identity',
@@ -339,7 +345,7 @@ test('rejects mismatched or malformed scenario packages before activation', () =
   );
 });
 
-test('accepts the canonical identity reference only with the Qwen reference editor', () => {
+test('keeps a canonical reference on the Qwen editor and rejects unsupported portrait templates', () => {
   const { entry, cardRaw, lorebookRaw } = bundledScenario();
   const packaged = validateScenarioPackage(entry, cardRaw, lorebookRaw);
   assert.equal(packaged.portraitCast.profiles[0].modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
@@ -359,7 +365,47 @@ test('accepts the canonical identity reference only with the Qwen reference edit
   retiredCard.data.character_book = structuredClone(retiredLore.data);
   assert.throws(
     () => validateScenarioPackage(entry, retiredCard, retiredLore),
-    /must use the reference-conditioned portrait template/
+    /model_template is unsupported/
+  );
+});
+
+test('enforces model-specific subject-LoRA linkage and fingerprints its exact versioned path', () => {
+  const cabin = bundledScenarioById('summer-cabin-weekend');
+  const packaged = validateScenarioPackage(cabin.entry, cabin.cardRaw, cabin.lorebookRaw);
+
+  const missingLore = structuredClone(cabin.lorebookRaw);
+  delete missingLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora;
+  const missingCard = structuredClone(cabin.cardRaw);
+  missingCard.data.character_book = structuredClone(missingLore.data);
+  assert.throws(
+    () => validateScenarioPackage(cabin.entry, missingCard, missingLore),
+    /Z-Image template requires subject_lora/
+  );
+
+  const unsafeLore = structuredClone(cabin.lorebookRaw);
+  unsafeLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = '../jan6.safetensors';
+  const unsafeCard = structuredClone(cabin.cardRaw);
+  unsafeCard.data.character_book = structuredClone(unsafeLore.data);
+  assert.throws(
+    () => validateScenarioPackage(cabin.entry, unsafeCard, unsafeLore),
+    /safe Z-Image LoRA path/
+  );
+
+  const changedLore = structuredClone(cabin.lorebookRaw);
+  changedLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = 'zimage/jan7.safetensors';
+  const changedCard = structuredClone(cabin.cardRaw);
+  changedCard.data.character_book = structuredClone(changedLore.data);
+  const changed = validateScenarioPackage(cabin.entry, changedCard, changedLore);
+  assert.notEqual(changed.portraitCast.profiles[0].fingerprint, packaged.portraitCast.profiles[0].fingerprint);
+
+  const blakes = bundledScenario();
+  const qwenLore = structuredClone(blakes.lorebookRaw);
+  qwenLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora = 'zimage/jenna.safetensors';
+  const qwenCard = structuredClone(blakes.cardRaw);
+  qwenCard.data.character_book = structuredClone(qwenLore.data);
+  assert.throws(
+    () => validateScenarioPackage(blakes.entry, qwenCard, qwenLore),
+    /reference-conditioned template cannot use subject_lora/
   );
 });
 

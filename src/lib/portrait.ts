@@ -211,6 +211,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+export function isPortraitLoraName(value: unknown): value is string {
+  return typeof value === 'string' && LORA_PATTERN.test(value);
+}
+
 function textField(value: unknown, name: string, minimum: number, maximum: number): string {
   if (typeof value !== 'string') throw new Error(`${name} must be a string`);
   const normalized = value.replace(/\s+/g, ' ').trim();
@@ -357,7 +361,7 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
   if (!megapixelSet.has(megapixels)) throw new Error('unsupported portrait megapixel target');
   let lora: string | null = null;
   if (value.lora !== null && value.lora !== undefined && value.lora !== '') {
-    if (typeof value.lora !== 'string' || !LORA_PATTERN.test(value.lora)) throw new Error('portrait LoRA is invalid');
+    if (!isPortraitLoraName(value.lora)) throw new Error('portrait LoRA is invalid');
     lora = value.lora;
   }
   let referenceImage: PortraitReferenceImage | null = null;
@@ -650,7 +654,7 @@ export function normalizePortraitCapabilities(value: unknown): PortraitCapabilit
     }
     return { template, available: capability.available, missing };
   });
-  if (!Array.isArray(value.loras) || value.loras.some((lora) => typeof lora !== 'string' || !LORA_PATTERN.test(lora))) {
+  if (!Array.isArray(value.loras) || value.loras.some((lora) => !isPortraitLoraName(lora))) {
     throw new Error('invalid portrait LoRA inventory');
   }
   return {

@@ -9,7 +9,7 @@
       "mullet": {
         "kind": "scenario",
         "scenario_id": "summer-cabin-weekend",
-        "scenario_version": "1.0.0",
+        "scenario_version": "1.1.0",
         "source_format": "sillytavern_world_info",
         "source_sha256": "b63f72e576bbd954292d99c35b180674728dd358584ef79f05d981909970ec81",
         "user_definition": "player_authored",
@@ -26,7 +26,7 @@
                 "Jan Pollock"
               ],
               "visual_profile": {
-                "subject": "the adult brunette woman shown in the supplied Jan identity reference, with long softly wavy dark-brown hair, clear blue eyes, fair skin, an oval face, and a gentle closed-mouth smile",
+                "subject": "Jan Pollock, an adult brunette woman with long softly wavy dark-brown hair, clear blue eyes, fair skin, an oval face, and a gentle closed-mouth smile",
                 "attire": "comfortable, understated summer weekend clothing appropriate for relaxing at a log cabin",
                 "setting": "the covered porch of a rustic log cabin during a bright summer weekend, with natural wood walls and green forest beyond",
                 "seed": 560103,
@@ -34,7 +34,8 @@
                   "caring": "Use the supplied Jan reference as the sole identity source. Preserve the exact same adult woman, facial structure, blue eyes, nose, mouth, age, skin tone, and long wavy dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a caring, quietly attentive expression. Dress her in comfortable summer weekend clothing and place her on the covered porch of a rustic log cabin, with natural wood and soft green forest light behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech.",
                   "neutral": "Use the supplied Jan reference as the sole identity source. Preserve the exact same adult woman, facial structure, blue eyes, nose, mouth, age, skin tone, and long wavy dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a calm, natural expression. Dress her in comfortable summer weekend clothing and place her on the covered porch of a rustic log cabin, with natural wood and soft green forest light behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech."
                 },
-                "model_template": "qwen-image-edit-2511-reference-v1",
+                "model_template": "z-image-turbo-v1",
+                "subject_lora": "zimage/jan6.safetensors",
                 "reference_image": {
                   "name": "cabin-jan-v1.png",
                   "subfolder": "mullet/identity",
@@ -54,7 +55,7 @@
                 "Kristi Bentler"
               ],
               "visual_profile": {
-                "subject": "the adult blonde woman shown in the supplied Kristi identity reference, with swept-back strawberry-blonde hair, light eyes, fair skin, a round face, and a warm smile",
+                "subject": "Kristi Bentler, an adult blonde woman with swept-back strawberry-blonde hair, light eyes, fair skin, a round face, and a warm smile",
                 "attire": "practical, casual summer weekend clothing appropriate for a stay at a log cabin",
                 "setting": "the open doorway of a rustic log cabin during a bright summer weekend, with natural wood and softly lit forest greenery",
                 "seed": 400103,
@@ -62,7 +63,8 @@
                   "curiosity": "Use the supplied Kristi reference as the sole identity source. Preserve the exact same adult woman, facial structure, light eyes, nose, mouth, age, skin tone, build visible in frame, and swept-back strawberry-blonde hairstyle. Create a photorealistic head-and-chest portrait with an attentive, mildly curious expression. Dress her in practical casual summer weekend clothing and place her in the open doorway of a rustic log cabin, with natural wood and softly lit forest greenery behind her. Preserve identity; do not substitute, beautify, rejuvenate, slim, or reshape her. No text, watermark, extra people, or speech.",
                   "neutral": "Use the supplied Kristi reference as the sole identity source. Preserve the exact same adult woman, facial structure, light eyes, nose, mouth, age, skin tone, build visible in frame, and swept-back strawberry-blonde hairstyle. Create a photorealistic head-and-chest portrait with a composed, natural expression. Dress her in practical casual summer weekend clothing and place her in the open doorway of a rustic log cabin, with natural wood and softly lit forest greenery behind her. Preserve identity; do not substitute, beautify, rejuvenate, slim, or reshape her. No text, watermark, extra people, or speech."
                 },
-                "model_template": "qwen-image-edit-2511-reference-v1",
+                "model_template": "z-image-turbo-v1",
+                "subject_lora": "zimage/kristi6.safetensors",
                 "reference_image": {
                   "name": "cabin-kristi-v1.png",
                   "subfolder": "mullet/identity",
@@ -82,7 +84,7 @@
                 "Angela Pollock"
               ],
               "visual_profile": {
-                "subject": "the adult brunette woman shown in the supplied Angela identity reference, with long straight dark-brown hair, brown eyes, fair skin, an oval face, and a broad smile",
+                "subject": "Angela Pollock, an adult brunette woman with long straight dark-brown hair, brown eyes, fair skin, an oval face, and a broad smile",
                 "attire": "relaxed, contemporary summer weekend clothing appropriate for a stay at a log cabin",
                 "setting": "beside a sunlit window inside a rustic log cabin during a summer weekend, with natural timber walls and green forest outside",
                 "seed": 310103,
@@ -90,7 +92,8 @@
                   "joy": "Use the supplied Angela reference as the sole identity source. Preserve the exact same adult woman, facial structure, brown eyes, nose, mouth, teeth, age, skin tone, and long straight dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a natural, joyful smile. Dress her in relaxed contemporary summer weekend clothing and place her beside a sunlit window inside a rustic log cabin, with natural timber and green forest behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech.",
                   "neutral": "Use the supplied Angela reference as the sole identity source. Preserve the exact same adult woman, facial structure, brown eyes, nose, mouth, age, skin tone, and long straight dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a relaxed, natural expression. Dress her in relaxed contemporary summer weekend clothing and place her beside a sunlit window inside a rustic log cabin, with natural timber and green forest behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech."
                 },
-                "model_template": "qwen-image-edit-2511-reference-v1",
+                "model_template": "z-image-turbo-v1",
+                "subject_lora": "zimage/angela3_000001500.safetensors",
                 "reference_image": {
                   "name": "cabin-angela-v1.png",
                   "subfolder": "mullet/identity",

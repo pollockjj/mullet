@@ -563,6 +563,11 @@
     && portraitModelTemplateAvailable(portraitCapabilities, portraitModelTemplate)
   );
   $: portraitSelectedModelUsesReference = portraitModelTemplate !== PORTRAIT_TEMPLATE_ID;
+  $: portraitSelectedSubjectLoraAvailable = Boolean(
+    !scenarioPortraitProfile?.subjectLora
+    || portraitSelectedModelUsesReference
+    || portraitCapabilities?.loras.includes(scenarioPortraitProfile.subjectLora)
+  );
   $: selectedPortraitVideoTemplateCapability = portraitVideoTemplateCapability(
     portraitVideoCapabilities,
     portraitVideoModelTemplate
@@ -586,7 +591,7 @@
     activeCard,
     scenarioPortraitProfile,
     portraitModelTemplate,
-    portraitSelectedModelAvailable,
+    portraitSelectedModelAvailable && portraitSelectedSubjectLoraAvailable,
     portraitSelectedModelUsesReference,
     portraitSubject,
     portraitSetting,
@@ -951,7 +956,8 @@
     portraitModelTemplate = savedModelTemplate
       ? savedModelTemplate
       : isScenarioCard(activeCard)
-        ? PORTRAIT_REFERENCE_TEMPLATE_ID
+        ? scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)?.modelTemplate
+          ?? PORTRAIT_REFERENCE_TEMPLATE_ID
         : PORTRAIT_TEMPLATE_ID;
     const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
@@ -974,7 +980,9 @@
 
   function persistPortraitModelTemplate() {
     if (!portraitCapabilities?.templates.some(({ template }) => template.id === portraitModelTemplate)) {
-      portraitModelTemplate = isScenarioCard(activeCard) ? PORTRAIT_REFERENCE_TEMPLATE_ID : PORTRAIT_TEMPLATE_ID;
+      portraitModelTemplate = isScenarioCard(activeCard)
+        ? scenarioPortraitProfile?.modelTemplate ?? PORTRAIT_REFERENCE_TEMPLATE_ID
+        : PORTRAIT_TEMPLATE_ID;
     }
     portraitModelSelectionPersisted = true;
     localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
@@ -2111,7 +2119,9 @@
       if (!portraitCapabilities.templates.some(({ template }) => template.id === portraitModelTemplate)) {
         localStorage.removeItem(portraitModelTemplateStorageKey);
         portraitModelSelectionPersisted = false;
-        portraitModelTemplate = isScenarioCard(activeCard) ? PORTRAIT_REFERENCE_TEMPLATE_ID : PORTRAIT_TEMPLATE_ID;
+        portraitModelTemplate = isScenarioCard(activeCard)
+          ? scenarioPortraitProfile?.modelTemplate ?? PORTRAIT_REFERENCE_TEMPLATE_ID
+          : PORTRAIT_TEMPLATE_ID;
       }
       if (portraitLora && !portraitCapabilities.loras.includes(portraitLora)) {
         portraitLora = '';
@@ -2818,7 +2828,7 @@
           subject: profile.subject,
           setting: profile.setting,
           attire: profile.attire,
-          lora: null,
+          lora: modelUsesReference ? null : profile.subjectLora,
           referenceImage: modelUsesReference ? profile.referenceImage : null,
           characterId: profile.id,
           profileFingerprint: profile.fingerprint,
@@ -3832,6 +3842,10 @@
       const packaged = await loadScenarioPackage(scenario);
       const starter = packaged.starters.starters.find((candidate) => candidate.id === starterId);
       if (!starter) throw new Error('Bundled scenario starter failed validation.');
+      const starterProfile = packaged.portraitCast.profiles.find(
+        (profile) => profile.id === starter.portraitProfileId
+      );
+      if (!starterProfile) throw new Error('Bundled scenario portrait profile failed validation.');
       await runPersonalAssistantTurnExclusive(async () => {
         restoreUnchangedWorkspace(expectedWorkspace);
         if (hasRealTranscript() && !window.confirm(`Replace the current conversation with the ${starter.label} opening?`)) return;
@@ -3842,7 +3856,9 @@
         localStorage.setItem(selectedScenarioStorageKey, selectedScenarioId);
         activeScenarioStarterId = starterId;
         localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
-        if (!portraitModelSelectionPersisted) portraitModelTemplate = PORTRAIT_REFERENCE_TEMPLATE_ID;
+        portraitModelTemplate = starterProfile.modelTemplate;
+        portraitModelSelectionPersisted = true;
+        localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
         cardSourceIdentifier = characterSourceIdentifier(scenario.card);
         portraitDataUrl = '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
@@ -4798,7 +4814,9 @@
               <input
                 value={portraitSelectedModelUsesReference
                   ? `Canonical reference · ${scenarioPortraitProfile.referenceImage.width}×${scenarioPortraitProfile.referenceImage.height} · ${scenarioPortraitProfile.referenceImage.aspectRatio}`
-                  : 'Text prompt · no reference or LoRA'}
+                  : scenarioPortraitProfile.subjectLora
+                    ? `Z-Image LoRA · ${scenarioPortraitProfile.subjectLora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}`
+                    : 'Text prompt · no reference or LoRA'}
                 disabled
                 aria-label="Portrait identity source"
               />
@@ -4845,6 +4863,13 @@
               <span>{selectedPortraitCapability.template.label} is unavailable{selectedPortraitCapability.missing.length
                   ? ` · missing ${selectedPortraitCapability.missing.join(', ')}`
                   : ''}.</span>
+              <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
+                {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
+              </button>
+            </div>
+          {:else if scenarioPortraitProfile?.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable}
+            <div class="sidecar-error capability-error" role="alert">
+              <span>Linked identity LoRA is unavailable · {scenarioPortraitProfile.subjectLora}</span>
               <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
                 {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
               </button>
