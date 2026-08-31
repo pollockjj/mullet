@@ -85,6 +85,7 @@
     LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     buildInlineSceneVideoRequest,
+    describeInlineSceneH3ReferencePlan,
     inlineSceneH3ReferencePlan,
     inlineSceneMasterToggleEnabled,
     inlineSceneVideoDecodeFailureTransition,
@@ -449,6 +450,7 @@
   let inlineSceneVideoComponentDestroying = false;
   let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
+  let inlineSceneH3ReferenceSummary = '';
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let scenarioCatalogSettled = false;
@@ -688,6 +690,9 @@
     inlineSceneCurrent,
     inlineSceneVideoModelTemplate
   );
+  $: inlineSceneH3ReferenceSummary = inlineSceneVideoRequest?.modelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ? describeInlineSceneH3ReferencePlan(inlineSceneVideoRequest)
+    : '';
   $: inlineSceneVideoCurrent = Boolean(
     generatedInlineSceneVideo
     && inlineSceneVideoRequest
@@ -5369,7 +5374,7 @@
               {#if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
                 <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
               {:else}
-                <small>Reference-to-video · MiniMax H3 Ref2VA · current scene + prior master + canonical cast · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
+                <small>Reference-to-video · MiniMax H3 Ref2VA · {inlineSceneH3ReferenceSummary || 'reference plan resolves after the current scene'} · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
               {/if}
               {#if selectedInlineSceneVideoTemplateCapability && !inlineSceneVideoSelectedModelAvailable}
                 <small class="prompt-guide">Unavailable: {selectedInlineSceneVideoTemplateCapability.missing.join('; ')}</small>

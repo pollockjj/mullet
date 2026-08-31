@@ -24,6 +24,7 @@ import {
   buildInlineSceneVideoRequest,
   buildInlineSceneVideoWorkflow,
   buildMiniMaxH3InlineSceneVideoWorkflow,
+  describeInlineSceneH3ReferencePlan,
   inlineSceneMasterToggleEnabled,
   inlineSceneH3ReferencePlan,
   inlineSceneVideoDecodeFailureTransition,
@@ -436,6 +437,10 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
       ...Array.from({ length: count }, (_unused, index) => ({ picture: index + 2, kind: 'canonical_identity' })),
       ...Array.from({ length: count }, (_unused, index) => ({ picture: count + index + 2, kind: 'body_identity' }))
     ]);
+    assert.equal(
+      describeInlineSceneH3ReferencePlan(request),
+      `${count * 2 + 1} refs · current scene + ${count} canonical ${count === 1 ? 'identity' : 'identities'} + ${count} body/wardrobe`
+    );
     assert.ok(plan.length <= MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.maxReferenceImages);
     const graph = buildMiniMaxH3InlineSceneVideoWorkflow(request, input, 42);
     assert.equal(graph['1'].inputs.unet_name, 'minimax_h3_ref2va_pruned_int8_convrot.safetensors');
@@ -462,6 +467,19 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
     assert.equal(graph['29'].inputs.format, 'auto');
     assert.equal(Object.values(graph).some((node) => node.class_type === 'LoraLoaderModelOnly'), false);
     assert.doesNotMatch(graph['20'].inputs.prompt, /opens exactly on the supplied first frame/i);
+    assert.doesNotMatch(graph['20'].inputs.prompt, /selectively_preserved/);
+    const initialRetention = graph['20'].inputs.prompt
+      .split('retention_analysis:\n')[1]
+      .split('\n\ndetailed_description:')[0]
+      .split('\n');
+    assert.equal(initialRetention.filter((line) => line.startsWith('<Picture ')).length, 1);
+    assert.equal(initialRetention.filter((line) => line.startsWith('<Subject ')).length, count);
+    for (let index = 0; index < count; index += 1) {
+      assert.match(
+        initialRetention[index + 1],
+        new RegExp(`^<Subject ${index + 1}> \\(appears in \\[Shot 1\\]\\): fully_preserved -`)
+      );
+    }
 
     const master = continuityMasterFor(cast);
     const continuedRequest = buildInlineSceneVideoRequest(
@@ -476,6 +494,10 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
       ...Array.from({ length: count }, (_unused, index) => ({ picture: index + 3, kind: 'canonical_identity' })),
       ...Array.from({ length: count }, (_unused, index) => ({ picture: count + index + 3, kind: 'body_identity' }))
     ]);
+    assert.equal(
+      describeInlineSceneH3ReferencePlan(continuedRequest),
+      `${count * 2 + 2} refs · current scene + prior master + ${count} canonical ${count === 1 ? 'identity' : 'identities'} + ${count} body/wardrobe`
+    );
     const continuedGraph = buildMiniMaxH3InlineSceneVideoWorkflow(continuedRequest, input, 43, masterInput);
     assert.equal(continuedGraph['6'].inputs.image, `mullet/motion-inputs/${masterInput.name}`);
     assert.deepEqual(continuedGraph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
@@ -490,6 +512,20 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
     assert.equal(Object.keys(continuedGraph['20'].inputs).filter((key) => key.startsWith('ref_images.ref_image_')).length, count * 2 + 2);
     assert.match(continuedGraph['20'].inputs.prompt, /<Picture 2> is the verified prior scene master/);
     assert.doesNotMatch(continuedGraph['20'].inputs.prompt, /opens exactly on the supplied first frame/i);
+    assert.doesNotMatch(continuedGraph['20'].inputs.prompt, /selectively_preserved/);
+    const continuedRetention = continuedGraph['20'].inputs.prompt
+      .split('retention_analysis:\n')[1]
+      .split('\n\ndetailed_description:')[0]
+      .split('\n');
+    assert.equal(continuedRetention.filter((line) => line.startsWith('<Picture ')).length, 2);
+    assert.equal(continuedRetention.filter((line) => line.startsWith('<Subject ')).length, count);
+    assert.match(continuedRetention[1], /^<Picture 2> .*: partially_preserved -/);
+    for (let index = 0; index < count; index += 1) {
+      assert.match(
+        continuedRetention[index + 2],
+        new RegExp(`^<Subject ${index + 1}> \\(appears in \\[Shot 1\\]\\): fully_preserved -`)
+      );
+    }
     assert.throws(
       () => buildMiniMaxH3InlineSceneVideoWorkflow(continuedRequest, input, 43),
       /prior master input presence/

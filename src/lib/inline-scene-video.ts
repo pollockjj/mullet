@@ -437,6 +437,17 @@ export function inlineSceneH3ReferencePlan(
   return plan;
 }
 
+export function describeInlineSceneH3ReferencePlan(request: InlineSceneVideoRequest): string {
+  const plan = inlineSceneH3ReferencePlan(request);
+  const canonicalCount = plan.filter(({ kind }) => kind === 'canonical_identity').length;
+  const bodyCount = plan.filter(({ kind }) => kind === 'body_identity').length;
+  const references = ['current scene'];
+  if (plan.some(({ kind }) => kind === 'prior_master')) references.push('prior master');
+  references.push(`${canonicalCount} canonical ${canonicalCount === 1 ? 'identity' : 'identities'}`);
+  if (bodyCount > 0) references.push(`${bodyCount} body/wardrobe`);
+  return `${plan.length} refs · ${references.join(' + ')}`;
+}
+
 export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): string {
   const normalized = normalizeInlineSceneVideoRequest(request);
   return [
@@ -583,18 +594,24 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
     })
   ];
   const subjectLabels = cast.map((_identity, index) => `<Subject ${index + 1}>`).join(', ');
-  const retention = plan.map((entry): string => {
-    if (entry.kind === 'current_scene') {
-      return `<Picture ${entry.picture}> ([Shot 1] composition anchor): fully_preserved - retain its setting, camera framing, lighting, attire, objects, and spatial relationships throughout the shot.`;
-    }
-    if (entry.kind === 'prior_master') {
-      return `<Picture ${entry.picture}> (prior scene continuity reference for [Shot 1]): selectively_preserved - retain compatible identity, wardrobe, setting, object, and spatial continuity while the current <Picture 1> remains authoritative.`;
-    }
-    if (entry.kind === 'canonical_identity') {
-      return `<Picture ${entry.picture}> (canonical identity for <Subject ${entry.identityIndex + 1}>): fully_preserved - retain ${entry.identity.displayName}'s facial structure, hair, and recognizable identity without substitution or blending.`;
-    }
-    return `<Picture ${entry.picture}> (body and wardrobe reference for <Subject ${entry.identityIndex + 1}>): selectively_preserved - retain ${entry.identity.displayName}'s body proportions and applicable wardrobe details without overriding the current composition.`;
-  });
+  const retention = [
+    '<Picture 1> ([Shot 1] composition anchor): fully_preserved - retain its setting, camera framing, lighting, attire, objects, and spatial relationships throughout the shot.',
+    ...(priorMaster
+      ? [`<Picture ${priorMaster.picture}> (prior scene continuity reference for [Shot 1]): partially_preserved - retain compatible identity, wardrobe, setting, object, and spatial continuity while the current <Picture 1> remains authoritative.`]
+      : []),
+    ...cast.map((identity, index) => {
+      const canonicalPicture = pictureForHash(identity.referenceImage.sha256);
+      const bodyPicture = identity.bodyReferenceImage
+        ? pictureForHash(identity.bodyReferenceImage.sha256)
+        : null;
+      const bodyRetention = bodyPicture === canonicalPicture
+        ? ', plus applicable body proportions and wardrobe details from that same picture'
+        : bodyPicture
+          ? `, plus body proportions and applicable wardrobe details from <Picture ${bodyPicture}>`
+          : '';
+      return `<Subject ${index + 1}> (appears in [Shot 1]): fully_preserved - retain ${identity.displayName}'s exact identity, facial structure, face, and hair from <Picture ${canonicalPicture}>${bodyRetention}, while preserving the attire and placement established in <Picture 1>.`;
+    })
+  ];
   const referenceSummary = priorMaster
     ? `<Picture 1> as the current composition anchor, <Picture ${priorMaster.picture}> as the prior continuity reference,`
     : '<Picture 1> as the current composition anchor';

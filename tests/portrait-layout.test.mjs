@@ -79,7 +79,9 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.doesNotMatch(pageSource, /value=\{capability\.template\.id\} disabled=/);
   assert.match(pageSource, /buildInlineSceneVideoRequest\(scene, modelTemplate\)/);
   assert.match(pageSource, /LTX 2\.5 Distilled · silent/);
-  assert.match(pageSource, /MiniMax H3 Ref2VA · current scene \+ prior master \+ canonical cast · native audio/);
+  assert.match(pageSource, /MiniMax H3 Ref2VA · \{inlineSceneH3ReferenceSummary \|\| 'reference plan resolves after the current scene'\} · native audio/);
+  assert.match(pageSource, /describeInlineSceneH3ReferencePlan\(inlineSceneVideoRequest\)/);
+  assert.doesNotMatch(pageSource, /current scene \+ prior master \+ canonical cast/);
   assert.doesNotMatch(pageSource, /MiniMax H3 FL2VA Turbo/);
   assert.match(pageSource, /!inlineSceneVideoSelectedModelAvailable\}[\s\S]*?Retry scene motion models/);
   assert.match(pageSource, /on:click=\{\(\) => void loadInlineSceneVideoGenerator\(\)\}/);
