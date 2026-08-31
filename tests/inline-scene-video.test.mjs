@@ -612,23 +612,16 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
       bodyReferenceImage: duplicateReference
     }))
   };
-  const dedupedRequest = buildInlineSceneVideoRequest(
-    staticScene('3:2', 0.5, {
-      candidates: trioCandidates.slice(0, 2),
-      cast: dedupedCast
-    }),
-    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+  assert.throws(
+    () => buildInlineSceneVideoRequest(
+      staticScene('3:2', 0.5, {
+        candidates: trioCandidates.slice(0, 2),
+        cast: dedupedCast
+      }),
+      MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    ),
+    /reference shared by different identities/
   );
-  const dedupedPlan = inlineSceneH3ReferencePlan(dedupedRequest);
-  assert.deepEqual(dedupedPlan.map(({ picture, kind }) => ({ picture, kind })), [
-    { picture: 1, kind: 'current_scene' },
-    { picture: 2, kind: 'canonical_identity' },
-    { picture: 3, kind: 'canonical_identity' }
-  ]);
-  assert.equal(new Set(dedupedPlan.map(({ sha256 }) => sha256)).size, dedupedPlan.length);
-  const dedupedPrompt = buildInlineSceneVideoPrompt(dedupedRequest);
-  assert.match(dedupedPrompt, /<Subject 1> is Jenna Stannis;[^\n]*<Picture 2>/);
-  assert.match(dedupedPrompt, /<Subject 2> is Cally;[^\n]*<Picture 3>[^\n]*<Picture 2>/);
 });
 
 test('builds the exact additive LightX Ref2VA four-step preview without changing quality H3', () => {

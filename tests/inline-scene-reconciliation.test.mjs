@@ -216,16 +216,18 @@ test('scene reconciliation supplies the complete scenario cast and compiles the 
   );
   assert.match(reconciliation, /profiles: readonly ScenarioPortraitProfile\[\]/);
   assert.match(reconciliation, /inlineSceneCastForResult\(result, scenarioSceneProfiles\)/);
-  assert.match(reconciliation, /inlineSceneDriverForCast\(cast, scenarioSceneProfiles, continuityMaster\)/);
+  assert.match(reconciliation, /inlineSceneDriverForCast\(cast, scenarioSceneProfiles, continuityMaster, stillMode\)/);
   assert.match(reconciliation, /\.\.\.driver,/);
   assert.doesNotMatch(reconciliation, /inlineSceneProfileDriver/);
 });
 
-test('static driver deterministically keeps initial LoRA solos on Z-Image and all other casts on Qwen', () => {
+test('static driver keeps the automatic Z/Qwen policy while honoring the additive H3 still selection', () => {
   const driver = sourceBetween(
     'function inlineSceneDriverForCast(',
     'function inlineSceneDriverAvailable('
   );
+  assert.match(driver, /stillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID/);
+  assert.match(driver, /modelTemplate: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID, lora: null/);
   assert.match(driver, /cast\.kind === 'solo' && !continuityMaster/);
   assert.match(driver, /candidate\.id === identity\.profileId/);
   assert.match(driver, /candidate\.fingerprint === identity\.profileFingerprint/);
@@ -258,7 +260,7 @@ test('static driver deterministically keeps initial LoRA solos on Z-Image and al
     'async function generateInlineScene(',
     'function persistInlineScenesEnabled()'
   );
-  assert.match(generation, /const driver = inlineSceneDriverForCast\(cast, selectedProfiles, continuityMaster\);/);
+  assert.match(generation, /const driver = inlineSceneDriverForCast\(cast, selectedProfiles, continuityMaster, selectedStillMode\);/);
   assert.match(generation, /if \(!inlineSceneDriverAvailable\(selectedCapabilities, driver\)\)/);
   assert.match(generation, /Linked scene identity LoRA is unavailable/);
   assert.match(generation, /is unavailable for the selected scene cast/);
@@ -266,7 +268,7 @@ test('static driver deterministically keeps initial LoRA solos on Z-Image and al
   assert.doesNotMatch(generation, /driver\s*=\s*\{ modelTemplate:/);
 });
 
-test('scene continuity uses an eligible strict ancestor and falls back fresh for three new subjects', () => {
+test('scene continuity keeps the Qwen cast limit while H3 can retain an exact strict ancestor', () => {
   const ancestry = sourceBetween(
     'function inlineSceneSourceBelongsToCurrentAncestry(',
     'function inlineSceneCastForResult('
@@ -280,7 +282,7 @@ test('scene continuity uses an eligible strict ancestor and falls back fresh for
     'function persistInlineScenesEnabled()'
   );
   assert.match(generation, /await verifyStoredInlineScene\(selectedContinuityScene\)/);
-  assert.match(generation, /if \(inlineSceneContinuityMasterEligible\(cast, candidateMaster\)\)/);
+  assert.match(generation, /selectedStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID[\s\S]*\|\| inlineSceneContinuityMasterEligible\(cast, candidateMaster\)/);
   assert.match(generation, /continuityMaster = candidateMaster;/);
   assert.match(generation, /continuityMasterImage = verifiedMasterScene\.image;/);
   assert.match(generation, /\.\.\.\(continuityMaster \? \{ continuityMaster \} : \{\}\)/);
@@ -290,7 +292,7 @@ test('scene continuity uses an eligible strict ancestor and falls back fresh for
 
 });
 
-test('H3 page multipart inherits eligible inclusion plus no-overlap and same-hash omission from the exact reference plan', () => {
+test('H3 video page multipart inherits eligible inclusion plus no-overlap and same-hash omission from its exact reference plan', () => {
   assert.match(pageSource, /inlineSceneH3ReferencePlan,/);
   const generation = sourceBetween(
     'async function generateInlineSceneVideo(',

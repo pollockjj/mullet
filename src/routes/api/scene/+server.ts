@@ -2,7 +2,9 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   INLINE_SCENE_IMAGE_TIMEOUT_MS,
-  inlineSceneDimensions,
+  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
+  MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS,
+  inlineSceneDimensionsForTemplate,
   inlineSceneModelTemplateAvailable,
   normalizeInlineSceneImageRequest
 } from '$lib/inline-scene';
@@ -63,7 +65,8 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
     const capabilities = await loadInlineSceneCapabilities(
       fetch,
       baseUrl,
-      AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
+      AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
+      { minimaxH3T1StillValidated: runtime.minimaxH3T1StillValidated }
     );
     return json(capabilities, { headers: { 'cache-control': 'no-store' } });
   } catch (cause) {
@@ -110,9 +113,17 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
   }
   const seed = sceneRequest.seed ?? randomSeed();
-  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(INLINE_SCENE_IMAGE_TIMEOUT_MS)]);
+  const timeout = sceneRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+    ? MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS
+    : INLINE_SCENE_IMAGE_TIMEOUT_MS;
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]);
   try {
-    const capabilities = await loadInlineSceneCapabilities(fetch, baseUrl, signal);
+    const capabilities = await loadInlineSceneCapabilities(
+      fetch,
+      baseUrl,
+      signal,
+      { minimaxH3T1StillValidated: runtime.minimaxH3T1StillValidated }
+    );
     if (!inlineSceneModelTemplateAvailable(capabilities, sceneRequest.modelTemplate)) {
       throw error(400, 'The selected inline-scene model is unavailable.');
     }
@@ -137,7 +148,11 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       signal,
       uploadedMaster
     );
-    const dimensions = inlineSceneDimensions(sceneRequest.aspectRatio, sceneRequest.megapixels);
+    const dimensions = inlineSceneDimensionsForTemplate(
+      sceneRequest.modelTemplate,
+      sceneRequest.aspectRatio,
+      sceneRequest.megapixels
+    );
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
       headers: {
         'content-type': result.contentType,

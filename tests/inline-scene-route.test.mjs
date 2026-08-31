@@ -9,6 +9,8 @@ import test from 'node:test';
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
   INLINE_SCENE_QWEN_TEMPLATE_ID,
+  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE,
+  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
   buildInlineSceneImageRequest,
@@ -72,7 +74,10 @@ function png(width = 864, height = 576) {
   return bytes;
 }
 
-function sceneRequest(continuityMaster) {
+function sceneRequest(
+  continuityMaster,
+  modelTemplate = INLINE_SCENE_QWEN_TEMPLATE_ID
+) {
   const messages = [
     { role: 'user', content: 'What happens on the flight deck?' },
     { role: 'assistant', content: 'Jenna braces against the console as the Liberator pitches under fire.' }
@@ -88,11 +93,11 @@ function sceneRequest(continuityMaster) {
     subjectIds: [candidate.id]
   });
   return buildInlineSceneImageRequest(result, {
-    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
+    modelTemplate,
     cast,
     ...(continuityMaster ? { continuityMaster } : {}),
     lora: null,
-    aspectRatio: '3:2',
+    aspectRatio: modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID ? '16:9' : '3:2',
     megapixels: 0.5
   });
 }
@@ -104,12 +109,15 @@ function node(name, required = {}, optional = {}) {
 function capabilityResponse(name) {
   const qwen = QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles;
   const zImage = Z_IMAGE_TURBO_SCENE_TEMPLATE.modelFiles;
-  if (name === 'UNETLoader') return node(name, { unet_name: [[zImage.unet, qwen.unet]] });
+  const h3 = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE;
+  if (name === 'UNETLoader') return node(name, { unet_name: [[zImage.unet, qwen.unet, h3.modelFiles.unet]] });
   if (name === 'CLIPLoader') return node(name, {
-    clip_name: [[zImage.clip, qwen.clip]],
-    type: [['lumina2', 'qwen_image']]
+    clip_name: [[zImage.clip, qwen.clip, h3.modelFiles.clip]],
+    type: [['lumina2', 'qwen_image', 'minimax']]
   });
-  if (name === 'VAELoader') return node(name, { vae_name: [[zImage.vae, qwen.vae]] });
+  if (name === 'VAELoader') return node(name, {
+    vae_name: [[zImage.vae, qwen.vae, h3.modelFiles.videoVae, h3.modelFiles.audioVae]]
+  });
   if (name === 'LoraLoader') return node(name, { lora_name: [['zimage/unused.safetensors']] });
   if (name === 'LoraLoaderModelOnly') return node(name, { lora_name: [[qwen.lora]] });
   if (name === 'KSampler') return node(name, {
@@ -121,6 +129,30 @@ function capabilityResponse(name) {
     image2: ['IMAGE'],
     image3: ['IMAGE']
   });
+  if (name === 'KSamplerSelect') return node(name, { sampler_name: [[h3.sampler]] });
+  if (name === 'BasicScheduler') return node(name, { scheduler: [[h3.scheduler]] });
+  if (name === 'EmptyLatentImage') return node(name, {
+    width: ['INT', { min: 16, max: 8192 }],
+    height: ['INT', { min: 16, max: 8192 }],
+    batch_size: ['INT', { min: 1, max: 4096 }]
+  });
+  if (name === 'MiniMaxH3ReferenceToVideo') {
+    const result = node(name, {
+      length: ['INT', { min: 5, max: 3600, step: 17 }],
+      ref_image_size: [[h3.referenceImageSize, 'max']]
+    }, {
+      ref_images: ['COMFY_AUTOGROW_V3', {
+        template: {
+          input: { required: { ref_image: ['IMAGE'] } },
+          prefix: 'ref_image_',
+          min: 0,
+          max: h3.maxReferenceImages
+        }
+      }]
+    });
+    result[name].output = ['CONDITIONING', 'LATENT'];
+    return result;
+  }
   return node(name);
 }
 
@@ -150,6 +182,7 @@ function webHeaders(request) {
 
 function fakeComfy() {
   const outputBytes = png();
+  const h3OutputBytes = png(960, 544);
   const state = { calls: [], uploads: [], prompts: [] };
   const reset = () => {
     state.calls = [];
@@ -191,11 +224,14 @@ function fakeComfy() {
         return;
       }
       if (url.pathname === `/history/${promptId}`) {
+        const h3 = Boolean(state.prompts.at(-1)?.prompt?.['28']);
         responseJson(response, 200, {
           [promptId]: {
             status: { completed: true, status_str: 'success' },
             outputs: {
-              '14': { images: [{ filename: 'scene_00001_.png', subfolder: 'mullet', type: 'output' }] }
+              [h3 ? '28' : '14']: {
+                images: [{ filename: 'scene_00001_.png', subfolder: 'mullet', type: 'output' }]
+              }
             }
           }
         });
@@ -209,7 +245,7 @@ function fakeComfy() {
           return;
         }
         response.writeHead(200, { 'content-type': 'image/png' });
-        response.end(outputBytes);
+        response.end(state.prompts.at(-1)?.prompt?.['28'] ? h3OutputBytes : outputBytes);
         return;
       }
       responseJson(response, 404, { error: `unexpected ${url.pathname}` });
@@ -217,7 +253,7 @@ function fakeComfy() {
       responseJson(response, 500, { error: cause instanceof Error ? cause.message : 'fake Comfy failure' });
     }
   });
-  return { server, state, reset, outputBytes };
+  return { server, state, reset, outputBytes, h3OutputBytes };
 }
 
 function listen(server) {
@@ -268,6 +304,7 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
   });
   const comfyBaseUrl = await listen(fake.server);
   process.env.IMAGE_COMFY_BASE_URL = comfyBaseUrl;
+  process.env.MINIMAX_H3_T1_STILL_VALIDATED = 'true';
   process.env.VIDEO_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
@@ -282,6 +319,7 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
   const routeUrl = `${appBaseUrl}/mullet/api/scene`;
   const post = (body, headers = { origin: publicOrigin }) => fetch(routeUrl, { method: 'POST', headers, body });
   const first = sceneRequest();
+  const h3First = sceneRequest(undefined, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
   const masterBytes = png();
   const continuityMaster = createInlineSceneContinuityMaster(first, {
     promptId: '44444444-4444-4444-8444-444444444444',
@@ -300,6 +338,26 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
     assert.equal(fake.state.uploads.length, 0);
     assert.equal(fake.state.prompts.length, 1);
     assert.equal(fake.state.prompts[0].prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
+  });
+
+  await context.test('the validated native H3 T=1 route returns the exact one-frame PNG contract', async () => {
+    fake.reset();
+    const response = await post(formFor(h3First));
+    const responseBytes = new Uint8Array(await response.arrayBuffer());
+    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
+    assert.deepEqual(responseBytes, fake.h3OutputBytes);
+    assert.equal(response.headers.get('x-mullet-model-template'), MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
+    assert.equal(response.headers.get('x-mullet-width'), '960');
+    assert.equal(response.headers.get('x-mullet-height'), '544');
+    assert.equal(fake.state.uploads.length, 0);
+    assert.equal(fake.state.prompts.length, 1);
+    const graph = fake.state.prompts[0].prompt;
+    assert.equal(graph['20'].class_type, 'MiniMaxH3ReferenceToVideo');
+    assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
+    assert.deepEqual(graph['21'].inputs.conditioning, ['20', 0]);
+    assert.equal(JSON.stringify(graph).includes('["20",1]'), false);
+    assert.deepEqual(graph['25'].inputs, { width: 960, height: 544, batch_size: 1 });
+    assert.equal(graph['28'].class_type, 'SaveImage');
   });
 
   await context.test('a continued scene uploads and binds the exact verified master', async () => {

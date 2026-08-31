@@ -50,6 +50,8 @@
     INLINE_SCENE_QWEN_TEMPLATE_ID,
     INLINE_SCENE_TEMPLATE_ID,
     INLINE_SCENE_TIMEOUT_MS,
+    MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
+    MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS,
     buildInlineSceneImageRequest,
     buildInlineSceneRequest,
     createInlineSceneContinuityMaster,
@@ -309,6 +311,7 @@
   type Role = 'user' | 'assistant';
   type Message = { role: Role; content: string };
   type InlineSceneImageDriver = Pick<InlineSceneImageRequest, 'modelTemplate' | 'lora'>;
+  type InlineSceneStillMode = 'automatic' | typeof MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
   export let data: PageData;
 
   let messages: Message[] = [];
@@ -462,6 +465,8 @@
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
   let scenarioSceneProfiles: ScenarioPortraitProfile[] = [];
   let inlineSceneSelectedModelAvailable = false;
+  let inlineSceneStillMode: InlineSceneStillMode = 'automatic';
+  let inlineSceneH3StillCapability: InlineSceneCapabilities['templates'][number] | null = null;
   let scenarioLoading = false;
   let conversationId = '';
   let expressionsEnabled = false;
@@ -529,6 +534,7 @@
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
   const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
+  const inlineSceneStillModeStorageKey = 'mullet.inline-scene-still-mode.v1';
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
   const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v2';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
@@ -584,8 +590,12 @@
       inlineSceneSidecarRequest,
       conversationId,
       messages
-    )
+    ),
+    inlineSceneStillMode
   );
+  $: inlineSceneH3StillCapability = inlineSceneCapabilities?.templates.find(
+    ({ template }) => template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+  ) ?? null;
   $: selectedPortraitCapability = portraitCapabilities?.templates.find(
     ({ template }) => template.id === portraitModelTemplate
   ) ?? null;
@@ -685,7 +695,8 @@
     generatedInlineScene,
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
-    scenarioSceneProfiles
+    scenarioSceneProfiles,
+    inlineSceneStillMode
   );
   $: inlineSceneVideoRequest = currentInlineSceneVideoRequest(
     generatedInlineScene,
@@ -750,7 +761,8 @@
     inlineSceneCurrent,
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
-    scenarioSceneProfiles
+    scenarioSceneProfiles,
+    inlineSceneStillMode
   );
   $: scheduleInlineSceneVideoReconciliation(
     conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
@@ -894,6 +906,10 @@
     localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
+    inlineSceneStillMode = localStorage.getItem(inlineSceneStillModeStorageKey) === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      ? MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      : 'automatic';
+    localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
     inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
@@ -1051,6 +1067,15 @@
     suspendInlineSceneVideoForStaticChange();
   }
 
+  function persistInlineSceneStillMode() {
+    if (
+      inlineSceneStillMode !== 'automatic'
+      && inlineSceneStillMode !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+    ) inlineSceneStillMode = 'automatic';
+    localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
+    persistInlineSceneSettings();
+  }
+
   function inlineSceneStoredEpochIsCurrent(epoch: string): boolean {
     const saved = localStorage.getItem(inlineSceneFinalizedStorageKey);
     if (!saved) return false;
@@ -1178,8 +1203,12 @@
   function inlineSceneDriverForCast(
     cast: InlineSceneCast,
     profiles: readonly ScenarioPortraitProfile[],
-    continuityMaster: InlineSceneContinuityMaster | null
+    continuityMaster: InlineSceneContinuityMaster | null,
+    stillMode: InlineSceneStillMode
   ): InlineSceneImageDriver {
+    if (stillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
+      return { modelTemplate: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID, lora: null };
+    }
     if (cast.kind === 'solo' && !continuityMaster) {
       const [identity] = cast.identities;
       const profile = profiles.find((candidate) => (
@@ -1208,12 +1237,22 @@
       && (!driver.lora || capabilities?.loras.includes(driver.lora.path) === true);
   }
 
+  function inlineSceneStillDriverLabel(modelTemplate: InlineSceneImageRequest['modelTemplate']): string {
+    if (modelTemplate === INLINE_SCENE_TEMPLATE_ID) return 'Z-Image + exact linked LoRA';
+    if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) return 'MiniMax H3 native T=1 Ref2VA';
+    return 'Qwen multi-reference master';
+  }
+
   function inlineScenePotentialDriverAvailable(
     capabilities: InlineSceneCapabilities | null,
     profiles: readonly ScenarioPortraitProfile[],
-    continuityScene: StoredInlineScene | null
+    continuityScene: StoredInlineScene | null,
+    stillMode: InlineSceneStillMode
   ): boolean {
     if (!capabilities || profiles.length < 1) return false;
+    if (stillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
+      return inlineSceneModelTemplateAvailable(capabilities, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
+    }
     if (continuityScene) {
       return inlineSceneModelTemplateAvailable(capabilities, INLINE_SCENE_QWEN_TEMPLATE_ID);
     }
@@ -1257,13 +1296,15 @@
     scene: StoredInlineScene | null,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    profiles: readonly ScenarioPortraitProfile[]
+    profiles: readonly ScenarioPortraitProfile[],
+    stillMode: InlineSceneStillMode
   ): boolean {
     if (!scene || profiles.length < 1) return false;
     const driver = inlineSceneDriverForCast(
       scene.request.cast,
       profiles,
-      scene.request.continuityMaster ?? null
+      scene.request.continuityMaster ?? null,
+      stillMode
     );
     return Boolean(
       scene.request.aspectRatio === aspectRatio
@@ -1948,7 +1989,8 @@
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
     profiles: readonly ScenarioPortraitProfile[],
-    continuityScene: StoredInlineScene | null
+    continuityScene: StoredInlineScene | null,
+    stillMode: InlineSceneStillMode
   ): string {
     const master = continuityScene ? inlineSceneContinuityMasterForScene(continuityScene) : null;
     return [
@@ -1958,7 +2000,7 @@
       request.source.turnFingerprint,
       aspectRatio,
       megapixels,
-      'deterministic-static-driver-v1',
+      stillMode,
       ...profiles.flatMap((profile) => [
         profile.id,
         profile.fingerprint,
@@ -1990,7 +2032,8 @@
     current: boolean,
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
-    profiles: readonly ScenarioPortraitProfile[]
+    profiles: readonly ScenarioPortraitProfile[],
+    stillMode: InlineSceneStillMode
   ) {
     if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current || profiles.length < 1) return;
     const continuityScene = inlineSceneAncestralMasterScene(
@@ -1999,11 +2042,11 @@
       conversationId,
       messages
     );
-    if (!inlineScenePotentialDriverAvailable(capabilities, profiles, continuityScene)) return;
-    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, profiles, continuityScene);
+    if (!inlineScenePotentialDriverAvailable(capabilities, profiles, continuityScene, stillMode)) return;
+    const key = inlineSceneAttemptKey(request, aspectRatio, megapixels, profiles, continuityScene, stillMode);
     if (key === lastInlineSceneAttemptKey) return;
     lastInlineSceneAttemptKey = key;
-    void generateInlineScene(request, aspectRatio, megapixels, profiles, continuityScene);
+    void generateInlineScene(request, aspectRatio, megapixels, profiles, continuityScene, stillMode);
   }
 
   function inlineSceneGenerationIsCurrent(
@@ -2013,6 +2056,7 @@
     result: InlineSceneResult | null,
     imageRequestKey: string,
     continuityMaster: InlineSceneContinuityMaster | null,
+    stillMode: InlineSceneStillMode,
     signal: AbortSignal
   ): boolean {
     if (
@@ -2032,7 +2076,7 @@
     if (!inlineSceneResultMatchesRequest(result, liveSidecar)) return false;
     try {
       const cast = inlineSceneCastForResult(result, scenarioSceneProfiles);
-      const driver = inlineSceneDriverForCast(cast, scenarioSceneProfiles, continuityMaster);
+      const driver = inlineSceneDriverForCast(cast, scenarioSceneProfiles, continuityMaster, stillMode);
       const liveImageRequest = buildInlineSceneImageRequest(result, {
         ...driver,
         cast,
@@ -2062,7 +2106,8 @@
       selectedSidecarRequest,
       conversationId,
       messages
-    )
+    ),
+    selectedStillMode: InlineSceneStillMode = inlineSceneStillMode
   ) {
     const selectedCapabilities = inlineSceneCapabilities;
     if (
@@ -2070,7 +2115,12 @@
       || !inlineScenesEnabled
       || !selectedCapabilities
       || selectedProfiles.length < 1
-      || !inlineScenePotentialDriverAvailable(selectedCapabilities, selectedProfiles, selectedContinuityScene)
+      || !inlineScenePotentialDriverAvailable(
+        selectedCapabilities,
+        selectedProfiles,
+        selectedContinuityScene,
+        selectedStillMode
+      )
       || inlineSceneBusy
       || !inlineScenePersistenceReady
       || !inlineScenePersistenceAvailable
@@ -2083,17 +2133,21 @@
       selectedAspectRatio,
       selectedMegapixels,
       selectedProfiles,
-      selectedContinuityScene
+      selectedContinuityScene,
+      selectedStillMode
     );
     inlineSceneBusy = true;
     inlineSceneError = '';
     const activeController = new AbortController();
     inlineSceneController = activeController;
     let timedOut = false;
+    const imageTimeoutMs = selectedStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      ? MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS
+      : INLINE_SCENE_IMAGE_TIMEOUT_MS;
     const timeoutId = window.setTimeout(() => {
       timedOut = true;
       activeController.abort();
-    }, INLINE_SCENE_TIMEOUT_MS + INLINE_SCENE_IMAGE_TIMEOUT_MS + 10_000);
+    }, INLINE_SCENE_TIMEOUT_MS + imageTimeoutMs + 10_000);
     try {
       const sidecarResponse = await fetch(`${base}/api/sidecar/scene`, {
         method: 'POST',
@@ -2118,12 +2172,15 @@
       if (selectedContinuityScene) {
         const verifiedMasterScene = await verifyStoredInlineScene(selectedContinuityScene);
         const candidateMaster = inlineSceneContinuityMasterForScene(verifiedMasterScene);
-        if (inlineSceneContinuityMasterEligible(cast, candidateMaster)) {
+        if (
+          selectedStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+          || inlineSceneContinuityMasterEligible(cast, candidateMaster)
+        ) {
           continuityMaster = candidateMaster;
           continuityMasterImage = verifiedMasterScene.image;
         }
       }
-      const driver = inlineSceneDriverForCast(cast, selectedProfiles, continuityMaster);
+      const driver = inlineSceneDriverForCast(cast, selectedProfiles, continuityMaster, selectedStillMode);
       if (!inlineSceneDriverAvailable(selectedCapabilities, driver)) {
         const capability = selectedCapabilities.templates.find(
           ({ template }) => template.id === driver.modelTemplate
@@ -2151,6 +2208,7 @@
         result,
         requestKey,
         continuityMaster,
+        selectedStillMode,
         activeController.signal
       )) return;
       const imageForm = new FormData();
@@ -2215,13 +2273,14 @@
           result,
           requestKey,
           continuityMaster,
+          selectedStillMode,
           activeController.signal
         ),
         install: (scene) => installGeneratedInlineScene(scene)
       });
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
-        if (timedOut) inlineSceneError = `Inline scene timed out after ${(INLINE_SCENE_TIMEOUT_MS + INLINE_SCENE_IMAGE_TIMEOUT_MS + 10_000) / 1000} seconds.`;
+        if (timedOut) inlineSceneError = `Inline scene timed out after ${(INLINE_SCENE_TIMEOUT_MS + imageTimeoutMs + 10_000) / 1000} seconds.`;
       } else {
         inlineSceneError = cause instanceof Error ? cause.message : 'Inline scene failed.';
       }
@@ -5304,10 +5363,27 @@
         {#if inlineSceneCapabilities}
           {#if generatedInlineScene && inlineSceneApplies}
             <small class="scene-cast-status">
-              {generatedInlineScene.request.cast.kind === 'solo' ? 'Solo' : generatedInlineScene.request.cast.kind === 'duo' ? 'Duo' : 'Trio'} · {generatedInlineScene.request.cast.identities.map((identity) => identity.displayName).join(' + ')} · {generatedInlineScene.request.modelTemplate === INLINE_SCENE_TEMPLATE_ID ? 'Z-Image + exact linked LoRA' : 'Qwen multi-reference master'}
+              {generatedInlineScene.request.cast.kind === 'solo' ? 'Solo' : generatedInlineScene.request.cast.kind === 'duo' ? 'Duo' : 'Trio'} · {generatedInlineScene.request.cast.identities.map((identity) => identity.displayName).join(' + ')} · {inlineSceneStillDriverLabel(generatedInlineScene.request.modelTemplate)}
             </small>
           {:else}
             <small class="scene-cast-status">Selecting visible cast…</small>
+          {/if}
+          <label>
+            <span>Still model</span>
+            <select
+              bind:value={inlineSceneStillMode}
+              on:change={persistInlineSceneStillMode}
+              disabled={inlineSceneBusy}
+              aria-label="Inline scene still model"
+            >
+              <option value="automatic">Automatic · Z-Image solo / Qwen references</option>
+              <option value={MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}>
+                MiniMax H3 Ref2VA · Native T=1 still (20-step){inlineSceneH3StillCapability?.available === false ? ' (unavailable)' : ''}
+              </option>
+            </select>
+          </label>
+          {#if inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}
+            <small>Native one-frame Ref2VA · ordered identity/continuity references · base H3 · no LoRA · res_multistep/beta · 20 steps</small>
           {/if}
           <div class="portrait-grid">
             <label>
@@ -5323,10 +5399,14 @@
               </select>
             </label>
           </div>
-          {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.source.sidecarModel} · {generatedInlineScene.request.modelTemplate === INLINE_SCENE_TEMPLATE_ID ? 'Z-Image identity LoRA' : 'Qwen identity references'}</small>{/if}
+          {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.source.sidecarModel} · {inlineSceneStillDriverLabel(generatedInlineScene.request.modelTemplate)}</small>{/if}
           {#if !inlineSceneSelectedModelAvailable}
             <div class="sidecar-error capability-error" role="alert">
-              <span>No deterministic static-scene driver is currently available for this scenario state.</span>
+              <span>
+                {inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+                  ? `MiniMax H3 native still is unavailable.${inlineSceneH3StillCapability?.missing.length ? ` Missing: ${inlineSceneH3StillCapability.missing.join(', ')}.` : ''}`
+                  : 'No deterministic static-scene driver is currently available for this scenario state.'}
+              </span>
               <button class="error-retry" on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
                 {inlineSceneCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
               </button>
@@ -5654,7 +5734,7 @@
                     ></video>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 Ref2VA with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? generatedInlineSceneUrl ? 'Updating landscape · prior verified scene shown' : 'Gemma sidecar → deterministic scene driver' : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : generatedInlineScene?.request.modelTemplate === INLINE_SCENE_TEMPLATE_ID ? 'Current response · Z-Image + linked identity LoRA' : 'Current response · Qwen identity-reference edit') : generatedInlineSceneUrl && !inlineSceneApplies ? 'Prior response · verified static fallback' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 Ref2VA with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? generatedInlineSceneUrl ? 'Updating landscape · prior verified scene shown' : 'Gemma sidecar → deterministic scene driver' : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : `Current response · ${inlineSceneStillDriverLabel(generatedInlineScene?.request.modelTemplate ?? INLINE_SCENE_QWEN_TEMPLATE_ID)}`) : generatedInlineSceneUrl && !inlineSceneApplies ? 'Prior response · verified static fallback' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded · {generatedInlineSceneVideo.audioTracks === 0 ? 'silent' : 'native audio'}</small>{:else if generatedInlineScene}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>

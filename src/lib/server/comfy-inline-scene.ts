@@ -5,12 +5,16 @@ import {
   INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATES,
+  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE,
+  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
+  buildMiniMaxH3InlineSceneStillWorkflow,
   buildQwenImageEditSceneWorkflow,
   buildZImageTurboSceneWorkflow,
+  inlineSceneH3StillReferencePlan,
   inlineSceneQwenReferencePlan,
-  inlineSceneDimensions,
+  inlineSceneDimensionsForTemplate,
   inlineSceneTemplate,
   normalizeInlineSceneContinuityMaster,
   type InlineSceneCapabilities,
@@ -22,6 +26,10 @@ import { sha256Hex as sha256BytesHex } from './comfy-portrait-video.ts';
 import { assertComfyIdentityReference } from './comfy-portrait.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export type InlineSceneCapabilityOptions = {
+  minimaxH3T1StillValidated?: boolean;
+};
 
 export type ComfyInlineSceneImage = {
   bytes: Uint8Array;
@@ -82,15 +90,62 @@ function optionalInputHasType(
   return Array.isArray(input) && input[0] === inputType;
 }
 
+function inputDefinition(
+  value: unknown,
+  nodeName: string,
+  section: 'required' | 'optional',
+  inputName: string
+): unknown[] | null {
+  if (!isRecord(value) || !isRecord(value[nodeName])) return null;
+  const info = value[nodeName];
+  if (!isRecord(info.input) || !isRecord(info.input[section])) return null;
+  const input = info.input[section][inputName];
+  return Array.isArray(input) ? input : null;
+}
+
+function exactReferenceAutogrow(value: unknown): boolean {
+  const input = inputDefinition(value, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images');
+  if (!input || input[0] !== 'COMFY_AUTOGROW_V3' || !isRecord(input[1])) return false;
+  const template = input[1].template;
+  if (!isRecord(template) || !isRecord(template.input) || !isRecord(template.input.required)) return false;
+  const reference = template.input.required.ref_image;
+  return template.prefix === 'ref_image_'
+    && template.min === 0
+    && template.max === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.maxReferenceImages
+    && Array.isArray(reference)
+    && reference[0] === 'IMAGE';
+}
+
+function nodeOutputHasType(value: unknown, nodeName: string, index: number, outputType: string): boolean {
+  if (!isRecord(value) || !isRecord(value[nodeName])) return false;
+  const output = value[nodeName].output;
+  return Array.isArray(output) && output[index] === outputType;
+}
+
+function integerInputAccepts(value: unknown, nodeName: string, inputName: string, expected: number): boolean {
+  const input = inputDefinition(value, nodeName, 'required', inputName);
+  if (!input || input[0] !== 'INT') return false;
+  if (!isRecord(input[1])) return true;
+  const minimum = typeof input[1].min === 'number' ? input[1].min : Number.NEGATIVE_INFINITY;
+  const maximum = typeof input[1].max === 'number' ? input[1].max : Number.POSITIVE_INFINITY;
+  return expected >= minimum && expected <= maximum;
+}
+
 export async function loadInlineSceneCapabilities(
   fetcher: Fetcher,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: InlineSceneCapabilityOptions = {}
 ): Promise<InlineSceneCapabilities> {
   const pairs = await Promise.all(REQUIRED_NODES.map(async (nodeName): Promise<[string, unknown | null]> => {
-    const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
-    if (!response.ok) return [nodeName, null];
-    return [nodeName, await response.json()];
+    try {
+      const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
+      if (!response.ok) return [nodeName, null];
+      return [nodeName, await response.json()];
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return [nodeName, null];
+    }
   }));
   const info = new Map(pairs);
   const unets = optionList(info.get('UNETLoader'), 'UNETLoader', 'unet_name');
@@ -103,17 +158,49 @@ export async function loadInlineSceneCapabilities(
   const schedulers = optionList(info.get('KSampler'), 'KSampler', 'scheduler');
   const templates = INLINE_SCENE_TEMPLATES.map((template) => {
     const missing: string[] = [];
-    if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);
-    if (!clips.includes(template.modelFiles.clip)) missing.push(`model:clip:${template.modelFiles.clip}`);
-    if (!vaes.includes(template.modelFiles.vae)) missing.push(`model:vae:${template.modelFiles.vae}`);
-    const clipType = template.id === INLINE_SCENE_TEMPLATE_ID ? 'lumina2' : 'qwen_image';
-    if (!clipTypes.includes(clipType)) missing.push(`clip-type:${clipType}`);
-    if (!samplers.includes(template.sampler)) missing.push(`sampler:${template.sampler}`);
-    if (!schedulers.includes(template.scheduler)) missing.push(`scheduler:${template.scheduler}`);
-    if (template.id === INLINE_SCENE_QWEN_TEMPLATE_ID && !modelOnlyLoras.includes(QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora)) {
-      missing.push(`model:lora:${QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora}`);
+    if (template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
+      const h3 = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE;
+      if (options.minimaxH3T1StillValidated !== true) {
+        missing.push('runtime:minimax-h3-t1-still-unvalidated');
+      }
+      if (!unets.includes(h3.modelFiles.unet)) missing.push(`model:unet:${h3.modelFiles.unet}`);
+      if (!clips.includes(h3.modelFiles.clip)) missing.push(`model:clip:${h3.modelFiles.clip}`);
+      if (!clipTypes.includes('minimax')) missing.push('clip-type:minimax');
+      if (!vaes.includes(h3.modelFiles.videoVae)) missing.push(`model:vae:${h3.modelFiles.videoVae}`);
+      if (!vaes.includes(h3.modelFiles.audioVae)) missing.push(`model:vae:${h3.modelFiles.audioVae}`);
+      const h3Samplers = optionList(info.get('KSamplerSelect'), 'KSamplerSelect', 'sampler_name');
+      const h3Schedulers = optionList(info.get('BasicScheduler'), 'BasicScheduler', 'scheduler');
+      if (!h3Samplers.includes(h3.sampler)) missing.push(`sampler:${h3.sampler}`);
+      if (!h3Schedulers.includes(h3.scheduler)) missing.push(`scheduler:${h3.scheduler}`);
+      const referenceInfo = info.get('MiniMaxH3ReferenceToVideo');
+      if (!optionList(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'ref_image_size').includes(h3.referenceImageSize)) {
+        missing.push(`node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${h3.referenceImageSize}`);
+      }
+      if (!exactReferenceAutogrow(referenceInfo)) {
+        missing.push('node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9');
+      }
+      if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 0, 'CONDITIONING')) {
+        missing.push('node-output:MiniMaxH3ReferenceToVideo:0:CONDITIONING');
+      }
+      if (!integerInputAccepts(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'length', h3.conditioningLength)) {
+        missing.push(`node-input:MiniMaxH3ReferenceToVideo.length:${h3.conditioningLength}`);
+      }
+      if (!integerInputAccepts(info.get('EmptyLatentImage'), 'EmptyLatentImage', 'batch_size', h3.batchSize)) {
+        missing.push(`node-input:EmptyLatentImage.batch_size:${h3.batchSize}`);
+      }
+    } else {
+      if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);
+      if (!clips.includes(template.modelFiles.clip)) missing.push(`model:clip:${template.modelFiles.clip}`);
+      if (!vaes.includes(template.modelFiles.vae)) missing.push(`model:vae:${template.modelFiles.vae}`);
+      const clipType = template.id === INLINE_SCENE_TEMPLATE_ID ? 'lumina2' : 'qwen_image';
+      if (!clipTypes.includes(clipType)) missing.push(`clip-type:${clipType}`);
+      if (!samplers.includes(template.sampler)) missing.push(`sampler:${template.sampler}`);
+      if (!schedulers.includes(template.scheduler)) missing.push(`scheduler:${template.scheduler}`);
     }
     if (template.id === INLINE_SCENE_QWEN_TEMPLATE_ID) {
+      if (!modelOnlyLoras.includes(QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora)) {
+        missing.push(`model:lora:${QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora}`);
+      }
       for (const inputName of ['image1', 'image2', 'image3']) {
         if (!optionalInputHasType(
           info.get('TextEncodeQwenImageEditPlus'),
@@ -322,20 +409,31 @@ export async function runComfyInlineScene(
   signal?: AbortSignal,
   continuityMasterInput?: InlineSceneUploadedMasterInput
 ): Promise<ComfyInlineSceneImage> {
-  if (request.modelTemplate !== INLINE_SCENE_QWEN_TEMPLATE_ID && continuityMasterInput) {
-    throw new Error('only Qwen inline scenes can use an uploaded continuity master');
+  if (
+    request.modelTemplate !== INLINE_SCENE_QWEN_TEMPLATE_ID
+    && request.modelTemplate !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+    && continuityMasterInput
+  ) {
+    throw new Error('only reference-conditioned inline scenes can use an uploaded continuity master');
   }
   const workflow = request.modelTemplate === INLINE_SCENE_TEMPLATE_ID
     ? buildZImageTurboSceneWorkflow(request, seed, capabilities)
     : request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
       ? buildQwenImageEditSceneWorkflow(request, seed, capabilities, continuityMasterInput)
-      : (() => { throw new Error('unsupported inline-scene model template'); })();
-  if (request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID) {
-    for (const slot of inlineSceneQwenReferencePlan(request)) {
+      : request.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+        ? buildMiniMaxH3InlineSceneStillWorkflow(request, seed, continuityMasterInput)
+        : (() => { throw new Error('unsupported inline-scene model template'); })();
+  if (
+    request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
+    || request.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+  ) {
+    const plan = request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
+      ? inlineSceneQwenReferencePlan(request)
+      : inlineSceneH3StillReferencePlan(request);
+    for (const slot of plan) {
       if (slot.kind === 'continuity_master') continue;
-      const referenceImage = slot.kind === 'identity'
-        ? slot.identity.referenceImage
-        : slot.referenceImage;
+      if (slot.kind === 'prior_master') continue;
+      const referenceImage = slot.kind === 'identity' ? slot.identity.referenceImage : slot.referenceImage;
       await assertComfyIdentityReference(fetcher, baseUrl, referenceImage, signal);
     }
   }
@@ -360,7 +458,11 @@ export async function runComfyInlineScene(
     const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
     if (contentType !== 'image/png') throw new Error('ComfyUI inline-scene output is not a PNG');
     const bytes = await readBoundedPng(outputResponse);
-    const dimensions = inlineSceneDimensions(request.aspectRatio, request.megapixels);
+    const dimensions = inlineSceneDimensionsForTemplate(
+      request.modelTemplate,
+      request.aspectRatio,
+      request.megapixels
+    );
     validateInlineScenePng(bytes, dimensions.width, dimensions.height);
     return {
       bytes,

@@ -1,5 +1,5 @@
 import {
-  inlineSceneDimensions,
+  inlineSceneDimensionsForTemplate,
   inlineSceneImageRequestKey,
   normalizeInlineSceneImageRequest,
   type InlineSceneAspectRatio,
@@ -398,7 +398,11 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
   const sceneSeed = integer(value.source.sceneSeed, 'inline-scene video source seed', 0, Number.MAX_SAFE_INTEGER);
   const sceneWidth = integer(value.source.sceneWidth, 'inline-scene video source width', 16, 8192);
   const sceneHeight = integer(value.source.sceneHeight, 'inline-scene video source height', 16, 8192);
-  const staticDimensions = inlineSceneDimensions(sceneRequest.aspectRatio, sceneRequest.megapixels);
+  const staticDimensions = inlineSceneDimensionsForTemplate(
+    sceneRequest.modelTemplate,
+    sceneRequest.aspectRatio,
+    sceneRequest.megapixels
+  );
   if (sceneWidth !== staticDimensions.width || sceneHeight !== staticDimensions.height) {
     throw new Error('inline-scene video source dimensions do not match its static request');
   }

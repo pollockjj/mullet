@@ -1,5 +1,5 @@
 import {
-  inlineSceneDimensions,
+  inlineSceneDimensionsForTemplate,
   inlineSceneImageRequestKey,
   normalizeInlineSceneImageRequest,
   type InlineSceneImageRequest,
@@ -103,7 +103,11 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
     throw new Error('stored inline-scene template is invalid');
   }
   if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) throw new Error('stored inline-scene prompt ID is invalid');
-  const expected = inlineSceneDimensions(request.aspectRatio, request.megapixels);
+  const expected = inlineSceneDimensionsForTemplate(
+    request.modelTemplate,
+    request.aspectRatio,
+    request.megapixels
+  );
   const width = safeInteger(value.width, 'stored inline-scene width', 16, 2048);
   const height = safeInteger(value.height, 'stored inline-scene height', 16, 2048);
   if (width !== expected.width || height !== expected.height) throw new Error('stored inline-scene dimensions are invalid');

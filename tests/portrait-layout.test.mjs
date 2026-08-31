@@ -94,15 +94,20 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.match(pageSource, /on:click=\{\(\) => void loadInlineSceneVideoGenerator\(\)\}/);
 });
 
-test('scene cast readiness is one compact status instead of permanent disabled model and identity controls', () => {
+test('scene cast readiness stays compact while native H3 still remains an additive persisted choice', () => {
   assert.match(inlineScenePanel, /<small class="scene-cast-status">/);
   assert.match(inlineScenePanel, /Selecting visible cast…/);
   assert.match(inlineScenePanel, /generatedInlineScene\.request\.cast\.kind === 'solo' \? 'Solo'/);
   assert.match(inlineScenePanel, /generatedInlineScene\.request\.cast\.identities\.map\(\(identity\) => identity\.displayName\)\.join\(' \+ '\)/);
-  assert.match(inlineScenePanel, /generatedInlineScene\.request\.modelTemplate === INLINE_SCENE_TEMPLATE_ID \? 'Z-Image \+ exact linked LoRA' : 'Qwen multi-reference master'/);
-  assert.match(inlineScenePanel, /Qwen multi-reference master/);
+  assert.match(inlineScenePanel, /inlineSceneStillDriverLabel\(generatedInlineScene\.request\.modelTemplate\)/);
+  assert.match(pageSource, /return 'Qwen multi-reference master';/);
+  assert.match(inlineScenePanel, /aria-label="Inline scene still model"/);
+  assert.match(inlineScenePanel, /Automatic · Z-Image solo \/ Qwen references/);
+  assert.match(inlineScenePanel, /MiniMax H3 Ref2VA · Native T=1 still \(20-step\)/);
+  assert.match(inlineScenePanel, /Native one-frame Ref2VA · ordered identity\/continuity references · base H3 · no LoRA/);
+  assert.match(pageSource, /inlineSceneStillModeStorageKey = 'mullet\.inline-scene-still-mode\.v1'/);
+  assert.match(pageSource, /localStorage\.setItem\(inlineSceneStillModeStorageKey, inlineSceneStillMode\)/);
   assert.match(inlineScenePanel, /No deterministic static-scene driver is currently available for this scenario state/);
-  assert.doesNotMatch(inlineScenePanel, /H3 \{generatedInlineScene/);
   assert.match(inlineScenePanel, /scenarioSceneProfiles\.length < 1\}[\s\S]*A validated scenario cast is required/);
   assert.doesNotMatch(inlineScenePanel, /aria-label="Inline scene image model"/);
   assert.doesNotMatch(inlineScenePanel, /aria-label="Inline scene identity driver"/);
