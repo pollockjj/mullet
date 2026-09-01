@@ -1,8 +1,8 @@
-# H3 recovery plan and 30-hour postmortem
+# H3 recovery plan — technical appendix
 
 ## Control status
 
-This is the controlling execution plan for MULLET's H3 media work. It supersedes the H3 portions of every earlier roadmap while preserving the operator's requirements.
+This is the H3 media technical appendix to `docs/MULLET_30_HOUR_POSTMORTEM.md`. It is not the whole-project 30-hour postmortem and does not control product-wide milestone order, performance policy, or incident accountability. The full MULLET postmortem supersedes this appendix wherever they conflict.
 
 Current checkpoint state: **failed**.
 
@@ -25,9 +25,15 @@ No non-H3 media work, unrelated UI work, personal-assistant work, lorebook expan
 
 Retained legacy model paths may remain as explicit operator-selected alternatives. During recovery they may not be defaults, fallbacks, automatic selections, scenario-imposed selections, or exercised by the implementation unless the operator explicitly selects one in the current turn.
 
-Handoff boundary: producing and committing this document is the outgoing implementation owner's final action. This handoff changes and deploys no application code. The successor begins at failed Milestone 1, uses the existing served release as evidence rather than as an accepted baseline, and does not claim progress from this document itself.
+Historical handoff boundary: producing and committing the original version of this appendix was the outgoing implementation owner's final action at that time. That statement is superseded by the full MULLET postmortem. A successor begins with the product-wide recovery ledger in `docs/MULLET_30_HOUR_POSTMORTEM.md`; H3 work occurs only inside its media milestones.
 
-## 30-hour postmortem
+Known invalid decision boundary: the unaccelerated 20-step keeper-still and scene-motion settings documented below describe the failed candidate baseline. They are not accepted production defaults. The full MULLET postmortem requires a paired Turbo/full-path comparison and an explicit cold/warm click-to-visible SLO before any successor selects a default.
+
+The H3 milestone ledger and implementation boundaries below are historical candidate-specific evidence, not a second executable successor plan. They may inform the product-wide media milestones but may not advance independently or force H3 into every selector before empirical performance and operator acceptance.
+
+## H3 phase failure excerpt
+
+This section accounts only for the final H3 phase. The full 30-hour incident, including all earlier deliverables and failures, is recorded in `docs/MULLET_30_HOUR_POSTMORTEM.md`.
 
 ### Outcome
 
@@ -103,25 +109,25 @@ The following may be useful inputs to recovery, but none counts as a delivered m
 
 Every milestone below ends with one new operator-testable behavior in the served application. If that behavior is not visible and usable, the milestone is incomplete regardless of internal evidence.
 
-## Product contract
+## Historical H3 candidate contract — non-controlling
 
 ### Expression panel
 
-The expression panel is one automatic pipeline driven only by the last finalized assistant response:
+The failed candidate specified one automatic expression pipeline driven only by the last finalized assistant response:
 
 1. determine one expression on an isolated sidecar branch;
 2. generate one fixed 576x1024 H3 Ref2VA portrait;
 3. generate one silent H3 FL2VA expression loop from that exact portrait.
 
-The expression still uses the native five-frame H3 Ref2VA packet and retains frame 0. The default reference order is canonical face first and an optional verified body/wardrobe reference second. The UI has no expression aspect-ratio control.
+The candidate expression still uses the native five-frame H3 Ref2VA packet and retains frame 0. Its proposed reference order is canonical face first and an optional verified body/wardrobe reference second. The UI has no expression aspect-ratio control.
 
-The default expression motion uses the same portrait as its first and last image, generates 56 valid H3 lattice frames, encodes all 56 frames at 28 FPS, lasts exactly 2.000 seconds, and contains no audio track. Its prompt prohibits dialogue, vocalization, mouth movement, speech gestures, music, ambience, and sound effects.
+The candidate expression motion uses the same portrait as its first and last image, generates 56 valid H3 lattice frames, encodes all 56 frames at 28 FPS, lasts exactly 2.000 seconds, and contains no audio track. Its prompt prohibits dialogue, vocalization, mouth movement, speech gestures, music, ambience, and sound effects.
 
 Reloading the page restores accepted expression media. Reloading does not queue a new image or animation.
 
 ### Live scene
 
-The live-scene pipeline is separate from the expression pipeline:
+The failed candidate specified a live-scene pipeline separate from the expression pipeline:
 
 1. an isolated scene sidecar selects the current visible cast and describes one bounded scene;
 2. H3 Ref2VA creates the landscape scene still;
@@ -141,7 +147,7 @@ Reference roles are deterministic and never aliased merely to fill a slot.
 | Initial scene motion | current accepted scene still; face A; body A (**3**) | current accepted scene still; face A; body A; face B; body B (**5**) | current accepted scene still; face A; body A; face B; body B; face C; body C (**7**) |
 | Continued scene motion | current accepted scene still; prior scene master; face A; body A (**4**) | current accepted scene still; prior scene master; face A; body A; face B; body B (**6**) | current accepted scene still; prior scene master; face A; body A; face B; body B; face C; body C (**8**) |
 
-The counts are maximum default packs before SHA-256 deduplication; each body/wardrobe reference is included only when a verified source exists. The continued three-subject motion pack leaves one of H3 Ref2VA's nine image slots for a justified pose, scale, wardrobe, or setting reference; smaller packs leave more. Redundant images never consume a slot.
+The counts are maximum candidate packs before SHA-256 deduplication; each body/wardrobe reference is included only when a verified source exists. The continued three-subject motion pack leaves one of H3 Ref2VA's nine image slots for a justified pose, scale, wardrobe, or setting reference; smaller packs leave more. Redundant images never consume a slot.
 
 The first scene still uses only canonical identity and justified body/wardrobe references. A continuation places the accepted prior scene master first and retains canonical identities. Scene motion always places the current accepted scene still first because it is the composition source; continued motion then places the prior scene master second before canonical identity references.
 
@@ -308,11 +314,11 @@ Every milestone record contains these fields:
 
 Only `OPERATOR ACCEPTED` advances the roadmap. `GREEN LOCAL`, `REAL PROBE PASS`, and `DEPLOYED` are evidence states, not synonyms for done.
 
-## Milestone ledger
+## Historical candidate H3 milestone ledger — non-controlling
 
-This plan and its mandatory-instruction reference are a handoff prerequisite, not a playable product milestone. They do not consume or satisfy the first 30-minute delivery window.
+This table preserves the failed H3 candidate plan for evidence. It is not the successor's recovery order, does not consume a new delivery window, and cannot advance independently of the product-wide ledger.
 
-The time labels below are relative delivery targets for a fresh compliant sequence, not a claim about the approximately 30 hours already elapsed. A milestone's first 30-minute window begins only after its predecessor is `OPERATOR ACCEPTED`. Milestone 1's original window has already failed and remains the only active corrective milestone. It proceeds through separately recorded 30-minute corrective attempts until acceptance; Milestone 2's window has not begun.
+The time labels below were relative targets in that historical proposal, not a claim about elapsed project time or current authorization. The full MULLET postmortem now defines the active sequence and checkpoint clock.
 
 | Relative target | Milestone | Playable increment | Required automated regression | Acceptance evidence | Current state |
 | --- | --- | --- | --- | --- | --- |
@@ -331,21 +337,21 @@ The time labels below are relative delivery targets for a fresh compliant sequen
 | After authorized training | 13. Trained identity comparison | A trained adapter is compared against the reference-only baseline | Paired base/adapter validation on fixed held-out records | Structured comparison; no promotion without higher-risk-slice non-regression | NOT STARTED |
 | Conditional after expression-motion baseline | 14. FL2VA identity research and training | Expression motion receives a partition-correct identity remedy only if endpoint references and prompting leave repeatable identity drift | Separate FL2VA capability, dataset, cache, adapter, and paired-validation tests; no Ref2VA adapter reuse | Documented no-training decision or separately authorized FL2VA adapter comparison | NOT STARTED |
 
-Milestone 1 remains failed until the operator sees H3 in all four controls. Existing candidate code does not move milestones 2 through 5 out of `NOT STARTED`; each requires a fresh real output and acceptance package.
+The historical ledger recorded Milestone 1 as failed and every later H3 milestone as not started. It supplies no completion credit and no instruction to force H3 into the product before the product-wide performance and acceptance gates.
 
-### Milestone 1 implementation boundary
+### Historical H3 Milestone 1 candidate boundary — non-controlling
 
-Milestone 1 is one vertical correction, not a cosmetic selector change. Its red tests cover and its implementation reconciles all of these sources together:
+The failed candidate intended one vertical correction rather than a cosmetic selector change. Its proposed red tests and implementation would have reconciled these sources together:
 
-1. H3 is the default in each generic request builder.
-2. H3 is the default in every bundled scenario profile and starter that can drive media.
-3. API normalization never invents a non-H3 default when a field is absent.
-4. Versioned persisted selections discard every prior default value exactly once.
-5. A clean browser shows H3 in all four media controls.
-6. A browser migrated from each legacy stored value shows H3 in all four media controls.
-7. Switching among every bundled scenario leaves H3 selected in all four controls.
-8. Refreshing preserves H3 and queues no media solely because of the migration.
-9. The package exposes `npm run test:h3-browser`; the full gate invokes it against the compiled served application and it fails on any non-H3 default, legacy-value resurrection, scenario override, or reload-triggered media request.
+1. H3 would have been the default in each generic request builder.
+2. H3 would have been the default in every bundled scenario profile and starter that could drive media.
+3. API normalization would not have invented a non-H3 default when a field was absent.
+4. Versioned persisted selections would have discarded every prior default value exactly once.
+5. A clean browser would have shown H3 in all four media controls.
+6. A browser migrated from each legacy stored value would have shown H3 in all four media controls.
+7. Switching among every bundled scenario would have left H3 selected in all four controls.
+8. Refreshing would have preserved H3 and queued no media solely because of the migration.
+9. The package would have exposed `npm run test:h3-browser`; the full gate would have invoked it against the compiled served application and failed on any non-H3 default, legacy-value resurrection, scenario override, or reload-triggered media request.
 
 The browser runner may use Playwright or an equivalent repository-owned harness, but the command and assertions are repository-owned and deterministic. It must exercise the compiled served application, not merely search source text for H3 labels.
 

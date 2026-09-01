@@ -1,5 +1,7 @@
 # H3 scene-reference contract
 
+> **Technical appendix only.** `docs/MULLET_30_HOUR_POSTMORTEM.md` controls whole-project recovery order, performance policy, and acceptance state.
+
 This contract optimizes MULLET's common one-, two-, and three-subject fiction scenes. The expected distribution is approximately 66% solo, 22% duo, and 12% trio. Those proportions prioritize fast paths; they never permit dropping a visibly present subject.
 
 ## Reference roles
@@ -16,7 +18,7 @@ One scene master can represent every visible subject, so it counts as a referenc
 
 ## Stage 1: static scene master
 
-MiniMax H3 Ref2VA is the default still mode. The retained Automatic alternative uses Z-Image Turbo plus an exact linked identity LoRA for an initial solo, and Qwen Image Edit for a reference-only solo, every duo or trio, and every continuity edit. There is no silent model substitution when either explicitly selected path is unavailable.
+The failed candidate intended MiniMax H3 Ref2VA as its still mode. The retained Automatic alternative used Z-Image Turbo plus an exact linked identity LoRA for an initial solo, and Qwen Image Edit for a reference-only solo, every duo or trio, and every continuity edit. Neither candidate path is operator-accepted, and no silent substitution is authorized.
 
 Qwen supports three ordered picture inputs. MULLET allocates them deterministically:
 
@@ -30,7 +32,7 @@ This creates a two-stage state transition rather than regenerating every frame f
 
 `verified prior master + selected identity references -> Qwen edit -> verified current master`
 
-### Default MiniMax H3 five-frame keeper still
+### Candidate MiniMax H3 five-frame keeper still
 
 The MiniMax H3 Ref2VA static-scene choice uses the versioned `minimax-h3-ref2va-still-v2` contract, the native five-frame model path, and extracts frame zero as the keeper still. The v1 T=1 contract is rejected during restore. The keeper uses the base Ref2VA checkpoint with no LoRA, `res_multistep`, the `simple` scheduler, 20 steps, denoise `1.0`, and `MiniMaxH3SigmaShift` video/audio shifts `12/3`.
 
@@ -50,7 +52,7 @@ Every static output dimension is divisible by 32. The 0.5 MP 16:9 selection reso
 
 The H3 model/adapter selection matrix is explicit:
 
-| Output path | Recommended model and adapter | Sampling profile |
+| Output path | Candidate or evaluated model and adapter | Sampling profile |
 | --- | --- | --- |
 | Final identity-consistent Ref2VA scene video | Base `minimax_h3_ref2va_pruned_int8_convrot.safetensors`; no acceleration LoRA | `res_multistep` / `beta`, 20 steps |
 | Fast Ref2VA scene preview at the 544-pixel envelope | `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`, strength `1.0` | Euler / Simple, 4 steps, video/audio shifts `12/3`, `ref_image_size=match` |
@@ -74,7 +76,7 @@ Both paths use `ref_image_size=match`; `max` is not silently selected because re
 
 The prompt uses the official Ref2VA sections—`subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, and `non_diegetic_music`—and exact one-based `<Picture N>` labels. Retention analysis uses only MiniMax's fixed visual markers (`fully_preserved`, `partially_preserved`, `attribute_transfer`, and `weak_reference`). It tracks each defined `<Subject N>` plus the current and eligible prior composition anchors; canonical and body pictures used only as a subject's source remain cited inside that subject instead of being redefined as independent retained content.
 
-The generated scene remains one continuous five-second shot. It preserves identities, attire, objects, composition, and spatial relationships; motion is restrained; dialogue, narration, and non-diegetic music are forbidden. H3 may generate synchronized diegetic room tone and physical ambience for landscape scenes. The 20-step H3 Ref2VA quality path is the scene-video default.
+The candidate graph describes one continuous five-second shot. It attempts to preserve identities, attire, objects, composition, and spatial relationships; motion is restrained; dialogue, narration, and non-diegetic music are forbidden. H3 may generate synchronized diegetic room tone and physical ambience for landscape scenes. The failed candidate intended the 20-step H3 Ref2VA quality path as its scene-video default; that decision is not accepted and is subject to the full postmortem's performance gate.
 
 ## One-, two-, and three-subject fast paths
 

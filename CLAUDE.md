@@ -1,9 +1,10 @@
 # CLAUDE.md
 
-## Controlling H3 recovery plan
+## Controlling MULLET postmortem and recovery order
 
-- `docs/H3_RECOVERY_POSTMORTEM.md` is the controlling execution and handoff document for all H3 media work. Read it before changing, testing, reporting, or deploying an H3 still, video, reference, consistency, or training path.
-- Its current failed-checkpoint state, milestone order, evidence contract, and acceptance gates supersede earlier roadmaps. Do not advance past a failed milestone or substitute internal engineering evidence for an operator-testable result.
+- `docs/MULLET_30_HOUR_POSTMORTEM.md` is the controlling whole-project incident record, requirement disposition, recovery order, and successor handoff. Read it before changing, testing, reporting, or deploying any MULLET behavior.
+- `docs/H3_RECOVERY_POSTMORTEM.md` is an H3 technical appendix only. It does not define the whole incident, product-wide milestone order, performance policy, or acceptance state.
+- Do not advance past a failed milestone or substitute internal engineering evidence for an operator-testable result. The full postmortem's current state and authority supersede earlier roadmaps and technical appendices where they conflict.
 
 ## Shared ComfyUI boundary
 
@@ -16,7 +17,7 @@
 
 - If a change is not deployed on the operator's served build, visible in the operator's browser, and available for the operator to playtest, it is not done.
 - Local edits, automated tests, builds, commits, pushes, isolated candidate servers, and agent-only probes are candidate evidence only. Never describe them as done, fixed, restored, delivered, playable, or a completed checkpoint.
-- A checkpoint completes only after the exact passing commit is deployed to the served URL and the operator can test it. Until then, report it explicitly as not deployed and not done.
+- Deployment and browser availability produce `READY FOR OPERATOR`, not completion. A checkpoint completes only after the operator explicitly accepts the exact served commit. Until then, report the precise evidence state and never call it done.
 
 ## Operator communication and recovery
 
@@ -27,7 +28,7 @@
 ## Model artifact rules
 
 - Route by media type: every still-image workflow runs through `IMAGE_COMFY_BASE_URL` on Firestorm CUDA0, and every video workflow runs through `VIDEO_COMFY_BASE_URL` on Firestorm CUDA1. A generated video end frame is an image and therefore runs on the image lane before its bytes are handed to the video lane.
-- MiniMax H3 is the active image/video implementation priority. Do not start or resume LTX, Qwen, Z-Image, or other model work unless the operator names it in the current turn. Scene stills default to the native five-frame H3 Ref2VA keeper path, and scene motion defaults to the unaccelerated 20-step H3 Ref2VA quality path. Expression stills default to the native five-frame H3 Ref2VA keeper path at exactly 576x1024, and expression motion defaults to the silent H3 FL2VA loop with the same source at both endpoints, 56 native lattice frames, and exact two-second playback at 28 FPS. Retained alternative workflows remain explicit selections and are never silently substituted when the selected H3 path is unavailable.
+- MiniMax H3 is the current candidate image/video priority inside the product-wide media milestones. Do not start unrelated model work unless the operator names it in the current turn. The candidate contains native five-frame H3 Ref2VA keeper stills, an unaccelerated 20-step H3 Ref2VA scene path, and a silent four-step H3 FL2VA two-second expression loop. None is an accepted production default. The unaccelerated paths may not remain defaults without the full postmortem's paired Turbo/full-path comparison, explicit cold/warm click-to-visible SLO, and operator acceptance. Retained alternative workflows remain explicit selections and are never silently substituted.
 - Mage-Flow and FLUX.2 are explicitly excluded from MULLET. Do not restore them as selectable options or hidden workflow dependencies without a new current-turn operator order.
 - ComfyUI diffusion-model weights for this project use the native INT8 ConvRot artifact when one exists. Do not substitute an official FP8 diffusion weight merely because the original publisher's repository is gated.
 - Search the public ComfyUI-native INT8 ConvRot conversions on Hugging Face before declaring a required model unavailable or gated.

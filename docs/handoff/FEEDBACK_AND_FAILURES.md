@@ -1,6 +1,6 @@
 # MULLET operator feedback and failure record
 
-> **Historical incident evidence, not the current execution plan.** Preserve this record, but use `docs/H3_RECOVERY_POSTMORTEM.md` for current H3 scope, milestone state, and acceptance authority whenever the documents conflict.
+> **Historical incident evidence, not the current execution plan.** Preserve this record, but use `docs/MULLET_30_HOUR_POSTMORTEM.md` for whole-project scope, milestone state, and acceptance authority. `docs/H3_RECOVERY_POSTMORTEM.md` is a technical appendix only.
 
 This is the correction record a future owner must read before changing or deploying MULLET. “Implemented in code” is not equivalent to “served,” “playtested,” or “accepted.”
 
@@ -12,7 +12,7 @@ This is the correction record a future owner must read before changing or deploy
 - Firestorm is not an artifact-download target for this correction. The operator assigned the download to Leviathan.
 - Expression animation defaults to LTX 2.5 Distilled, not MiniMax: exactly 2 seconds, 49 frames at 24 FPS, identical first and last frames, H.264 video-only MP4, and no audio, speech, talking, or lip-sync behavior.
 - The separate main-scene video path also defaults to LTX 2.5. MiniMax H3 remains an additive selectable path; one model does not replace the other.
-- `docs/handoff/EXPRESSION_ACCEPTANCE_CHECKLIST.md` is the controlling restoration checklist. Historical rows below describe the terminated state and are superseded where they conflict with this resumption correction.
+- `docs/handoff/EXPRESSION_ACCEPTANCE_CHECKLIST.md` was the controlling restoration checklist for that dated resumption phase; it no longer controls current work. Historical rows below describe the terminated state and are superseded where they conflict with this resumption correction.
 
 ## Feedback ledger
 

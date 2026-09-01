@@ -1,5 +1,7 @@
 # MiniMax H3 identity-training protocol
 
+> **Technical appendix only.** `docs/MULLET_30_HOUR_POSTMORTEM.md` controls whole-project recovery order, authority gates, and acceptance state.
+
 Status: design baseline, checked against upstream sources on 2026-08-31. Every numeric value identified as a **MULLET starter** is an initial experiment, not a published optimum or a quality guarantee.
 
 ## Decision boundary

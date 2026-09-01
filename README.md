@@ -1,10 +1,12 @@
 # MULLET
 
+> **Unaccepted work in progress.** See `docs/MULLET_30_HOUR_POSTMORTEM.md` for the controlling incident record, deliverable disposition, and successor recovery order. H3 technical documents are appendices, not release evidence.
+
 **Multimodal Universe, Lore, LoRAs, Expressions & Timeline**
 
 MULLET is a local-first scenario workbench for persistent character conversations and interactive media.
 
-The current WIP checkpoint provides a real streaming chat through an OpenAI-compatible local model endpoint with a server-enforced, user-selectable response token limit. Character-card, lorebook, scenario, and media-sidecar support are developed as continuously playable increments.
+The current WIP checkpoint provides a streaming chat through an OpenAI-compatible local model endpoint with a server-enforced, user-selectable response token limit. Character-card, lorebook, scenario, and media-sidecar code exists, but the continuous-playability contract was not satisfied and the core media loop is not accepted.
 
 ## Development
 
@@ -17,7 +19,7 @@ npm run start
 
 Copy `.env.example` values into the service environment. Model credentials and private network addresses belong in the runtime environment, never in the repository.
 
-Image jobs are routed through the shared Firestorm CUDA0 ComfyUI service at `IMAGE_COMFY_BASE_URL`; video jobs are routed through the shared CUDA1 service at `VIDEO_COMFY_BASE_URL`. MULLET owns only its submitted prompt IDs and its namespaced job artifacts, not either ComfyUI installation, queue, GPU, model inventory, or global input/output roots. MiniMax H3 is the default for both scene and expression media. Scene and expression keeper stills use the native five-frame Ref2VA latent packet, decode it, and save frame zero; neither uses the experimental T=1 latent conversion. The quality scene-motion path uses 20 steps without an acceleration LoRA. Expression motion uses the FL2VA four-step path, supplies the same 576x1024 source as first and last frame, emits no audio, and encodes all 56 valid H3 lattice frames at 28 FPS for an exact two-second loop. Retained workflows are explicit alternatives and are never silent fallbacks.
+Image jobs are routed through the shared Firestorm CUDA0 ComfyUI service at `IMAGE_COMFY_BASE_URL`; video jobs are routed through the shared CUDA1 service at `VIDEO_COMFY_BASE_URL`. MULLET owns only its submitted prompt IDs and its namespaced job artifacts, not either ComfyUI installation, queue, GPU, model inventory, or global input/output roots. The failed candidate contains intended MiniMax H3 scene and expression paths, but conflicting builder, scenario, persistence, and UI defaults prevented the selector state from becoming reliable. Its H3 scene and expression keeper graphs use the native five-frame Ref2VA latent packet, decode it, and save frame zero; neither uses the experimental T=1 latent conversion. Its H3 scene-motion quality graph uses 20 steps without an acceleration LoRA. Its H3 expression-motion graph uses the FL2VA four-step path, supplies the same 576x1024 source as first and last frame, emits no audio, and encodes all 56 valid H3 lattice frames at 28 FPS for an exact two-second loop. These are candidate behaviors, not accepted defaults. Retained workflows are explicit alternatives and are never silent fallbacks.
 
 ## MiniMax H3 keeper still path
 

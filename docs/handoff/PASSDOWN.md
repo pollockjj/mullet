@@ -1,5 +1,7 @@
 # MULLET termination passdown — 2026-08-28
 
+> **Historical termination and external-mutation record.** Preserve this evidence, but use `docs/MULLET_30_HOUR_POSTMORTEM.md` for the controlling whole-project incident analysis, deliverable disposition, and successor recovery order.
+
 ## Operator disposition
 
 The operator terminated this implementation effort after fourteen hours of unacceptable progress, repeated failures to deliver corrected portrait behavior, poor response to feedback, an incorrect FLUX model decision, and unauthorized use of lightning. Do not represent this branch as finished, accepted, or releasable.
@@ -17,7 +19,7 @@ File:       flux-2-klein-9b-kv-int8-convrot.safetensors
 
 Current restoration work keeps Z-Image, Qwen Image Edit 2511, FLUX.2 Klein 9B KV INT8 ConvRot, and Mage-Flow additive rather than replacing one with another. Expression output is fixed at 9:16 with a 0.5 MP default; the 400x600 Jenna reference remains 2:3 source material. Firestorm must not download the FLUX artifact; the operator assigned that transfer to Leviathan.
 
-The controlling recovery checklist is `docs/handoff/EXPRESSION_ACCEPTANCE_CHECKLIST.md`. The current candidate supersedes the historical portrait-motion description below: expression animation now defaults to LTX 2.5 Distilled, an exact 2-second 49-frame loop at 24 FPS, identical first and last frames, H.264 video-only MP4, and zero audio or other media tracks. LTX and MiniMax remain additive choices. The separate inline main-scene path also defaults to LTX 2.5 and retains MiniMax as an additive selection.
+For the 2026-08-29 resumption phase, `docs/handoff/EXPRESSION_ACCEPTANCE_CHECKLIST.md` was the controlling recovery checklist; it no longer controls current work. The candidate described at that time superseded the historical portrait-motion description below: expression animation defaulted to LTX 2.5 Distilled, an exact 2-second 49-frame loop at 24 FPS, identical first and last frames, H.264 video-only MP4, and zero audio or other media tracks. LTX and MiniMax remained additive choices. The separate inline main-scene path also defaulted to LTX 2.5 and retained MiniMax as an additive selection.
 
 The current candidate has passed 267/267 repository tests, the static check with 0 errors and 0 warnings, and a production build. A read-only live capability probe confirmed the complete LTX stack on Firestorm and both LTX and MiniMax expression choices. These are candidate gates only: the real Qwen Jenna image probe, real LTX loop probe, push, deployment, and served-browser verification remain required before this checkpoint can be called playable or complete.
 
