@@ -217,5 +217,13 @@ Observed in the same run, still open:
   isolation number that never occurs in pipeline order. Measured lever: H3 4-step at
   0.59 MP costs ~5.7 s for the first latent frame and ~14 s per further 17 frames, so
   22 frames is predicted ~20 s warm, 39 frames ~34 s.
+- Every page reload regenerates the expression loop: `restoreGeneratedPortraitVideo`
+  (+page.svelte:2646) runs once, before portrait capabilities and the scenario catalog
+  resolve, so `portraitRequest` is still null, the stored loop is never accepted, and the
+  reconciliation submits a fresh 45-90 s H3 loop (seven loop-only jobs with no preceding
+  still on firestorm:8188, two of them minutes after the previous agent's "Reload"
+  instructions). The still, scene still and scene loop restore from stored bytes. The
+  loop key (portrait-video.ts:340-361) also includes prompt ID and timestamps, so a
+  byte-identical still (fixed seed per character) costs a new loop every turn.
 - The operator was playtesting the cabin scenario on the served build during the check;
   their jobs interleaved with the check's on both lanes.
