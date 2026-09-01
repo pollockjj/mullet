@@ -1,4 +1,4 @@
-MILESTONE: 1 | STATE: awaiting-operator | SERVED-SHA: ed15c4b0d76b2ec0458a2622821e470f5b8c74d8 | LAST-OPERATOR-RESULT: none
+MILESTONE: 4 | STATE: in-progress | SERVED-SHA: 407a119e2acad64cf778ec77c72df3c77d292bfd | LAST-OPERATOR-RESULT: scene motion reported broken on eef5e127/ed15c4b
 
 Rewrite the line above on every commit. One line. Milestones are defined in docs/PLAN.md.
 
@@ -106,3 +106,39 @@ fixed seed, so repeating an already-generated expression is a ComfyUI cache hit 
 0.3-0.8 s. The 5.4-5.8 s figure is graph-level with the cache defeated by seed variation.
 Composed first-generation click-to-visible is ~6.5-7.5 s against the 8 s gate, but that
 composition has not been observed in one continuous browser run.
+
+## Milestone 4 - scene motion was never working
+
+Operator report: "Inline scene motion timed out", and scene motion has never once worked.
+
+Verified on the video lane: every scene-motion attempt is MiniMax H3 Ref2VA at 20 steps,
+1344x768, 124 frames, with no acceleration LoRA, and every one ends
+`execution_interrupted` at `SamplerCustomAdvanced` - MULLET cancelling its own prompt at
+the 900 s timeout. Portrait motion on the same lane succeeds consistently at 4 steps,
+576x1024, 56 frames with `minimax_h3_fl2v_turbo_4step`.
+
+Root cause is the same defect recorded earlier and not acted on quickly enough: the
+accelerated path existed in the codebase (`MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE`,
+`minimax_h3_ref2v_turbo_4step`, 4 steps) and was left non-default while the path that
+cannot finish was labelled "Default quality".
+
+Shipped in 407a119 and verified in a browser against the served build:
+- scene video default -> LightX 4-step
+- scene still default -> automatic (Z-Image solo / Qwen references, image lane)
+- storage keys bumped so persisted 20-step selections are discarded; without that the
+  new default is invisible to any browser that already stored the old one
+
+Process failure to record: f973971 contained the fix and sat committed but undeployed
+while a verification run finished. The operator saw an unchanged served build and had to
+ask why. Commit-then-verify-then-deploy is the wrong order when the served build is
+actively broken; deploy the fix, then verify the deployed build.
+
+Also cleared two orphaned 20-step scene prompts from the video-lane queue by exact prompt
+ID (`14569ec6...`, `71a1ca3f...`). They could not complete and were blocking the lane. No
+queue-wide interrupt or clear was used; the already-running one was left alone because
+reaching it would require a forbidden queue-wide interrupt.
+
+OPEN: whether LightX 4-step actually completes, and at what wall clock. Being measured
+now. Tradeoff the operator must decide: LightX renders 960x544 at 16:9 versus the
+20-step path's 1344x768. LTX 2.5 is implemented at full 1344x768 and is a candidate for
+a better default; not yet measured.
