@@ -107,8 +107,7 @@ export const GET: RequestHandler = async ({ fetch, request }) => {
     const capabilities = await loadInlineSceneCapabilities(
       fetch,
       baseUrl,
-      AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
-      { minimaxH3T1StillValidated: runtime.minimaxH3T1StillValidated }
+      AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
     );
     return json(capabilities, { headers: { 'cache-control': 'no-store' } });
   } catch (cause) {
@@ -172,8 +171,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     const capabilities = await loadInlineSceneCapabilities(
       fetch,
       baseUrl,
-      signal,
-      { minimaxH3T1StillValidated: runtime.minimaxH3T1StillValidated }
+      signal
     );
     if (!inlineSceneModelTemplateAvailable(capabilities, sceneRequest.modelTemplate)) {
       throw error(400, 'The selected inline-scene model is unavailable.');

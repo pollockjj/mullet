@@ -66,14 +66,14 @@ test('portrait motion defaults to the bound LTX template and persists a real add
   assert.match(pageSource, /localStorage\.setItem\(portraitVideoModelTemplateStorageKey, portraitVideoModelTemplate\)/);
 });
 
-test('scene motion visibly defaults to LTX after refresh while retaining additive MiniMax selection', () => {
-  assert.match(pageSource, /let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
-  assert.match(pageSource, /inlineSceneVideoModelTemplateStorageKey = 'mullet\.inline-scene-video-model-template\.v2'/);
-  assert.doesNotMatch(pageSource, /mullet\.inline-scene-video-model-template(?:'|\.v0|\.v1)/);
+test('scene motion visibly defaults to H3 Ref2VA quality after the versioned selection migration', () => {
+  assert.match(pageSource, /let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
+  assert.match(pageSource, /inlineSceneVideoModelTemplateStorageKey = 'mullet\.inline-scene-video-model-template\.v3'/);
+  assert.doesNotMatch(pageSource, /mullet\.inline-scene-video-model-template(?:'|\.v0|\.v1|\.v2)/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
   assert.match(pageSource, /savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID/);
-  assert.match(pageSource, /: INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
+  assert.match(pageSource, /: MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;/);
   assert.match(pageSource, /localStorage\.setItem\(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate\)/);
   assert.match(pageSource, /bind:value=\{inlineSceneVideoModelTemplate\}/);
   assert.match(pageSource, /on:change=\{persistInlineSceneVideoModelTemplate\}/);
@@ -81,6 +81,7 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.doesNotMatch(pageSource, /value=\{capability\.template\.id\} disabled=/);
   assert.match(pageSource, /buildInlineSceneVideoRequest\(scene, modelTemplate\)/);
   assert.match(pageSource, /LTX 2\.5 Distilled · silent/);
+  assert.match(inlineSceneVideoSource, /MiniMax H3 Ref2VA · Default quality \(20-step\)/);
   assert.match(pageSource, /LightX four-step preview · 544p training envelope · Euler\/simple · shifts 12\/3/);
   assert.match(pageSource, /'20-step quality'/);
   assert.match(pageSource, /\{inlineSceneH3ReferenceSummary \|\| 'reference plan resolves after the current scene'\} · native audio/);
@@ -94,7 +95,7 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.match(pageSource, /on:click=\{\(\) => void loadInlineSceneVideoGenerator\(\)\}/);
 });
 
-test('scene cast readiness stays compact while experimental H3 still remains an additive persisted choice', () => {
+test('scene stills visibly default to the H3 five-frame keeper after the versioned selection migration', () => {
   assert.match(inlineScenePanel, /<small class="scene-cast-status">/);
   assert.match(inlineScenePanel, /Selecting visible cast…/);
   assert.match(inlineScenePanel, /generatedInlineScene\.request\.cast\.kind === 'solo' \? 'Solo'/);
@@ -102,10 +103,14 @@ test('scene cast readiness stays compact while experimental H3 still remains an 
   assert.match(inlineScenePanel, /inlineSceneStillDriverLabel\(generatedInlineScene\.request\.modelTemplate\)/);
   assert.match(pageSource, /return 'Qwen multi-reference master';/);
   assert.match(inlineScenePanel, /aria-label="Inline scene still model"/);
-  assert.match(inlineScenePanel, /Automatic · Z-Image solo \/ Qwen references/);
-  assert.match(inlineScenePanel, /MiniMax H3 Ref2VA · Experimental T=1 still \(20-step\)/);
-  assert.match(inlineScenePanel, /Validated experimental one-frame Ref2VA · base H3 · no LoRA/);
-  assert.match(pageSource, /inlineSceneStillModeStorageKey = 'mullet\.inline-scene-still-mode\.v1'/);
+  assert.match(pageSource, /let inlineSceneStillMode: InlineSceneStillMode = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;/);
+  assert.match(inlineScenePanel, /Automatic alternative · Z-Image solo \/ Qwen references/);
+  assert.match(inlineScenePanel, /MiniMax H3 Ref2VA · Keeper still \(5-frame, 20-step\)/);
+  assert.match(inlineScenePanel, /Five-frame Ref2VA keeper · base H3 · no LoRA · res_multistep\/simple · shifts 12\/3 · frame 0/);
+  assert.match(pageSource, /inlineSceneStillModeStorageKey = 'mullet\.inline-scene-still-mode\.v2'/);
+  assert.doesNotMatch(pageSource, /mullet\.inline-scene-still-mode(?:'|\.v0|\.v1)/);
+  assert.match(pageSource, /savedInlineSceneStillMode === 'automatic'/);
+  assert.match(pageSource, /: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;/);
   assert.match(pageSource, /localStorage\.setItem\(inlineSceneStillModeStorageKey, inlineSceneStillMode\)/);
   assert.match(inlineScenePanel, /No deterministic static-scene driver is currently available for this scenario state/);
   assert.match(inlineScenePanel, /scenarioSceneProfiles\.length < 1\}[\s\S]*A validated scenario cast is required/);

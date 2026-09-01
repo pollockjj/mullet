@@ -161,11 +161,24 @@ function capabilityResponse(name) {
   });
   if (name === 'KSamplerSelect') return node(name, { sampler_name: [[h3.sampler]] });
   if (name === 'BasicScheduler') return node(name, { scheduler: [[h3.scheduler]] });
-  if (name === 'EmptyLatentImage') return node(name, {
-    width: ['INT', { min: 16, max: 8192 }],
-    height: ['INT', { min: 16, max: 8192 }],
-    batch_size: ['INT', { min: 1, max: 4096 }]
-  });
+  if (name === 'MiniMaxH3SigmaShift') {
+    const result = node(name, {
+      model: ['MODEL'],
+      shift_video: ['FLOAT', { min: 1, max: 100 }],
+      shift_audio: ['FLOAT', { min: 1, max: 100 }]
+    });
+    result[name].output = ['MODEL'];
+    return result;
+  }
+  if (name === 'ImageFromBatch') {
+    const result = node(name, {
+      image: ['IMAGE'],
+      batch_index: ['INT', { min: -8192, max: 8192 }],
+      length: ['INT', { min: 1, max: 4096 }]
+    });
+    result[name].output = ['IMAGE'];
+    return result;
+  }
   if (name === 'MiniMaxH3ReferenceToVideo') {
     const result = node(name, {
       length: ['INT', { min: 5, max: 3600, step: 17 }],
@@ -348,7 +361,6 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
   });
   const comfyBaseUrl = await listen(fake.server);
   process.env.IMAGE_COMFY_BASE_URL = comfyBaseUrl;
-  process.env.MINIMAX_H3_T1_STILL_VALIDATED = 'true';
   process.env.VIDEO_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
@@ -384,7 +396,7 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
     assert.equal(fake.state.prompts[0].prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   });
 
-  await context.test('the validated experimental H3 T=1 route returns the exact one-frame PNG contract', async () => {
+  await context.test('the H3 keeper route returns frame zero from its native five-frame packet', async () => {
     fake.reset();
     const response = await post(formFor(h3First));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
@@ -398,9 +410,13 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
     const graph = fake.state.prompts[0].prompt;
     assert.equal(graph['20'].class_type, 'MiniMaxH3ReferenceToVideo');
     assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
+    assert.equal(graph['20'].inputs.length, 5);
+    assert.equal(graph['20'].inputs.ref_image_size, 'match');
+    assert.deepEqual(graph['19'].inputs, { model: ['1', 0], shift_video: 12, shift_audio: 3 });
     assert.deepEqual(graph['21'].inputs.conditioning, ['20', 0]);
-    assert.equal(JSON.stringify(graph).includes('["20",1]'), false);
-    assert.deepEqual(graph['25'].inputs, { width: 960, height: 544, batch_size: 1 });
+    assert.deepEqual(graph['23'].inputs, { model: ['19', 0], scheduler: 'simple', steps: 20, denoise: 1 });
+    assert.deepEqual(graph['25'].inputs.latent_image, ['20', 1]);
+    assert.deepEqual(graph['27'].inputs, { image: ['26', 0], batch_index: 0, length: 1 });
     assert.equal(graph['28'].class_type, 'SaveImage');
   });
 

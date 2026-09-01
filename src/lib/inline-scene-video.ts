@@ -92,7 +92,7 @@ export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
 
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   id: MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  label: 'MiniMax H3 Ref2VA · Quality (20-step)',
+  label: 'MiniMax H3 Ref2VA · Default quality (20-step)',
   modelFamily: 'minimax-h3-ref2va',
   modelFiles: {
     unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',

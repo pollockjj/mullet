@@ -16,7 +16,7 @@ One scene master can represent every visible subject, so it counts as a referenc
 
 ## Stage 1: static scene master
 
-Automatic remains the default still mode. In Automatic mode, an initial solo scene with a linked, verified identity LoRA uses Z-Image Turbo plus that exact LoRA. A reference-only solo, every duo or trio, and every continuity edit use Qwen Image Edit. There is no silent model substitution when the selected path is unavailable.
+MiniMax H3 Ref2VA is the default still mode. The retained Automatic alternative uses Z-Image Turbo plus an exact linked identity LoRA for an initial solo, and Qwen Image Edit for a reference-only solo, every duo or trio, and every continuity edit. There is no silent model substitution when either explicitly selected path is unavailable.
 
 Qwen supports three ordered picture inputs. MULLET allocates them deterministically:
 
@@ -30,9 +30,9 @@ This creates a two-stage state transition rather than regenerating every frame f
 
 `verified prior master + selected identity references -> Qwen edit -> verified current master`
 
-### Selectable experimental MiniMax H3 T=1 still
+### Default MiniMax H3 five-frame keeper still
 
-MiniMax H3 Ref2VA is an additive experimental static-scene choice and never replaces Automatic Z-Image/Qwen behavior. MiniMax publishes H3 as a video model and provides no official still workflow or still-specific LoRA; MULLET's one-frame path is therefore never described as production-standard H3 behavior. When selected, it uses the base Ref2VA checkpoint with no LoRA, `res_multistep`, the `beta` scheduler, 20 steps, and denoise `1.0`. `beta` is retained deliberately: the official ComfyUI Ref2VA template notes that `beta` or `normal` can outperform `simple` for reference-heavy prompts, and the successful owned probe was measured with `beta`.
+The MiniMax H3 Ref2VA static-scene choice uses the versioned `minimax-h3-ref2va-still-v2` contract, the native five-frame model path, and extracts frame zero as the keeper still. The v1 T=1 contract is rejected during restore. The keeper uses the base Ref2VA checkpoint with no LoRA, `res_multistep`, the `simple` scheduler, 20 steps, denoise `1.0`, and `MiniMaxH3SigmaShift` video/audio shifts `12/3`.
 
 Static-reference order is deterministic:
 
@@ -42,9 +42,9 @@ Static-reference order is deterministic:
 
 This still pack contains at most seven images: one prior master, three canonical references, and three body/wardrobe references. Initial scenes omit the prior-master slot. All supplied reference files retain their declared role and provenance and are verified before the prompt is queued.
 
-The graph uses `MiniMaxH3ReferenceToVideo` only to build Ref2VA conditioning. Output `0` (`CONDITIONING`) feeds `BasicGuider`; output `1` (the node's normal AV latent) is deliberately unused. `SamplerCustomAdvanced` instead receives `EmptyLatentImage`, which the cited experimental ComfyUI core path converts into a one-frame H3 video latent with the corresponding empty audio latent. The sampled video latent is decoded with the stock H3 video VAE and saved as exactly one PNG; no audio or video output node is present.
+`MiniMaxH3ReferenceToVideo` output `0` (`CONDITIONING`) feeds `BasicGuider`; output `1` (`LATENT`) supplies the native five-frame AV latent to `SamplerCustomAdvanced`. The sampled video latent is decoded with the stock H3 video VAE. `ImageFromBatch` selects batch index `0` with length `1`, and `SaveImage` saves that keeper as exactly one PNG. No audio decode or video output node is present.
 
-Every static output dimension is divisible by 32. The 0.5 MP 16:9 selection resolves to exactly `960×544`. The experimental conversion is provided by [ComfyUI PR #15677](https://github.com/Comfy-Org/ComfyUI/pull/15677); the H3 nodes themselves do not prove that the installed ComfyUI core contains this change. `MINIMAX_H3_T1_STILL_VALIDATED=true` may therefore be set only after an owned real prompt completes on the configured image lane and its returned PNG passes SHA-256 and exact-dimension validation.
+Every static output dimension is divisible by 32. The 0.5 MP 16:9 selection resolves to exactly `960×544`.
 
 ## Stage 2: MiniMax H3 Ref2VA
 
@@ -56,8 +56,8 @@ The H3 model/adapter selection matrix is explicit:
 | Fast Ref2VA scene preview at the 544-pixel envelope | `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`, strength `1.0` | Euler / Simple, 4 steps, video/audio shifts `12/3`, `ref_image_size=match` |
 | FL2VA at 768p | `minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors`, strength `1.0` | 8 steps, video/audio shifts `6/3` |
 | FL2VA near the 544-pixel envelope | `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`, strength `1.0` | 8 steps, video/audio shifts `12/3` |
-| Production still image | No H3 still adapter: use the selected still-image model, currently Qwen Image Edit for reference-driven scenes | Qwen's fixed four-step Lightning path |
-| Experimental H3 T=1 still | Base Ref2VA checkpoint; no LoRA | `res_multistep` / `beta`, 20 steps |
+| H3 keeper still | Base Ref2VA checkpoint; no LoRA; native five-frame packet with frame-zero extraction | `res_multistep` / `simple`, 20 steps, video/audio shifts `12/3` |
+| Automatic still alternative | Existing Z-Image/Qwen scene drivers; no H3 adapter | Existing model-specific path |
 
 The two currently implemented H3 Ref2VA scene choices use `minimax_h3_ref2va_pruned_int8_convrot.safetensors` and the native `MiniMaxH3ReferenceToVideo` node. The quality choice uses no acceleration LoRA. The separately identified preview choice applies `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`; it never replaces or silently changes the quality path. The FL2VA rows record the exact recommended adapter split; they do not claim those adapters are selected by the landscape Ref2VA workflow.
 
@@ -74,11 +74,11 @@ Both paths use `ref_image_size=match`; `max` is not silently selected because re
 
 The prompt uses the official Ref2VA sections—`subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, and `non_diegetic_music`—and exact one-based `<Picture N>` labels. Retention analysis uses only MiniMax's fixed visual markers (`fully_preserved`, `partially_preserved`, `attribute_transfer`, and `weak_reference`). It tracks each defined `<Subject N>` plus the current and eligible prior composition anchors; canonical and body pictures used only as a subject's source remain cited inside that subject instead of being redefined as independent retained content.
 
-The generated scene remains one continuous five-second shot. It preserves identities, attire, objects, composition, and spatial relationships; motion is restrained; dialogue, narration, and non-diegetic music are forbidden. H3 may generate synchronized diegetic room tone and physical ambience for landscape scenes. LTX 2.5 remains the default video model and its output remains silent.
+The generated scene remains one continuous five-second shot. It preserves identities, attire, objects, composition, and spatial relationships; motion is restrained; dialogue, narration, and non-diegetic music are forbidden. H3 may generate synchronized diegetic room tone and physical ambience for landscape scenes. The 20-step H3 Ref2VA quality path is the scene-video default.
 
 ## One-, two-, and three-subject fast paths
 
-| Cast | Automatic first static master | Automatic continued Qwen master | Initial H3 video references | Continued H3 video references |
+| Cast | Automatic-alternative first static master | Automatic-alternative continued Qwen master | Initial H3 video references | Continued H3 video references |
 | --- | --- | --- | --- | --- |
 | Solo | linked LoRA through Z-Image when present; otherwise canonical through Qwen | prior master + canonical | current + canonical | current + prior when overlapping + canonical |
 | Duo | canonical A + B | prior master + A + B | current + A + B | current + prior + A + B |
@@ -86,7 +86,7 @@ The generated scene remains one continuous five-second shot. It preserves identi
 
 Available body/wardrobe references are appended to H3 after every canonical reference, with global SHA-256 deduplication. For Qwen, they fill only a free slot after the prior-master, newly introduced canonical, and retained canonical rules.
 
-The selectable H3 T=1 still path uses canonical references for an initial scene and `strict ancestor + canonical references` for a continued scene; body/wardrobe references are then appended in cast order. Its one-, two-, and three-subject maxima are three, five, and seven references respectively when every body reference and a prior master are present.
+The selectable H3 keeper-still path uses canonical references for an initial scene and `strict ancestor + canonical references` for a continued scene; body/wardrobe references are then appended in cast order. Its one-, two-, and three-subject maxima are three, five, and seven references respectively when every body reference and a prior master are present.
 
 ## Required validation
 
@@ -94,8 +94,8 @@ The selectable H3 T=1 still path uses canonical references for an initial scene 
 - Every canonical or body reference is normalized to an aspect ratio derived from its dimensions, then fetched from the selected ComfyUI service and checked against its declared SHA-256, byte type, width, and height before queue submission.
 - Browser-managed body references are content-addressed and persisted against the exact base profile fingerprint. Only body files selected by the active Qwen/H3 reference planner are attached; Z-Image and LTX accept none. A missing managed input is uploaded to `mullet/identity` without overwrite and fetched back for exact verification before generation.
 - The browser-persisted prior-master record binds request fingerprint, prompt ID, seed, timestamp, dimensions, cast fingerprints, and SHA-256. At the server boundary, its supplied PNG is independently checked against the declared SHA-256, PNG dimensions, and exact upload response. The client metadata is provenance, not a server-signed attestation.
-- Capability discovery must prove Qwen exposes `image1`, `image2`, and `image3`; both H3 video choices and the experimental H3 still choice must expose an exact `ref_image_` IMAGE autogrow definition with `min=0`, `max=9`, the `match` sizing option, and the exact Ref2VA checkpoint. Preview availability additionally requires the exact LightX LoRA, `LoraLoaderModelOnly`, `MiniMaxH3SigmaShift`, Euler, and Simple; preview-only failures cannot disable H3 quality.
-- Experimental H3 still availability additionally requires `MINIMAX_H3_T1_STILL_VALIDATED=true`. That validation is recorded only after one MULLET-owned real T=1 prompt succeeds through the configured image service and the output PNG passes SHA-256 plus exact `960×544` validation for the 0.5 MP 16:9 probe. Object-info schema checks cannot substitute for this owned probe.
+- Both H3 video choices must expose an exact `ref_image_` IMAGE autogrow definition with `min=0`, `max=9`, the `match` sizing option, and the exact Ref2VA checkpoint. Preview availability additionally requires the exact preview LoRA, `LoraLoaderModelOnly`, `MiniMaxH3SigmaShift`, Euler, and Simple; preview-only failures cannot disable H3 quality.
+- Capability discovery must prove the H3 keeper-still choice exposes that same exact reference contract, Ref2VA outputs `CONDITIONING` and `LATENT`, `MiniMaxH3SigmaShift` accepts shifts `12/3`, `res_multistep` and `simple` exist, and `ImageFromBatch` accepts index `0` and length `1`.
 - Failures cancel only MULLET's returned prompt ID. No shared ComfyUI queue, model residency, service lifecycle, or global input/output path is mutated.
 
-Primary implementation references: [MiniMax H3 model and prompt guidance](https://github.com/MiniMax-AI/MiniMax-H3), [native ComfyUI Ref2VA node](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_minimax_h3.py), [ComfyUI core T=1 latent conversion](https://github.com/Comfy-Org/ComfyUI/pull/15677), [official ComfyUI R2V workflow](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_minimax_h3_r2v.json), [LightX model table](https://github.com/ModelTC/Minimax-H3-Turbo#1-model-specs), and [LightX's exact Ref2VA Comfy graph](https://github.com/ModelTC/Minimax-H3-Turbo/blob/main/example_workflows/video_minimax_h3_ref2v_lightx2v_turbo.json).
+Primary implementation references: [MiniMax H3 model and prompt guidance](https://github.com/MiniMax-AI/MiniMax-H3), [native ComfyUI Ref2VA node](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_minimax_h3.py), [ComfyUI `ImageFromBatch` node](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_images.py), [official ComfyUI R2V workflow](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_minimax_h3_r2v.json), [LightX model table](https://github.com/ModelTC/Minimax-H3-Turbo#1-model-specs), and [LightX's exact Ref2VA Comfy graph](https://github.com/ModelTC/Minimax-H3-Turbo/blob/main/example_workflows/video_minimax_h3_ref2v_lightx2v_turbo.json).

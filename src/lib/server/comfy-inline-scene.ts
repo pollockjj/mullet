@@ -27,10 +27,6 @@ import { assertComfyIdentityReference } from './comfy-portrait.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type InlineSceneCapabilityOptions = {
-  minimaxH3T1StillValidated?: boolean;
-};
-
 export type ComfyInlineSceneImage = {
   bytes: Uint8Array;
   contentType: 'image/png';
@@ -131,11 +127,19 @@ function integerInputAccepts(value: unknown, nodeName: string, inputName: string
   return expected >= minimum && expected <= maximum;
 }
 
+function numericInputAccepts(value: unknown, nodeName: string, inputName: string, expected: number): boolean {
+  const input = inputDefinition(value, nodeName, 'required', inputName);
+  if (!input || (input[0] !== 'INT' && input[0] !== 'FLOAT')) return false;
+  if (!isRecord(input[1])) return true;
+  const minimum = typeof input[1].min === 'number' ? input[1].min : Number.NEGATIVE_INFINITY;
+  const maximum = typeof input[1].max === 'number' ? input[1].max : Number.POSITIVE_INFINITY;
+  return expected >= minimum && expected <= maximum;
+}
+
 export async function loadInlineSceneCapabilities(
   fetcher: Fetcher,
   baseUrl: string,
-  signal?: AbortSignal,
-  options: InlineSceneCapabilityOptions = {}
+  signal?: AbortSignal
 ): Promise<InlineSceneCapabilities> {
   const pairs = await Promise.all(REQUIRED_NODES.map(async (nodeName): Promise<[string, unknown | null]> => {
     try {
@@ -160,9 +164,6 @@ export async function loadInlineSceneCapabilities(
     const missing: string[] = [];
     if (template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
       const h3 = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE;
-      if (options.minimaxH3T1StillValidated !== true) {
-        missing.push('runtime:minimax-h3-t1-still-unvalidated');
-      }
       if (!unets.includes(h3.modelFiles.unet)) missing.push(`model:unet:${h3.modelFiles.unet}`);
       if (!clips.includes(h3.modelFiles.clip)) missing.push(`model:clip:${h3.modelFiles.clip}`);
       if (!clipTypes.includes('minimax')) missing.push('clip-type:minimax');
@@ -182,11 +183,31 @@ export async function loadInlineSceneCapabilities(
       if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 0, 'CONDITIONING')) {
         missing.push('node-output:MiniMaxH3ReferenceToVideo:0:CONDITIONING');
       }
-      if (!integerInputAccepts(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'length', h3.conditioningLength)) {
-        missing.push(`node-input:MiniMaxH3ReferenceToVideo.length:${h3.conditioningLength}`);
+      if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 1, 'LATENT')) {
+        missing.push('node-output:MiniMaxH3ReferenceToVideo:1:LATENT');
       }
-      if (!integerInputAccepts(info.get('EmptyLatentImage'), 'EmptyLatentImage', 'batch_size', h3.batchSize)) {
-        missing.push(`node-input:EmptyLatentImage.batch_size:${h3.batchSize}`);
+      if (!integerInputAccepts(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'length', h3.frames)) {
+        missing.push(`node-input:MiniMaxH3ReferenceToVideo.length:${h3.frames}`);
+      }
+      const sigmaShiftInfo = info.get('MiniMaxH3SigmaShift');
+      if (!numericInputAccepts(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 'shift_video', h3.shiftVideo)) {
+        missing.push(`node-input:MiniMaxH3SigmaShift.shift_video:${h3.shiftVideo}`);
+      }
+      if (!numericInputAccepts(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 'shift_audio', h3.shiftAudio)) {
+        missing.push(`node-input:MiniMaxH3SigmaShift.shift_audio:${h3.shiftAudio}`);
+      }
+      if (!nodeOutputHasType(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 0, 'MODEL')) {
+        missing.push('node-output:MiniMaxH3SigmaShift:0:MODEL');
+      }
+      const imageFromBatchInfo = info.get('ImageFromBatch');
+      if (!integerInputAccepts(imageFromBatchInfo, 'ImageFromBatch', 'batch_index', h3.outputFrameIndex)) {
+        missing.push(`node-input:ImageFromBatch.batch_index:${h3.outputFrameIndex}`);
+      }
+      if (!integerInputAccepts(imageFromBatchInfo, 'ImageFromBatch', 'length', h3.outputFrameCount)) {
+        missing.push(`node-input:ImageFromBatch.length:${h3.outputFrameCount}`);
+      }
+      if (!nodeOutputHasType(imageFromBatchInfo, 'ImageFromBatch', 0, 'IMAGE')) {
+        missing.push('node-output:ImageFromBatch:0:IMAGE');
       }
     } else {
       if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);

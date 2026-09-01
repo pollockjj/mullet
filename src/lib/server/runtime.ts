@@ -15,7 +15,6 @@ export const runtime = {
   modelId: env.MODEL_ID ?? 'local-model',
   imageComfyBaseUrl: (env.IMAGE_COMFY_BASE_URL ?? '').trim().replace(/\/$/, ''),
   videoComfyBaseUrl: (env.VIDEO_COMFY_BASE_URL ?? '').trim().replace(/\/$/, ''),
-  minimaxH3T1StillValidated: env.MINIMAX_H3_T1_STILL_VALIDATED === 'true',
   maxTokens,
   defaultMaxTokens,
   temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : 0.85,

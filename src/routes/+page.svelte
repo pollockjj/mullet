@@ -84,7 +84,6 @@
   import {
     INLINE_SCENE_VIDEO_DURATION_SECONDS,
     INLINE_SCENE_VIDEO_FPS,
-    INLINE_SCENE_VIDEO_TEMPLATE_ID,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
     LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
@@ -469,7 +468,7 @@
   let inlineSceneVideoController: AbortController | null = null;
   let lastInlineSceneVideoAttemptKey = '';
   let inlineSceneVideoComponentDestroying = false;
-  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;
+  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   let inlineSceneH3ReferenceSummary = '';
   let inlineSceneH3StillReferenceSummary = '';
@@ -491,7 +490,7 @@
   let bodyReferenceOverlayBusyProfileId = '';
   let bodyReferenceOverlayError = '';
   let inlineSceneSelectedModelAvailable = false;
-  let inlineSceneStillMode: InlineSceneStillMode = 'automatic';
+  let inlineSceneStillMode: InlineSceneStillMode = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
   let inlineSceneH3StillCapability: InlineSceneCapabilities['templates'][number] | null = null;
   let scenarioLoading = false;
   let conversationId = '';
@@ -560,9 +559,9 @@
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
   const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
-  const inlineSceneStillModeStorageKey = 'mullet.inline-scene-still-mode.v1';
+  const inlineSceneStillModeStorageKey = 'mullet.inline-scene-still-mode.v2';
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
-  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v2';
+  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v3';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
   const automaticExpressionRetryDelayMs = 1_500;
   const bodyReferenceWidth = 576;
@@ -955,16 +954,18 @@
     localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
     inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
     inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
-    inlineSceneStillMode = localStorage.getItem(inlineSceneStillModeStorageKey) === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-      ? MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-      : 'automatic';
+    const savedInlineSceneStillMode = localStorage.getItem(inlineSceneStillModeStorageKey);
+    inlineSceneStillMode = savedInlineSceneStillMode === 'automatic'
+      || savedInlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      ? savedInlineSceneStillMode as InlineSceneStillMode
+      : MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
     inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
       ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
-      : INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      : MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     restorePortraitSettings();
     restoreInlineSceneSettings();
@@ -1125,7 +1126,7 @@
     if (
       inlineSceneStillMode !== 'automatic'
       && inlineSceneStillMode !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-    ) inlineSceneStillMode = 'automatic';
+    ) inlineSceneStillMode = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     persistInlineSceneSettings();
   }
@@ -1504,7 +1505,7 @@
 
   function inlineSceneStillDriverLabel(modelTemplate: InlineSceneImageRequest['modelTemplate']): string {
     if (modelTemplate === INLINE_SCENE_TEMPLATE_ID) return 'Z-Image + exact linked LoRA';
-    if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) return 'MiniMax H3 experimental T=1 Ref2VA';
+    if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) return 'MiniMax H3 Ref2VA keeper still';
     return 'Qwen multi-reference master';
   }
 
@@ -1958,7 +1959,7 @@
       }
       inlineSceneVideoCapabilities = normalizeInlineSceneVideoCapabilities(payload);
       if (!inlineSceneVideoCapabilities.templates.some(({ template }) => template.id === inlineSceneVideoModelTemplate)) {
-        inlineSceneVideoModelTemplate = INLINE_SCENE_VIDEO_TEMPLATE_ID;
+        inlineSceneVideoModelTemplate = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
         localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
       }
     } catch (cause) {
@@ -2193,7 +2194,7 @@
 
   function persistInlineSceneVideoModelTemplate() {
     if (!inlineSceneVideoTemplateCapability(inlineSceneVideoCapabilities, inlineSceneVideoModelTemplate)) {
-      inlineSceneVideoModelTemplate = INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      inlineSceneVideoModelTemplate = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
     }
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     inlineSceneVideoGeneration += 1;
@@ -5726,14 +5727,14 @@
               disabled={inlineSceneBusy}
               aria-label="Inline scene still model"
             >
-              <option value="automatic">Automatic · Z-Image solo / Qwen references</option>
+              <option value="automatic">Automatic alternative · Z-Image solo / Qwen references</option>
               <option value={MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}>
-                MiniMax H3 Ref2VA · Experimental T=1 still (20-step){inlineSceneH3StillCapability?.available === false ? ' (unavailable)' : ''}
+                MiniMax H3 Ref2VA · Keeper still (5-frame, 20-step){inlineSceneH3StillCapability?.available === false ? ' (unavailable)' : ''}
               </option>
             </select>
           </label>
           {#if inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}
-            <small>Validated experimental one-frame Ref2VA · base H3 · no LoRA · res_multistep/beta · 20 steps · {inlineSceneH3StillReferenceSummary || 'reference plan resolves after cast selection'}</small>
+            <small>Five-frame Ref2VA keeper · base H3 · no LoRA · res_multistep/simple · shifts 12/3 · frame 0 · {inlineSceneH3StillReferenceSummary || 'reference plan resolves after cast selection'}</small>
           {/if}
           <div class="portrait-grid">
             <label>
@@ -5754,7 +5755,7 @@
             <div class="sidecar-error capability-error" role="alert">
               <span>
                 {inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-                  ? `MiniMax H3 experimental still is unavailable.${inlineSceneH3StillCapability?.missing.length ? ` Missing: ${inlineSceneH3StillCapability.missing.join(', ')}.` : ''}`
+                  ? `MiniMax H3 keeper still is unavailable.${inlineSceneH3StillCapability?.missing.length ? ` Missing: ${inlineSceneH3StillCapability.missing.join(', ')}.` : ''}`
                   : 'No deterministic static-scene driver is currently available for this scenario state.'}
               </span>
               <button class="error-retry" on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>

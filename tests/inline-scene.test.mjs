@@ -741,7 +741,7 @@ test('builds a continuity graph only from a verified master and its exact select
   );
 });
 
-test('builds an additive experimental H3 T=1 still graph with ordered prior, canonical, and body references', () => {
+test('builds the H3 five-frame keeper-still graph with ordered prior, canonical, and body references', () => {
   const initial = h3StillRequest(
     ['jenna-stannis', 'cally'],
     undefined,
@@ -772,24 +772,25 @@ test('builds an additive experimental H3 T=1 still graph with ordered prior, can
   assert.equal(graph['20'].inputs.height, 544);
   assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
   assert.deepEqual(graph['20'].inputs['ref_images.ref_image_3'], ['8', 0]);
-  assert.deepEqual(graph['21'].inputs, { model: ['1', 0], conditioning: ['20', 0] });
+  assert.deepEqual(graph['19'].inputs, { model: ['1', 0], shift_video: 12, shift_audio: 3 });
+  assert.deepEqual(graph['21'].inputs, { model: ['19', 0], conditioning: ['20', 0] });
   assert.deepEqual(graph['22'].inputs, { sampler_name: 'res_multistep' });
-  assert.deepEqual(graph['23'].inputs, { model: ['1', 0], scheduler: 'beta', steps: 20, denoise: 1 });
+  assert.deepEqual(graph['23'].inputs, { model: ['19', 0], scheduler: 'simple', steps: 20, denoise: 1 });
   assert.deepEqual(graph['24'].inputs, { noise_seed: 43 });
-  assert.deepEqual(graph['25'].inputs, { width: 960, height: 544, batch_size: 1 });
-  assert.deepEqual(graph['26'].inputs, {
+  assert.deepEqual(graph['25'].inputs, {
     noise: ['24', 0],
     guider: ['21', 0],
     sampler: ['22', 0],
     sigmas: ['23', 0],
-    latent_image: ['25', 0]
+    latent_image: ['20', 1]
   });
-  assert.deepEqual(graph['27'].inputs, { samples: ['26', 0], vae: ['3', 0] });
+  assert.deepEqual(graph['26'].inputs, { samples: ['25', 0], vae: ['3', 0] });
+  assert.deepEqual(graph['27'].inputs, { image: ['26', 0], batch_index: 0, length: 1 });
   assert.deepEqual(graph['28'].inputs, { images: ['27', 0], filename_prefix: 'mullet/scene' });
-  assert.equal(JSON.stringify(graph).includes('["20",1]'), false, 'H3 AV latent output must never enter the T=1 graph');
+  assert.equal(JSON.stringify(graph).includes('["20",1]'), true, 'the native Ref2VA AV latent must supply the five-frame packet');
   assert.equal(Object.values(graph).some(({ class_type }) => [
     'LoraLoader', 'LoraLoaderModelOnly', 'KSampler', 'ConditioningZeroOut',
-    'VAEDecodeAudio', 'CreateVideo', 'SaveVideo'
+    'EmptyLatentImage', 'VAEDecodeAudio', 'CreateVideo', 'SaveVideo'
   ].includes(class_type)), false);
   assert.match(graph['20'].inputs.prompt, /<Picture 1> is the exact canonical identity reference for Jenna Stannis/);
   assert.match(graph['20'].inputs.prompt, /exactly one static duo landscape scene/);

@@ -17,17 +17,15 @@ npm run start
 
 Copy `.env.example` values into the service environment. Model credentials and private network addresses belong in the runtime environment, never in the repository.
 
-Image jobs are routed through the shared Firestorm CUDA0 ComfyUI service at `IMAGE_COMFY_BASE_URL`; video jobs are routed through the shared CUDA1 service at `VIDEO_COMFY_BASE_URL`. MULLET owns only its submitted prompt IDs and its namespaced job artifacts, not either ComfyUI installation, queue, GPU, model inventory, or global input/output roots. Automatic still mode remains the default: an initial solo scene with a linked identity LoRA uses Z-Image Turbo plus that exact LoRA, while reference-only solos, multi-subject scenes, continuity edits, reference portraits, and generated motion end frames use Qwen Image Edit 2511 with its fixed four-step Lightning LoRA. MiniMax publishes no official H3 still workflow or still-specific LoRA; MULLET's experimental base/no-LoRA 20-step T=1 path is additive and explicitly selectable, and it never silently replaces Automatic mode. Landscape scene motion includes two implemented additive MiniMax H3 Ref2VA choices: a 20-step quality path without an acceleration LoRA and the publisher-matched `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` four-step 544p preview path. The documented FL2VA recommendations are the 768p eight-step adapter with shifts `6/3` and the non-768 eight-step adapter with shifts `12/3`; they are not substitutions for the implemented landscape Ref2VA choices. Mage-Flow and FLUX.2 are not part of the supported model inventory.
+Image jobs are routed through the shared Firestorm CUDA0 ComfyUI service at `IMAGE_COMFY_BASE_URL`; video jobs are routed through the shared CUDA1 service at `VIDEO_COMFY_BASE_URL`. MULLET owns only its submitted prompt IDs and its namespaced job artifacts, not either ComfyUI installation, queue, GPU, model inventory, or global input/output roots. MiniMax H3 Ref2VA is the scene-still and scene-motion default. Its keeper-still path uses the native five-frame latent packet, decodes it, and saves frame zero; it does not use the experimental T=1 latent conversion. The quality scene-motion path uses 20 steps without an acceleration LoRA, while a separate four-step 544p Ref2VA preview remains available.
 
-## MiniMax H3 experimental still path
+## MiniMax H3 keeper still path
 
-The selectable H3 still path uses the base Ref2VA model with no LoRA, `res_multistep`, the `beta` scheduler, and 20 steps. `beta` is intentional: the official Ref2VA template notes that `beta` or `normal` can outperform `simple` on reference-heavy prompts, and the successful owned probe was measured with `beta`.
+The selectable H3 still path uses the base Ref2VA model with no LoRA, `res_multistep`, the `simple` scheduler, 20 steps, and `MiniMaxH3SigmaShift` video/audio shifts `12/3`.
 
 References are ordered as the verified prior strict-ancestor scene master when one exists, then each selected subject's canonical identity image in cast order, then each available body/wardrobe image in cast order. A trio therefore uses at most seven inputs: one prior master, three canonical references, and three body references.
 
-The experimental one-frame graph sends only conditioning output `0` from `MiniMaxH3ReferenceToVideo` into `BasicGuider`; its AV latent output `1` is not sampled. Sampling starts from `EmptyLatentImage`, which current ComfyUI converts to the H3 one-frame video latent plus its empty audio latent. Output dimensions are divisible by 32; the 0.5 MP 16:9 setting is exactly `960×544`. This behavior depends on [ComfyUI PR #15677](https://github.com/Comfy-Org/ComfyUI/pull/15677).
-
-`MINIMAX_H3_T1_STILL_VALIDATED=true` may be enabled only after an owned prompt has successfully completed through the configured image ComfyUI service and its returned PNG has passed hash and exact-dimension validation. Node inventory alone does not prove the experimental T=1 core path.
+The graph sends conditioning output `0` from `MiniMaxH3ReferenceToVideo` into `BasicGuider` and samples the node's native five-frame AV latent output `1`. The video latent is decoded with the stock H3 video VAE, `ImageFromBatch` selects frame zero with length one, and `SaveImage` writes exactly one PNG. No audio decode or video output node is present. Output dimensions are divisible by 32; the 0.5 MP 16:9 setting is exactly `960×544`.
 
 ## MiniMax H3 model provenance
 
@@ -55,5 +53,7 @@ Pinned base serving artifacts:
 | `minimax_h3_audio_vae_fp32.safetensors` | 605,254,808 | `8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48` |
 
 [MiniMax architecture and checkpoint documentation](https://github.com/MiniMax-AI/MiniMax-H3/blob/d21241f0a4b3acbb34c97dae47fa417b7065e438/README.md), [MiniMax license Q&A](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/fa9c8ab1eaa21c8ae25e7e40b83b2e6002f340af/docs/QA-about-License.md), [MiniMax license application](https://platform.minimax.io/h3-license), [Comfy commercial-license route](https://comfy.org/minimax/license/), [MiniMax IR contacts](https://ir.minimax.io/investor-resources/ir-contacts).
+
+The production Ref2VA identity/video LoRA path and the separate experimental one-frame still boundary are recorded in [`docs/H3_TRAINING_PROTOCOL.md`](docs/H3_TRAINING_PROTOCOL.md).
 
 Local-first multimodal scenario platform.

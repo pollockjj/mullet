@@ -6,6 +6,7 @@ import {
   INLINE_SCENE_IMAGE_REQUEST_SPEC,
   INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
+  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
   createInlineSceneContinuityMaster,
   inlineSceneImageRequestKey,
   inlineSceneSourceForScenarioOpening
@@ -151,6 +152,18 @@ test('preserves a Qwen reference-edit solo cast in the v6 envelope', async () =>
   assert.deepEqual(scene.request.cast.identities[0].referenceImage, canonicalReference);
   assert.equal(scene.request.lora, null);
   await verifyStoredInlineScene(scene);
+});
+
+test('rejects a cached T=1 H3 v1 scene after the five-frame keeper contract replaces it', () => {
+  const keeperRequest = request({
+    modelTemplate: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
+    lora: null,
+    aspectRatio: '16:9'
+  });
+  const stale = stored({}, keeperRequest);
+  stale.request = { ...stale.request, modelTemplate: 'minimax-h3-ref2va-still-v1' };
+  stale.modelTemplate = 'minimax-h3-ref2va-still-v1';
+  assert.throws(() => normalizeStoredInlineScene(stale), /unsupported inline-scene model template/);
 });
 
 test('persists and verifies exactly one flat continuity-master PNG without recursive scene state', async () => {

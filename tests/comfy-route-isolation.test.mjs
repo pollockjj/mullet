@@ -35,7 +35,7 @@ test('image and video routes cannot cross their dedicated Comfy endpoint boundar
   const routeExpectations = [
     ['src/routes/api/portrait/+server.ts', ['imageComfyBaseUrl']],
     ['src/routes/api/portrait/video/+server.ts', ['imageComfyBaseUrl', 'videoComfyBaseUrl']],
-    ['src/routes/api/scene/+server.ts', ['imageComfyBaseUrl', 'minimaxH3T1StillValidated']],
+    ['src/routes/api/scene/+server.ts', ['imageComfyBaseUrl']],
     ['src/routes/api/scene/video/+server.ts', ['videoComfyBaseUrl']]
   ];
 

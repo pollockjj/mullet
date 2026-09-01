@@ -18,10 +18,10 @@ import {
 export const INLINE_SCENE_REQUEST_SPEC = 'mullet_inline_scene_request_v3' as const;
 export const INLINE_SCENE_RESULT_SPEC = 'mullet_inline_scene_result_v3' as const;
 export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_request_v5' as const;
-export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v3' as const;
+export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v4' as const;
 export const INLINE_SCENE_TEMPLATE_ID = 'z-image-turbo-scene-v1' as const;
 export const INLINE_SCENE_QWEN_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
-export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID = 'minimax-h3-ref2va-still-v1' as const;
+export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID = 'minimax-h3-ref2va-still-v2' as const;
 export const INLINE_SCENE_TIMEOUT_MS = 30_000 as const;
 export const INLINE_SCENE_IMAGE_TIMEOUT_MS = 120_000 as const;
 export const MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS = 300_000 as const;
@@ -74,9 +74,9 @@ export const Z_IMAGE_TURBO_SCENE_TEMPLATE = Object.freeze({
 
 export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE = Object.freeze({
   id: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
-  label: 'MiniMax H3 Ref2VA · Experimental T=1 still (20-step)',
+  label: 'MiniMax H3 Ref2VA · Keeper still (5-frame, 20-step)',
   modelFamily: 'minimax-h3-ref2va-still',
-  promptGuide: 'one cinematic realistic landscape still, exact identity from the numbered references, coherent anatomy and spatial relationships, natural lighting, no motion description, no text, and no watermark',
+  promptGuide: 'one static five-frame cinematic landscape packet, exact identity from the numbered references, coherent anatomy and spatial relationships, natural lighting, no motion description, no text, and no watermark; frame zero is the keeper still',
   modelFiles: {
     unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
     clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
@@ -89,25 +89,29 @@ export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE = Object.freeze({
     'VAELoader',
     'LoadImage',
     'MiniMaxH3ReferenceToVideo',
+    'MiniMaxH3SigmaShift',
     'BasicGuider',
     'KSamplerSelect',
     'BasicScheduler',
     'RandomNoise',
-    'EmptyLatentImage',
     'SamplerCustomAdvanced',
     'VAEDecode',
+    'ImageFromBatch',
     'SaveImage'
   ],
   multiple: 32,
   outputNode: '28',
   steps: 20,
   sampler: 'res_multistep',
-  scheduler: 'beta',
+  scheduler: 'simple',
   denoise: 1,
-  conditioningLength: 5,
+  frames: 5,
+  shiftVideo: 12,
+  shiftAudio: 3,
   referenceImageSize: 'match',
   maxReferenceImages: 9,
-  batchSize: 1
+  outputFrameIndex: 0,
+  outputFrameCount: 1
 } as const);
 
 export const INLINE_SCENE_TEMPLATES = Object.freeze([
@@ -1495,6 +1499,14 @@ export function buildMiniMaxH3InlineSceneStillWorkflow(
     '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
     '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
     ...loadImageNodes,
+    '19': {
+      class_type: 'MiniMaxH3SigmaShift',
+      inputs: {
+        model: ['1', 0],
+        shift_video: template.shiftVideo,
+        shift_audio: template.shiftAudio
+      }
+    },
     '20': {
       class_type: 'MiniMaxH3ReferenceToVideo',
       inputs: {
@@ -1504,7 +1516,7 @@ export function buildMiniMaxH3InlineSceneStillWorkflow(
         prompt: buildInlineScenePrompt(normalized),
         width,
         height,
-        length: template.conditioningLength,
+        length: template.frames,
         ref_image_size: template.referenceImageSize,
         ...referenceInputs
       }
@@ -1512,28 +1524,31 @@ export function buildMiniMaxH3InlineSceneStillWorkflow(
     '21': {
       class_type: 'BasicGuider',
       inputs: {
-        model: ['1', 0],
+        model: ['19', 0],
         conditioning: ['20', 0]
       }
     },
     '22': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
     '23': {
       class_type: 'BasicScheduler',
-      inputs: { model: ['1', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise }
+      inputs: { model: ['19', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise }
     },
     '24': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '25': { class_type: 'EmptyLatentImage', inputs: { width, height, batch_size: template.batchSize } },
-    '26': {
+    '25': {
       class_type: 'SamplerCustomAdvanced',
       inputs: {
         noise: ['24', 0],
         guider: ['21', 0],
         sampler: ['22', 0],
         sigmas: ['23', 0],
-        latent_image: ['25', 0]
+        latent_image: ['20', 1]
       }
     },
-    '27': { class_type: 'VAEDecode', inputs: { samples: ['26', 0], vae: ['3', 0] } },
+    '26': { class_type: 'VAEDecode', inputs: { samples: ['25', 0], vae: ['3', 0] } },
+    '27': {
+      class_type: 'ImageFromBatch',
+      inputs: { image: ['26', 0], batch_index: template.outputFrameIndex, length: template.outputFrameCount }
+    },
     '28': { class_type: 'SaveImage', inputs: { images: ['27', 0], filename_prefix: 'mullet/scene' } }
   };
 }

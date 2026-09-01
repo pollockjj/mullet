@@ -223,11 +223,24 @@ function info(name) {
   });
   if (name === 'KSamplerSelect') return node(name, { sampler_name: [[h3.sampler]] });
   if (name === 'BasicScheduler') return node(name, { scheduler: [[h3.scheduler]] });
-  if (name === 'EmptyLatentImage') return node(name, {
-    width: ['INT', { min: 16, max: 8192 }],
-    height: ['INT', { min: 16, max: 8192 }],
-    batch_size: ['INT', { min: 1, max: 4096 }]
-  });
+  if (name === 'MiniMaxH3SigmaShift') {
+    const result = node(name, {
+      model: ['MODEL'],
+      shift_video: ['FLOAT', { min: 1, max: 100 }],
+      shift_audio: ['FLOAT', { min: 1, max: 100 }]
+    });
+    result[name].output = ['MODEL'];
+    return result;
+  }
+  if (name === 'ImageFromBatch') {
+    const result = node(name, {
+      image: ['IMAGE'],
+      batch_index: ['INT', { min: -8192, max: 8192 }],
+      length: ['INT', { min: 1, max: 4096 }]
+    });
+    result[name].output = ['IMAGE'];
+    return result;
+  }
   if (name === 'MiniMaxH3ReferenceToVideo') {
     const result = node(name, {
       length: ['INT', { min: 5, max: 3600, step: 17 }],
@@ -268,9 +281,7 @@ function png(width = 864, height = 576) {
   return bytes;
 }
 
-const h3Validated = { minimaxH3T1StillValidated: true };
-
-test('reports additive Z-Image, Qwen, and experimental H3 still capabilities with the linked LoRA inventory', async () => {
+test('reports additive still capabilities including the H3 five-frame keeper with the linked LoRA inventory', async () => {
   const queried = [];
   const fetcher = async (url) => {
     const parsed = new URL(String(url));
@@ -279,8 +290,8 @@ test('reports additive Z-Image, Qwen, and experimental H3 still capabilities wit
     queried.push(name);
     return Response.json(info(name));
   };
-  const capabilities = await loadInlineSceneCapabilities(fetcher, 'http://comfy', undefined, h3Validated);
-  assert.equal(capabilities.spec, 'mullet_inline_scene_capabilities_v3');
+  const capabilities = await loadInlineSceneCapabilities(fetcher, 'http://comfy');
+  assert.equal(capabilities.spec, 'mullet_inline_scene_capabilities_v4');
   assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
     [INLINE_SCENE_TEMPLATE_ID, true],
     [INLINE_SCENE_QWEN_TEMPLATE_ID, true],
@@ -301,7 +312,7 @@ test('keeps Z-Image available while marking the additive Qwen fallback unavailab
     const name = decodeURIComponent(parsed.pathname.slice('/object_info/'.length));
     if (name === 'LoraLoaderModelOnly') return Response.json(node(name, { lora_name: [['other.safetensors']] }));
     return Response.json(info(name));
-  }, 'http://comfy', undefined, h3Validated);
+  }, 'http://comfy');
   const zImage = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_TEMPLATE_ID);
   const qwen = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_QWEN_TEMPLATE_ID);
   const h3 = capabilities.templates.find(({ template }) => template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
@@ -311,39 +322,63 @@ test('keeps Z-Image available while marking the additive Qwen fallback unavailab
   assert.deepEqual(qwen.missing, [`model:lora:${QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora}`]);
 });
 
-test('gates H3 still support on its exact output-zero and nine-picture contract without disabling other stills', async () => {
-  for (const mutation of [
-    (body) => { body.MiniMaxH3ReferenceToVideo.output[0] = 'LATENT'; },
-    (body) => { body.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].template.max = 8; }
+test('gates the H3 keeper still on its exact native-latent, sigma-shift, frame-zero, and reference contracts', async () => {
+  for (const { nodeName, mutation, diagnostic } of [
+    {
+      nodeName: 'MiniMaxH3ReferenceToVideo',
+      mutation: (body) => { body.MiniMaxH3ReferenceToVideo.output[0] = 'LATENT'; },
+      diagnostic: 'node-output:MiniMaxH3ReferenceToVideo:0:CONDITIONING'
+    },
+    {
+      nodeName: 'MiniMaxH3ReferenceToVideo',
+      mutation: (body) => { body.MiniMaxH3ReferenceToVideo.output[1] = 'IMAGE'; },
+      diagnostic: 'node-output:MiniMaxH3ReferenceToVideo:1:LATENT'
+    },
+    {
+      nodeName: 'MiniMaxH3ReferenceToVideo',
+      mutation: (body) => { body.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].template.max = 8; },
+      diagnostic: 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9'
+    },
+    {
+      nodeName: 'MiniMaxH3ReferenceToVideo',
+      mutation: (body) => { body.MiniMaxH3ReferenceToVideo.input.required.ref_image_size[0] = ['max']; },
+      diagnostic: 'node-option:MiniMaxH3ReferenceToVideo.ref_image_size:match'
+    },
+    {
+      nodeName: 'MiniMaxH3SigmaShift',
+      mutation: (body) => { body.MiniMaxH3SigmaShift.input.required.shift_video[1].max = 10; },
+      diagnostic: 'node-input:MiniMaxH3SigmaShift.shift_video:12'
+    },
+    {
+      nodeName: 'MiniMaxH3SigmaShift',
+      mutation: (body) => { body.MiniMaxH3SigmaShift.output[0] = 'LATENT'; },
+      diagnostic: 'node-output:MiniMaxH3SigmaShift:0:MODEL'
+    },
+    {
+      nodeName: 'ImageFromBatch',
+      mutation: (body) => { body.ImageFromBatch.input.required.batch_index[1].min = 1; },
+      diagnostic: 'node-input:ImageFromBatch.batch_index:0'
+    },
+    {
+      nodeName: 'ImageFromBatch',
+      mutation: (body) => { body.ImageFromBatch.input.required.length[1].min = 2; },
+      diagnostic: 'node-input:ImageFromBatch.length:1'
+    }
   ]) {
     const capabilities = await loadInlineSceneCapabilities(async (url) => {
       const name = decodeURIComponent(new URL(String(url)).pathname.slice('/object_info/'.length));
       const body = info(name);
-      if (name === 'MiniMaxH3ReferenceToVideo') mutation(body);
+      if (name === nodeName) mutation(body);
       return Response.json(body);
-    }, 'http://comfy', undefined, h3Validated);
+    }, 'http://comfy');
     const zImage = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_TEMPLATE_ID);
     const qwen = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_QWEN_TEMPLATE_ID);
     const h3 = capabilities.templates.find(({ template }) => template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
     assert.equal(zImage.available, true);
     assert.equal(qwen.available, true);
     assert.equal(h3.available, false);
-    assert.equal(h3.missing.length, 1);
+    assert.deepEqual(h3.missing, [diagnostic]);
   }
-});
-
-test('requires an owned successful T=1 probe before advertising H3 still support', async () => {
-  const capabilities = await loadInlineSceneCapabilities(async (url) => {
-    const name = decodeURIComponent(new URL(String(url)).pathname.slice('/object_info/'.length));
-    return Response.json(info(name));
-  }, 'http://comfy');
-  const zImage = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_TEMPLATE_ID);
-  const qwen = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_QWEN_TEMPLATE_ID);
-  const h3 = capabilities.templates.find(({ template }) => template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
-  assert.equal(zImage.available, true);
-  assert.equal(qwen.available, true);
-  assert.equal(h3.available, false);
-  assert.deepEqual(h3.missing, ['runtime:minimax-h3-t1-still-unvalidated']);
 });
 
 test('isolates an H3-only capability transport failure from established Z-Image and Qwen stills', async () => {
@@ -351,7 +386,7 @@ test('isolates an H3-only capability transport failure from established Z-Image 
     const name = decodeURIComponent(new URL(String(url)).pathname.slice('/object_info/'.length));
     if (name === 'MiniMaxH3ReferenceToVideo') throw new Error('H3 object-info transport failed');
     return Response.json(info(name));
-  }, 'http://comfy', undefined, h3Validated);
+  }, 'http://comfy');
   const zImage = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_TEMPLATE_ID);
   const qwen = capabilities.templates.find(({ template }) => template.id === INLINE_SCENE_QWEN_TEMPLATE_ID);
   const h3 = capabilities.templates.find(({ template }) => template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
@@ -462,7 +497,7 @@ test('fetches and verifies every solo, duo, and trio Qwen reference before queue
   }
 });
 
-test('verifies every H3 still identity reference before queueing the native output-zero T=1 graph', async () => {
+test('verifies every H3 still identity reference before queueing the native five-frame keeper graph', async () => {
   const base = h3StillRequest(2);
   const requestValue = {
     ...base,
@@ -509,10 +544,13 @@ test('verifies every H3 still identity reference before queueing the native outp
   assert.equal(graph['20'].class_type, 'MiniMaxH3ReferenceToVideo');
   assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
   assert.deepEqual(graph['20'].inputs['ref_images.ref_image_2'], ['7', 0]);
+  assert.equal(graph['20'].inputs.length, 5);
   assert.deepEqual(graph['21'].inputs.conditioning, ['20', 0]);
-  assert.equal(JSON.stringify(graph).includes('["20",1]'), false);
-  assert.equal(graph['25'].class_type, 'EmptyLatentImage');
-  assert.equal(graph['25'].inputs.batch_size, 1);
+  assert.deepEqual(graph['19'].inputs, { model: ['1', 0], shift_video: 12, shift_audio: 3 });
+  assert.deepEqual(graph['23'].inputs, { model: ['19', 0], scheduler: 'simple', steps: 20, denoise: 1 });
+  assert.equal(graph['25'].class_type, 'SamplerCustomAdvanced');
+  assert.deepEqual(graph['25'].inputs.latent_image, ['20', 1]);
+  assert.deepEqual(graph['27'].inputs, { image: ['26', 0], batch_index: 0, length: 1 });
   assert.equal(graph['28'].class_type, 'SaveImage');
   assert.equal(output.promptId, promptId);
 });
