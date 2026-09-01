@@ -234,6 +234,11 @@
     workspaceReadyForCompletedTurn
   } from '$lib/workspace-state';
   import { normalizeTranscriptSource, transcriptSourceForMessages } from '$lib/transcript-source';
+  import {
+    createSubjectDescriptor,
+    subjectContinuityClause,
+    type SubjectDescriptor
+  } from '$lib/subject-continuity';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -396,6 +401,9 @@
   let expressionsEnabled = true;
   // Media is one thing. The four stages are never independently switchable.
   let mediaEnabled = true;
+  // Live appearance facts captioned from the expression still that is currently on
+  // screen, keyed by character. Injected verbatim into every later image and clip.
+  let subjectDescriptors: Record<string, SubjectDescriptor> = {};
   let sidecarState: SidecarState | null = null;
   let expressionSnapshot: ExpressionSidecarRequest | null = null;
   let expressionResult: ExpressionSidecarResult | null = null;
@@ -2150,6 +2158,7 @@
       const liveImageRequest = buildInlineSceneImageRequest(result, {
         ...driver,
         cast,
+        continuity: castContinuityClause(cast),
         ...(continuityMaster ? { continuityMaster } : {}),
         aspectRatio: inlineSceneAspectRatio,
         megapixels: inlineSceneMegapixels
@@ -2268,6 +2277,7 @@
       const imageRequest = buildInlineSceneImageRequest(result, {
         ...driver,
         cast,
+        continuity: castContinuityClause(cast),
         ...(continuityMaster ? { continuityMaster } : {}),
         aspectRatio: selectedAspectRatio,
         megapixels: selectedMegapixels
@@ -2558,7 +2568,39 @@
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     generatedPortrait = portrait;
     generatedPortraitUrl = URL.createObjectURL(portrait.image);
+    void captureSubjectDescriptor(portrait);
     return refreshPortraitImageDigest(portrait, generation);
+  }
+
+  // Step 3 of the continuity chain: read the concrete visible facts off the still that
+  // was actually produced, so the widescreen scene is given those exact details rather
+  // than a restatement of what the portrait was asked for. Best effort: a caption failure
+  // must never block the portrait the operator is looking at.
+  async function captureSubjectDescriptor(portrait: StoredPortrait): Promise<void> {
+    const characterId = portrait.source.characterId ?? '';
+    const displayName = portraitDisplayProfile?.displayName ?? '';
+    const expression = portrait.source.expression;
+    if (!characterId || !displayName || !expression) return;
+    try {
+      const form = new FormData();
+      form.append('image', portrait.image, 'portrait.png');
+      form.append('characterId', characterId);
+      form.append('displayName', displayName);
+      form.append('expression', expression);
+      const response = await fetch(`${base}/api/sidecar/caption`, { method: 'POST', body: form });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const descriptor = createSubjectDescriptor(
+        characterId,
+        displayName,
+        payload.portraitSha256,
+        expression,
+        payload.caption
+      );
+      subjectDescriptors = { ...subjectDescriptors, [characterId]: descriptor };
+    } catch {
+      // continuity is an enhancement; the portrait stands on its own
+    }
   }
 
   async function restoreGeneratedPortrait() {
@@ -4123,6 +4165,13 @@
   $: mediaBusy = sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy;
   $: mediaError = portraitError || portraitVideoError || inlineSceneError || inlineSceneVideoError || sidecarError;
   $: mediaRefreshable = Boolean(portraitRequest || inlineSceneSidecarRequest);
+
+  function castContinuityClause(cast: { identities: readonly { characterId?: string; profileId?: string }[] }): string {
+    const descriptors = cast.identities
+      .map((identity) => subjectDescriptors[identity.characterId ?? identity.profileId ?? ''])
+      .filter((descriptor): descriptor is SubjectDescriptor => Boolean(descriptor));
+    return subjectContinuityClause(descriptors);
+  }
 
   function toggleMedia() {
     mediaEnabled = !mediaEnabled;

@@ -564,11 +564,14 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
   const normalized = normalizeInlineSceneVideoRequest(request);
   return [
     normalized.source.sceneRequest.prompt,
+    // The same verbatim appearance facts the scene still was given, so the clip cannot
+    // drift away from the frame it is animating.
+    normalized.source.sceneRequest.continuity,
     'Preserve every visible subject, identity, attire, object, and spatial relationship while continuing only restrained physical motion implied by the scene.',
     'The identical supplied scene is both the first and the final keyframe; all motion returns exactly to that keyframe so the clip loops seamlessly.',
     'Ambient physical motion only: no talking, no lip or mouth movement, and no speech gestures.',
     'One continuous landscape shot: no camera movement, no cuts, no new subjects, no new objects, no text, and no black frames.'
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 }
 
 export function buildInlineSceneVideoWorkflow(

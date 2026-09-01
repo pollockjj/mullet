@@ -229,6 +229,10 @@ export type InlineSceneImageRequest = {
     promptSha256: string;
   };
   prompt: string;
+  // Verbatim appearance facts captioned from the expression still already on screen.
+  // Carried separately from the director's prompt so it does not break the 40-160 word
+  // contract, and appended verbatim when the Comfy prompt is composed.
+  continuity: string;
   cast: InlineSceneCast;
   continuityMaster?: InlineSceneContinuityMaster;
   lora: InlineSceneLora | null;
@@ -985,6 +989,19 @@ function normalizeInlineSceneLora(value: unknown): InlineSceneLora | null {
   return { path: value.path, trigger: value.trigger, modelHash: value.modelHash };
 }
 
+// Continuity text comes from a model captioning generated pixels. Treat it as data:
+// single line, bounded, never able to smuggle instruction tokens into the graph prompt.
+export function normalizeInlineSceneContinuity(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string') throw new Error('inline-scene continuity must be a string');
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (collapsed.length > 1_200) throw new Error('inline-scene continuity is too long');
+  if (/<\s*(picture|subject|video|audio)\b/i.test(collapsed)) {
+    throw new Error('inline-scene continuity must not contain reference tokens');
+  }
+  return collapsed;
+}
+
 export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneImageRequest {
   if (!isRecord(value) || value.spec !== INLINE_SCENE_IMAGE_REQUEST_SPEC) throw new Error('invalid inline-scene image request spec');
   if (
@@ -999,6 +1016,7 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
     throw new Error('inline-scene source model is invalid');
   }
   const prompt = normalizeInlineScenePrompt(value.prompt);
+  const continuity = normalizeInlineSceneContinuity(value.continuity);
   const promptSha256 = `sha256:${sha256Hex(prompt)}`;
   if (value.source.promptSha256 !== promptSha256 || !SHA256_PATTERN.test(promptSha256)) {
     throw new Error('inline-scene prompt hash is invalid');
@@ -1030,6 +1048,7 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
     modelTemplate,
     source: { ...source, sidecarModel: value.source.sidecarModel.trim(), promptSha256 },
     prompt,
+    continuity,
     cast,
     ...(continuityMaster ? { continuityMaster } : {}),
     lora,
@@ -1093,6 +1112,7 @@ export function inlineSceneImageRequestKey(request: InlineSceneImageRequest): st
     normalized.source.sidecarModel,
     normalized.source.promptSha256,
     normalized.prompt,
+    normalized.continuity,
     normalized.modelTemplate,
     normalized.cast.kind,
     ...normalized.cast.identities.flatMap((identity) => [
@@ -1319,8 +1339,9 @@ export function buildInlineScenePrompt(request: InlineSceneImageRequest): string
       `The loaded identity LoRA token ${normalized.lora.trigger} represents ${identity.subject}.`,
       `Apply ${normalized.lora.trigger} only when ${identity.displayName} is visible; do not insert that person when absent from the directed scene.`,
       normalized.prompt,
+      normalized.continuity,
       Z_IMAGE_TURBO_SCENE_TEMPLATE.promptGuide
-    ].join(' ');
+    ].filter(Boolean).join(' ');
   }
   const referenceDirections = inlineSceneQwenReferencePlan(normalized).map((slot) => {
     if (slot.kind === 'continuity_master') {
@@ -1339,7 +1360,8 @@ export function buildInlineScenePrompt(request: InlineSceneImageRequest): string
       ? 'Continue from Picture 1 while removing any prior subject not in the exact current cast.'
       : 'Recompose and outpaint Picture 1 into the requested wide scene; do not retain portrait framing or blank padding.',
     normalized.prompt,
+    normalized.continuity,
     QWEN_IMAGE_EDIT_SCENE_TEMPLATE.promptGuide
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 }
 
