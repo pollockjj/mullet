@@ -440,7 +440,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
       { aspectRatio: '5:4', width: 960, height: 768 },
       { aspectRatio: '16:9', width: 1344, height: 768 }
     ]);
-    assert.deepEqual(capabilities.durations, [3]);
+    assert.deepEqual(capabilities.durations, [3, 5]);
     const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
     const expectedNodes = new Set(INLINE_SCENE_VIDEO_TEMPLATES.flatMap(({ requiredNodes }) => requiredNodes));
     assert.deepEqual(new Set(queriedNodes), expectedNodes);
@@ -461,7 +461,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(response.headers.get('x-mullet-height'), '768');
     assert.equal(response.headers.get('x-mullet-frames'), '121');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
-    assert.equal(request.durationSeconds, 3);
+    assert.equal(request.durationSeconds, 5);
     assert.equal(response.headers.get('x-mullet-duration-seconds'), String(121 / 24));
     assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
     assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-scene-v2');

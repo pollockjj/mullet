@@ -293,7 +293,10 @@ export async function loadInlineSceneVideoCapabilities(
       ...minimaxCapabilities.slice(1)
     ],
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
-    durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]
+    // Duration is per template now: the FL2VA loop is three seconds, Ref2VA and LTX are
+    // five. Report the distinct set so the UI cannot claim a duration nothing offers.
+    durations: [...new Set(INLINE_SCENE_VIDEO_TEMPLATES.map(({ durationSeconds }) => durationSeconds))]
+      .sort((left, right) => left - right)
   };
 }
 

@@ -188,7 +188,7 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
     ['minimax-h3-ref2va-scene-v1', true],
     ['minimax-h3-ref2va-lightx-preview-v1', true]
   ]);
-  assert.deepEqual(capabilities.durations, [3]);
+  assert.deepEqual(capabilities.durations, [3, 5]);
   const degradationCases = [
     {
       mutate(info) { info.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].template.max = 8; },

@@ -18,9 +18,11 @@ export const MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID = 'minimax-h3-fl2va-scene-loop-v1
 export const MINIMAX_H3_SCENE_LOOP_MODE = 'flf2v_loop' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
-// Operator order: the scene loop is a three-second 0.66 MP loop, replacing the previous
-// five-second 1 MP non-looping clip.
-export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 3 as const;
+// Ref2VA and LTX remain five-second clips at 124/121 frames. Only the loop is three
+// seconds; duration is per template, never one shared constant, because the frame count
+// and the declared duration have to agree or the request fails validation.
+export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 5 as const;
+export const MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS = 3 as const;
 export const INLINE_SCENE_VIDEO_FPS = 24 as const;
 export const LTX25_INLINE_SCENE_VIDEO_FRAMES = 121 as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_FRAMES = 124 as const;
@@ -211,7 +213,7 @@ export const MINIMAX_H3_SCENE_LOOP_TEMPLATE = Object.freeze({
   outputNode: '15',
   mode: MINIMAX_H3_SCENE_LOOP_MODE,
   dimensions: MINIMAX_H3_SCENE_LOOP_DIMENSIONS,
-  durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
+  durationSeconds: MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS,
   frames: MINIMAX_H3_SCENE_LOOP_FRAMES,
   multiple: 32,
   shortEdge: 576,
@@ -257,7 +259,7 @@ export type InlineSceneVideoRequest = {
   mode: InlineSceneVideoMode;
   source: InlineSceneVideoSource;
   aspectRatio: InlineSceneAspectRatio;
-  durationSeconds: typeof INLINE_SCENE_VIDEO_DURATION_SECONDS;
+  durationSeconds: number;
 };
 
 export type InlineSceneVideoTemplateCapability = {
@@ -270,7 +272,7 @@ export type InlineSceneVideoCapabilities = {
   spec: typeof INLINE_SCENE_VIDEO_CAPABILITIES_SPEC;
   templates: InlineSceneVideoTemplateCapability[];
   aspectRatios: typeof INLINE_SCENE_VIDEO_DIMENSIONS;
-  durations: readonly [typeof INLINE_SCENE_VIDEO_DURATION_SECONDS];
+  durations: readonly number[];
 };
 
 export type InlineSceneVideoReconciliationConditions = {
@@ -435,7 +437,7 @@ export function buildInlineSceneVideoRequest(
       sceneRequest: scene.request
     },
     aspectRatio: scene.request.aspectRatio,
-    durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS
+    durationSeconds: template.durationSeconds
   });
 }
 
@@ -479,7 +481,7 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
   ) {
     throw new Error('inline-scene video aspect ratio does not match its static source');
   }
-  if (value.durationSeconds !== INLINE_SCENE_VIDEO_DURATION_SECONDS) throw new Error('unsupported inline-scene video duration');
+  if (value.durationSeconds !== template.durationSeconds) throw new Error('unsupported inline-scene video duration');
   return {
     spec: INLINE_SCENE_VIDEO_REQUEST_SPEC,
     modelTemplate,
@@ -497,7 +499,7 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
       sceneRequest
     },
     aspectRatio: value.aspectRatio as InlineSceneAspectRatio,
-    durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS
+    durationSeconds: template.durationSeconds
   };
 }
 
@@ -1061,6 +1063,7 @@ export function normalizeInlineSceneVideoCapabilities(value: unknown): InlineSce
     spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
     templates,
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
-    durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]
+    durations: [...new Set(INLINE_SCENE_VIDEO_TEMPLATES.map(({ durationSeconds }) => durationSeconds))]
+      .sort((left, right) => left - right)
   };
 }
