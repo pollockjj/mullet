@@ -12,7 +12,8 @@
     "check": "node node_modules/@sveltejs/kit/svelte-kit.js sync && node node_modules/svelte-check/bin/svelte-check --tsconfig ./tsconfig.json",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "start": "node scratch/build/index.js",
-    "browser-check": "node tools/browser-check.mjs"
+    "browser-check": "node tools/browser-check.mjs",
+    "time-stills": "node tools/time-still-candidates.mjs"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "5.5.7",

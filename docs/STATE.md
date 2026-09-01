@@ -53,3 +53,12 @@ Rewrite the line above on every commit. One line. Milestones are defined in docs
   known-good Jenna. Every accepted image in this project came from a purpose-built image
   model; accepted H3 stills: zero. The turbo-LoRA defect remains real for stages [2] and
   [4], the two videos.
+- Timing harness is `tools/comfy-timing.mjs` (paired cold/warm against a ComfyUI lane)
+  plus `--generate portrait` in the browser check for true click-to-visible. Shared-service
+  rule honoured: it submits jobs like any MULLET request and cancels only its own exact
+  prompt ID. No /interrupt, no queue clear, no model unload anywhere in the harness.
+- `boogu_image_edit_turbo` is NOT a usable candidate despite the unet being installed:
+  firestorm:8188 has no `boogu` text encoder and no boogu VAE. Availability means the
+  whole artifact set, not just the diffusion weight. Same check retired krea2/ideogram4
+  as immediate candidates. Real shortlist: Qwen Image Edit 2511 + Lightning-4step
+  (reference-conditioned edit) and Z-Image Turbo (LoRA identity, no reference).

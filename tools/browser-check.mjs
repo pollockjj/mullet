@@ -101,6 +101,18 @@ const READ_PANELS = `(() => {
   };
 })()`;
 
+// Enable a feature toggle by the panel it lives in, then confirm it actually flipped.
+async function enablePanelToggle(page, panelLabel) {
+  return page.evaluate(`(() => {
+    const panel = document.querySelector('[aria-label="' + ${JSON.stringify(JSON.stringify(panelLabel)).slice(1, -1)} + '"]');
+    const box = panel?.querySelector('input[type="checkbox"]');
+    if (!box) return 'no-toggle';
+    if (box.checked) return 'already-on';
+    box.click();
+    return box.checked ? 'enabled' : 'click-ignored';
+  })()`);
+}
+
 async function main() {
   const url = argValue('url', DEFAULT_URL);
   const outDir = argValue('out', 'scratch/browser-check');
@@ -142,6 +154,37 @@ async function main() {
         record.timings.starterSettledMs = await page
           .waitFor(INTERACTIVE, { timeoutMs: 30_000, label: 'capabilities after starter' })
           .catch(() => null);
+      }
+    }
+
+    // Click-to-visible: the only latency number that matches what the operator feels.
+    const generate = argValue('generate');
+    if (generate === 'portrait' && record.timings.interactiveMs !== null) {
+      record.generate = {};
+      record.generate.expressionsToggle = await enablePanelToggle(page, 'Expression sidecar');
+      const model = argValue('model');
+      if (model) record.generate.model = await page.selectByText('Portrait image model', model);
+      record.generate.selectedModel = await page.evaluate(
+        `(() => { const s = document.querySelector('select[aria-label="Portrait image model"]');
+                  return s ? s.options[s.selectedIndex].textContent.trim() : null; })()`
+      );
+      const clickedAt = Date.now();
+      record.generate.clicked = await page.clickText(
+        '[aria-label="Generated expression portrait"] button',
+        'generate portrait'
+      );
+      if (record.generate.clicked) {
+        record.timings.clickToVisibleMs = await page
+          .waitFor(
+            `(() => { const i = document.querySelector('[aria-label="Generated expression portrait"] img');
+                      return i && i.complete && i.naturalWidth > 0; })()`,
+            { timeoutMs: 360_000, pollMs: 250, label: 'portrait image visible' }
+          )
+          .catch((error) => {
+            record.generate.error = error.message;
+            return null;
+          });
+        record.generate.elapsedMs = Date.now() - clickedAt;
       }
     }
 
