@@ -945,7 +945,6 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
     '20': { class_type: 'MiniMaxH3ReferenceToVideo', inputs: {
       clip: ['2', 0],
       vae: ['3', 0],
-      audio_vae: ['4', 0],
       prompt: buildInlineSceneVideoPrompt(normalized),
       width,
       height,
@@ -999,6 +998,9 @@ function buildMiniMaxH3SceneLoopWorkflow(
     '10': { class_type: 'RandomNoise', inputs: { noise_seed: seed } },
     '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
     '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
+    // The scene loop is silent by necessity, not by choice: MiniMaxH3ImageToVideo (the
+    // FL2VA node that provides first/last-frame looping) rejects audio_vae in this build,
+    // so no audio branch exists on this path. Ref2VA keeps native audio but cannot loop.
     '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps } },
     '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: 'mullet/scene-motion-loop', format: template.format, codec: template.codec } },
     '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },

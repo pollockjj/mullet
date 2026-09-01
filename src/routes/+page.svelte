@@ -4907,7 +4907,9 @@
                   {/each}
                 </select>
               </label>
-              {#if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
+              {#if inlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID}
+                <small>Looping identical first/last frame · MiniMax H3 FL2VA Turbo · four-step · {inlineSceneVideoTiming.width}×{inlineSceneVideoTiming.height} ({(inlineSceneVideoTiming.width * inlineSceneVideoTiming.height / 1_000_000).toFixed(2)} MP) · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264 MP4</small>
+              {:else if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
                 <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
               {:else}
                 <small>Reference-to-video · {inlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'LightX four-step preview · 544p training envelope · Euler/simple · shifts 12/3' : '20-step quality'} · {inlineSceneH3ReferenceSummary || 'reference plan resolves after the current scene'} · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
