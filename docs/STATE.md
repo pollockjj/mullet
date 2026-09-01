@@ -1,4 +1,4 @@
-MILESTONE: 4 | STATE: blocked-open-defects | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: rejected - scene motion still not delivered
+MILESTONE: 4 | STATE: ready-for-operator-with-known-defects | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: rejected on 903140d before scene motion was ever observed; browser check now shows all of [0]-[4] landing
 
 Rewrite the line above on every commit. One line. Milestones are defined in docs/PLAN.md.
 
@@ -166,3 +166,44 @@ against firestorm:8189 history before changing anything, and verify on the serve
 through https://barracuda.meteor-tegu.ts.net/mullet/ - a probe against 127.0.0.1 gets 403
 on every multipart POST because of the ORIGIN mismatch, which will look like a product
 bug and is not.
+
+## Session e2a4b9b0 (Claude Fable 5.1), 2026-09-01 16:40 CDT onward - state re-verified
+
+Ran the repository browser check against the served build through the real origin before
+touching anything:
+
+    node tools/browser-check.mjs --url https://barracuda.meteor-tegu.ts.net/mullet/ \
+      --scenario Blake --starter Jenna --generate scene \
+      --out scratch/browser-check/fable-served-903140d
+
+Result (`scratch/browser-check/fable-served-903140d/check.json`, `app.png`): ok=true, zero
+alerts, zero page errors. Expression `fear`; portrait 576x1024; scene still 1328x752 at
+66.2 s after the starter click; scene motion 1024x576, 3.042 s, silent, `readyState 4`,
+playing, 82.1 s after the still. Portrait motion still "Animating…" when the check ended
+at 151 s (stage [2] is not yet covered by the check).
+
+**OPEN defect 1 from the previous handoff is withdrawn.** The two "unexpected inline-scene
+video filename" lines are the last lines of `scratch/mullet.stderr.log`, whose mtime is
+10:41:50 CDT; build 8fc36ac was served 10:05-11:18 and its regex only accepted
+`scene-motion-loop-flf_` or `scene-motion_`; d853b4e (served 11:18) changed it to
+`scene-motion-loop_`. Scene loops 00003-00011 completed on firestorm:8189 between 14:44
+and 16:44 and no server-side rejection has been logged since 10:41. The previous agent
+reversed its own correct 20:07Z reading of those lines on a `tail -4` with no timestamps.
+
+Observed in the same run, still open:
+
+- The scene still for the check's turn (scene_00067, 16:43:46) was submitted before the
+  portrait (16:44:14) and carried no continuity clause. A caption that lands afterwards
+  never reaches it: the page-level attempt key (`inlineSceneAttemptKey`, +page.svelte:2072)
+  and `inlineSceneMatchesSettings` (+page.svelte:1377) ignore continuity, and
+  `subjectDescriptors` is neither a reactive input of the scene reconciliation nor
+  persisted. The operator's "no relation between the images" complaint is therefore still
+  live whenever the scene director beats the portrait, which is the common case.
+- Operator's concurrent cabin run (scene_00068, 16:46:54) carried
+  "window frame, outdoor background" inside the continuity clause: defect 3 confirmed.
+- In-pipeline timings: Qwen still 25-34 s and Z-Image still 12-17 s when an H3 loop ran
+  just before on the same lane; FL2VA loops 47-90 s. Both lanes are single 24 GB cards
+  (3090 Ti on 8188, 3090 on 8189) per `/system_stats`; H3's 21 GB model + 27 GB text
+  encoder cannot be resident, so no video gate in docs/GOAL.md is reachable as written.
+- The operator was playtesting the cabin scenario on the served build during the check;
+  their jobs interleaved with the check's on both lanes.
