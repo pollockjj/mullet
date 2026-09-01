@@ -449,9 +449,13 @@
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
   const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
-  const inlineSceneStillModeStorageKey = 'mullet.inline-scene-still-mode.v2';
+  // v3: discards persisted selections of the 20-step H3 keeper still, which never
+  // met the latency gate. Explicit re-selection still works and is respected.
+  const inlineSceneStillModeStorageKey = 'mullet.inline-scene-still-mode.v3';
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
-  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v3';
+  // v4: discards persisted selections of the unaccelerated 20-step H3 scene video,
+  // which never completed inside the 900s timeout.
+  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v4';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
   const automaticExpressionRetryDelayMs = 1_500;
   const bodyReferenceWidth = 576;
