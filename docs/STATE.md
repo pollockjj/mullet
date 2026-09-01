@@ -44,3 +44,12 @@ Rewrite the line above on every commit. One line. Milestones are defined in docs
   match the request" because MULLET asked for 24 fps and H3 delivered 56 frames over
   2.000s = 28 fps. Old validator FAIL, new validator PASS, both verified against the
   same bytes. Pinned by `tests/mp4-regression.test.mjs`.
+- H3 is removed as a candidate for stages [1] and [3] (the two images). Evidence: H3 is a
+  33.1B omni-modal *video* model (Qwen3-VL-32B text encoder, 15s 768p video with stereo
+  audio); the still path runs it to make a five-frame video and keep frame zero. Pruned
+  INT8 measures ~2.17 s/iteration, so 20 steps is ~43 s and even 4 steps with the
+  ref2v turbo LoRA is ~8.7 s of sampling alone against an 8 s warm gate. Qwen Image
+  Edit 2511 + Lightning-4step is operator-reported ~5 s end to end and produced the
+  known-good Jenna. Every accepted image in this project came from a purpose-built image
+  model; accepted H3 stills: zero. The turbo-LoRA defect remains real for stages [2] and
+  [4], the two videos.

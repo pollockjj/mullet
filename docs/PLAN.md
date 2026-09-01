@@ -2,6 +2,43 @@
 
 Owner: implementer. Operator's only job is to look at a served build and say right or wrong.
 
+## H3 is the wrong model for the two stills
+
+MiniMax H3 is a **video** model: a 33.1B dense omni-modal transformer with a Qwen3-VL-32B
+text encoder, built to emit up to 15s of 768p video with native stereo audio in one pass.
+Ref2VA is its multi-reference *video* mode. MULLET's "expression still" path runs that
+model to produce a five-frame video packet and keeps frame zero.
+
+Measured community numbers for the pruned INT8 DiT MULLET uses: ~2.17 s/iteration at
+~20 GB VRAM. The current default is 20 steps.
+
+| Path | Sampling alone | Warm gate |
+| --- | ---: | ---: |
+| H3 Ref2VA still, 20 steps (current default) | ~43 s | 8 s |
+| H3 Ref2VA still, 4 steps with ref2v turbo | ~8.7 s | 8 s |
+| Qwen Image Edit 2511 + Lightning 4-step | ~5 s end to end, operator-reported | 8 s |
+
+Adding the turbo LoRA does not rescue the still path: four steps of a 33.1B video model
+still misses the gate on sampling alone, before load, VAE decode, transfer, persistence
+and paint. The LoRA defect below is real and matters for the two **videos**. It is not
+the fix for the two **images**.
+
+Corroborating evidence from this repository: every image result ever accepted came from
+a purpose-built image model. The known-good Jenna is Qwen Image Edit 2511 + 4-step
+Lightning. The build the operator currently calls fine is running Z-Image Turbo. Accepted
+H3 stills: zero.
+
+Stages [1] and [3] therefore drop H3. The still shortlist is drawn from what is installed
+on the image lane, excluding Mage-Flow and FLUX.2 by standing operator order:
+
+- **Qwen Image Edit 2511** + `Qwen-Image-Edit-2511-Lightning-4steps` - known good, reference-conditioned edit
+- **Z-Image Turbo** - currently live, fast, no reference conditioning
+- **boogu_image_edit_turbo** - installed, untested, an edit model like Qwen
+- **krea2_turbo**, **ideogram4** - installed, untested, generation rather than edit
+
+Expression work is an *edit* on a fixed identity reference, so the edit models are the
+primary candidates and the generators are fallbacks.
+
 ## The defect
 
 `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` is installed on both
@@ -12,9 +49,9 @@ Three of the four media defaults run the unaccelerated 20-step path anyway.
 
 | Loop stage | Default template | Steps | Turbo LoRA | Verdict |
 | --- | --- | ---: | --- | --- |
-| Expression still | H3 Ref2VA `MINIMAX_H3_PORTRAIT_STILL_TEMPLATE` | 20 | **none** | broken |
+| Expression still | H3 Ref2VA `MINIMAX_H3_PORTRAIT_STILL_TEMPLATE` | 20 | **none** | wrong model, see above |
 | Expression motion | H3 FL2VA `MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE` | 4 | `fl2v_turbo_4step` | correct |
-| Scene still | H3 Ref2VA `MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE` | 20 | **none** | broken |
+| Scene still | H3 Ref2VA `MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE` | 20 | **none** | wrong model, see above |
 | Scene motion | H3 Ref2VA `MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE` | 20 | **none** | broken |
 
 `MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE` already carries
@@ -87,7 +124,7 @@ accepted. Each is one sitting or it is reported as a miss and retried on the sam
 | # | Deliverable | Accepted when |
 | --- | --- | --- |
 | 0 | Browser check in-repo; discard list executed; timing harness | Suite boots the built app, drives it, writes screenshot + timing JSON |
-| 1 | Expression still fast | Paired Qwen-4step vs H3-ref2v-4step timings shown; winner is default; portrait is recognizable and correctly framed |
+| 1 | Expression still fast | Paired timings across Qwen Image Edit 2511 + Lightning-4step, Z-Image Turbo and boogu edit turbo; H3 is not a candidate; winner is default; portrait is recognizable and correctly framed |
 | 2 | Expression motion | 2s silent loop from exactly the accepted still; no reload regeneration |
 | 3 | Scene still | Landscape uses identity refs + accepted portrait; selected model provably in the submitted graph |
 | 4 | Scene motion | Accepted scene still is Picture 1; plays; no reload regeneration |
