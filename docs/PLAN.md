@@ -9,19 +9,52 @@ text encoder, built to emit up to 15s of 768p video with native stereo audio in 
 Ref2VA is its multi-reference *video* mode. MULLET's "expression still" path runs that
 model to produce a five-frame video packet and keeps frame zero.
 
-Measured community numbers for the pruned INT8 DiT MULLET uses: ~2.17 s/iteration at
-~20 GB VRAM. The current default is 20 steps.
+Measured on firestorm:8188, 576x1024, one identity reference, fixed base seed, warm runs
+using a fresh seed so ComfyUI's execution cache cannot be mistaken for inference
+(`npm run time-stills`, raw data in `scratch/still-candidate-timings.json`):
 
-| Path | Sampling alone | Warm gate |
-| --- | ---: | ---: |
-| H3 Ref2VA still, 20 steps (current default) | ~43 s | 8 s |
-| H3 Ref2VA still, 4 steps with ref2v turbo | ~8.7 s | 8 s |
-| Qwen Image Edit 2511 + Lightning 4-step | ~5 s end to end, operator-reported | 8 s |
+| Candidate | cold | warm | reference-conditioned | warm gate 8s |
+| --- | ---: | ---: | --- | --- |
+| Qwen Image Edit 2511 + Lightning 4-step | 30.0 s | **5.8 s** | yes | PASS |
+| Z-Image Turbo, 8 step | 13.4 s | **2.2 s** | no, LoRA identity only | PASS |
+| H3 Ref2VA still, 4 step + ref2v turbo | 42.5 s | **6.9 s** | yes | PASS |
+| H3 Ref2VA still, 20 step (shipped default) | 20.2 s | **14.1 s** | yes | **FAIL** |
 
-Adding the turbo LoRA does not rescue the still path: four steps of a 33.1B video model
-still misses the gate on sampling alone, before load, VAE decode, transfer, persistence
-and paint. The LoRA defect below is real and matters for the two **videos**. It is not
-the fix for the two **images**.
+Qwen's 5.8 s warm matches the operator's independent ~5 s report, which is the harness
+validating itself. The shipped 20-step default misses the gate by ~1.8x.
+
+H3 with the 4-step turbo LoRA does clear the gate at 6.9 s - an earlier estimate of
+~8.7 s from published per-iteration figures was too pessimistic and is corrected here.
+It is still 19% slower than Qwen, crops tighter than the requested head-and-chest
+framing, and is a 33.1B video model doing an image job. The missing turbo LoRA remains a
+real defect for the two **videos**; it is not the fix for the two **images**.
+
+End to end in a real browser against the candidate build (`npm run browser-check --
+--generate portrait`), Blake's 7 / Jenna, Qwen selected from the scenario data:
+
+| Stage | Measured |
+| --- | ---: |
+| Hydration and ComfyUI capabilities | 0.10 s |
+| Scenario active after starter click | 0.25 s |
+| Expression classifier (gemma-4-ortenzya) | 1.0-1.5 s |
+| Portrait generation, first time for that expression | 5.4-5.8 s (graph-level, cache defeated) |
+| Portrait generation, repeat of the same expression | 0.3-0.8 s (ComfyUI execution cache) |
+
+Scenario characters carry a `promptOverride`, so attire and setting do not perturb the
+prompt and MULLET submits a fixed seed. A repeat of an already-generated expression is
+therefore served from ComfyUI's cache in well under a second - real and desirable, but
+not the number the gate is about. Composed first-generation click-to-visible is
+approximately **6.5-7.5 s, inside the 8 s gate**.
+
+Cold times are 13-42 s across every candidate. That is weight residency on a shared box,
+not model choice, and it is the same problem for whichever default wins.
+
+Identity, same reference and prompt, images in `scratch/still-candidates/`: Qwen
+preserves face, hair, the exact costume, the necklace and the background with a clear
+fear expression. H3 4-step holds identity but crops tighter and under-expresses.
+Z-Image without a LoRA produces a different person entirely - it has no reference
+conditioning, so it is only valid for subjects that have a trained subject LoRA, which
+is exactly how the scenario data already uses it.
 
 Corroborating evidence from this repository: every image result ever accepted came from
 a purpose-built image model. The known-good Jenna is Qwen Image Edit 2511 + 4-step

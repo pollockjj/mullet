@@ -45,7 +45,11 @@ const READ_PANELS = `(() => {
     };
   };
   const media = (label) => {
-    const root = panel(label);
+    // The generated portrait and its motion render in the sidebar .portrait element;
+    // the "Generated expression portrait" panel holds only the controls.
+    const root = label === 'Generated expression portrait'
+      ? document.querySelector('.portrait')
+      : panel(label);
     if (!root) return null;
     const image = root.querySelector('img');
     const video = root.querySelector('video');
@@ -149,6 +153,11 @@ async function main() {
       });
 
     if (record.timings.interactiveMs !== null) {
+      // Enable expressions BEFORE the scenario loads. The classifier fires on the
+      // finalized-response transition; switching it on afterwards leaves it idle.
+      if (argValue('generate') === 'portrait') {
+        record.drove.expressionsToggle = await enablePanelToggle(page, 'Expression sidecar');
+      }
       if (scenario) {
         record.drove.scenario = await page.selectByText('Bundled scenario', scenario);
         await page.waitFor('true', { timeoutMs: 1_000, pollMs: 250 }).catch(() => {});
@@ -156,17 +165,26 @@ async function main() {
       if (starter) {
         await page.evaluate('window.confirm = () => true; true');
         record.drove.starter = await page.clickText('button', starter);
+        // Scenario activation is async (package load, lore, sidecar reset). INTERACTIVE is
+        // already true, so waiting on it measures nothing. Wait for the starter button to
+        // report itself pressed, which only happens once the scenario is actually active.
         record.timings.starterSettledMs = await page
-          .waitFor(INTERACTIVE, { timeoutMs: 30_000, label: 'capabilities after starter' })
-          .catch(() => null);
+          .waitFor(
+            `(() => [...document.querySelectorAll('button.scenario-starter')]
+                .some((b) => b.getAttribute('aria-pressed') === 'true'))()`,
+            { timeoutMs: 60_000, pollMs: 250, label: 'scenario active' }
+          )
+          .catch((error) => {
+            record.drove.starterNotActive = error.message;
+            return null;
+          });
       }
     }
 
     // Click-to-visible: the only latency number that matches what the operator feels.
     const generate = argValue('generate');
     if (generate === 'portrait' && record.timings.interactiveMs !== null) {
-      record.generate = {};
-      record.generate.expressionsToggle = await enablePanelToggle(page, 'Expression sidecar');
+      record.generate = { expressionsToggle: record.drove.expressionsToggle };
       const model = argValue('model');
       if (model) record.generate.model = await page.selectByText('Portrait image model', model);
       record.generate.selectedModel = await page.evaluate(
@@ -188,6 +206,30 @@ async function main() {
           return null;
         });
 
+      // MULLET submits a fixed seed, so an identical repeat request is served from
+      // ComfyUI's execution cache in milliseconds. That is real product behaviour but it
+      // is not the number the latency gate is about. --setting perturbs the prompt so the
+      // measurement is a genuine first generation.
+      const setting = argValue('setting');
+      if (setting) {
+        record.generate.setting = await page.evaluate(`(() => {
+          const input = document.querySelector('input[aria-label="Portrait setting"]');
+          if (!input) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(input, ${JSON.stringify(setting)});
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()`);
+        await page.waitFor('true', { timeoutMs: 1500, pollMs: 400 }).catch(() => {});
+      }
+
+      // An image may already be on screen (card avatar, or a restored portrait).
+      // Measure the arrival of a NEW one, not the presence of any.
+      const previousSrc = await page.evaluate(
+        `document.querySelector('.portrait img')?.src ?? ''`
+      );
+      record.generate.previousSrc = previousSrc;
       const clickedAt = Date.now();
       record.generate.clicked = await page.clickText(
         '[aria-label="Generated expression portrait"] button',
@@ -196,8 +238,9 @@ async function main() {
       if (record.generate.clicked) {
         record.timings.clickToVisibleMs = await page
           .waitFor(
-            `(() => { const i = document.querySelector('[aria-label="Generated expression portrait"] img');
-                      return i && i.complete && i.naturalWidth > 0; })()`,
+            `(() => { const i = document.querySelector('.portrait img');
+                      return i && i.complete && i.naturalWidth > 0
+                        && i.src !== ${JSON.stringify(previousSrc)}; })()`,
             { timeoutMs: 360_000, pollMs: 250, label: 'portrait image visible' }
           )
           .catch((error) => {
