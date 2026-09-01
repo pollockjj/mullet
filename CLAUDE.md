@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+## Controlling H3 recovery plan
+
+- `docs/H3_RECOVERY_POSTMORTEM.md` is the controlling execution and handoff document for all H3 media work. Read it before changing, testing, reporting, or deploying an H3 still, video, reference, consistency, or training path.
+- Its current failed-checkpoint state, milestone order, evidence contract, and acceptance gates supersede earlier roadmaps. Do not advance past a failed milestone or substitute internal engineering evidence for an operator-testable result.
+
 ## Shared ComfyUI boundary
 
 - `IMAGE_COMFY_BASE_URL` and `VIDEO_COMFY_BASE_URL` are shared ComfyUI services. MULLET does not own either installation, GPU, queue, model inventory, input root, output root, or service lifecycle.

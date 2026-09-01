@@ -1,5 +1,7 @@
 # MULLET original product specification and phased plan
 
+> **Historical product record, not the current execution plan.** Preserve the original requirements, but use `docs/H3_RECOVERY_POSTMORTEM.md` for current H3 scope, model contracts, milestone order, and acceptance state whenever the documents conflict.
+
 This document reconstructs the requested product specification from the operator's instructions during the 2026-08-28 implementation session. It incorporates later corrections where they overrode an earlier choice. It is the product target, not a claim that the target was achieved.
 
 ## Product intent

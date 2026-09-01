@@ -1,6 +1,8 @@
 # Expression acceptance checklist
 
-This is the controlling checklist for the current expression-only checkpoint. A checkpoint is complete only when the exact passing commit is pushed, deployed, and verified in the served browser. Candidate-only work is not a completed checkpoint.
+> **Historical implementation checklist, not delivery evidence.** Checked boxes below describe code assertions and do not mean the operator accepted the behavior. `docs/H3_RECOVERY_POSTMORTEM.md` is the controlling H3 ledger and currently records zero accepted workflows.
+
+This was the implementation checklist for the expression-only candidate. A checkpoint is complete only when the exact passing commit is pushed, deployed, and verified in the served browser. Candidate-only work is not a completed checkpoint.
 
 ## Expression determination
 

@@ -1,5 +1,7 @@
 # MULLET operator feedback and failure record
 
+> **Historical incident evidence, not the current execution plan.** Preserve this record, but use `docs/H3_RECOVERY_POSTMORTEM.md` for current H3 scope, milestone state, and acceptance authority whenever the documents conflict.
+
 This is the correction record a future owner must read before changing or deploying MULLET. “Implemented in code” is not equivalent to “served,” “playtested,” or “accepted.”
 
 ## 2026-08-29 resumption correction
