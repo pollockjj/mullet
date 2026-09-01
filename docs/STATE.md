@@ -142,3 +142,5 @@ OPEN: whether LightX 4-step actually completes, and at what wall clock. Being me
 now. Tradeoff the operator must decide: LightX renders 960x544 at 16:9 versus the
 20-step path's 1344x768. LTX 2.5 is implemented at full 1344x768 and is a candidate for
 a better default; not yet measured.
+- LTX 2.5 is rejected by the operator on output quality. Not a candidate for any default.
+  Scene-motion quality must be recovered inside the H3 family.

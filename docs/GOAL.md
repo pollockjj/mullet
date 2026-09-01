@@ -96,3 +96,8 @@ State the evidence class and the next action, in that order, briefly.
 Never report a failure and stop. Diagnose it, execute every safe in-scope fix, carry
 it to a verified state, then report. Escalate only when recovery needs authority you
 do not have, and include the completed diagnosis and the exact remaining blocker.
+
+## Operator model exclusions
+
+- LTX 2.5 is rejected on output quality. Do not propose it, benchmark it, or make it a
+  default. It stays only as an already-implemented selectable option. Do not raise it again.
