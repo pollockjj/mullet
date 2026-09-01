@@ -1,10 +1,24 @@
 # CLAUDE.md
 
-## Controlling MULLET postmortem and recovery order
+## Standing goal — read first, every session
 
-- `docs/MULLET_30_HOUR_POSTMORTEM.md` is the controlling whole-project incident record, requirement disposition, recovery order, and successor handoff. Read it before changing, testing, reporting, or deploying any MULLET behavior.
-- `docs/H3_RECOVERY_POSTMORTEM.md` is an H3 technical appendix only. It does not define the whole incident, product-wide milestone order, performance policy, or acceptance state.
-- Do not advance past a failed milestone or substitute internal engineering evidence for an operator-testable result. The full postmortem's current state and authority supersede earlier roadmaps and technical appendices where they conflict.
+- `docs/GOAL.md` is the standing objective and the authority on scope, speed gates, the
+  decision policy, and what may not be built. Read it before anything else, and again
+  after any context compaction.
+- `docs/STATE.md` holds the current milestone on one line. Work only that milestone.
+  Rewrite the line on every commit and append every autonomous decision to its log.
+- `docs/PLAN.md` holds the execution detail: the defect table, the discard list, the
+  reference chain, and the milestone acceptance criteria.
+- Do not stop to ask the operator to choose, approve, architect, configure, or run
+  anything. Decide under the `docs/GOAL.md` decision policy, record it, continue.
+
+## Historical incident record
+
+- `docs/MULLET_30_HOUR_POSTMORTEM.md` and `docs/H3_*.md` are historical evidence and
+  technical appendices. They are not the current plan. Where any of them conflicts with
+  `docs/GOAL.md` or `docs/PLAN.md`, the goal and plan win.
+- Do not advance past an unaccepted milestone, and never substitute internal engineering
+  evidence for an operator-visible result.
 
 ## Shared ComfyUI boundary
 
