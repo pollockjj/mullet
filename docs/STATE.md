@@ -1,4 +1,4 @@
-MILESTONE: 4 | STATE: in-progress | SERVED-SHA: 407a119e2acad64cf778ec77c72df3c77d292bfd | LAST-OPERATOR-RESULT: scene motion reported broken on eef5e127/ed15c4b
+MILESTONE: 4 | STATE: blocked-open-defects | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: rejected - scene motion still not delivered
 
 Rewrite the line above on every commit. One line. Milestones are defined in docs/PLAN.md.
 
@@ -144,3 +144,25 @@ now. Tradeoff the operator must decide: LightX renders 960x544 at 16:9 versus th
 a better default; not yet measured.
 - LTX 2.5 is rejected by the operator on output quality. Not a candidate for any default.
   Scene-motion quality must be recovered inside the H3 family.
+
+## Handoff, session dcc76bda on barracuda
+
+Served: `903140d` (launchd com.pollockjj.mullet, :8781, base /mullet, ORIGIN
+https://barracuda.meteor-tegu.ts.net). Rollbacks for every deploy this session are in
+`scratch/deploy/rollback-*.plist`. 211 tests pass, 0 type errors, worktree clean.
+`github` remote is current; `origin` (Gitea over HTTP) fails on a macOS keychain error
+(-61) in a non-interactive session and needs the operator.
+
+Verified working on the served build, in a browser, through the real origin: expression
+label -> portrait 576x1024 -> caption -> scene still 1328x752 carrying the caption
+verbatim -> scene motion starts. Both ComfyUI lanes busy, no deadlock.
+
+NEXT AGENT: start with OPEN defect 1 in docs/GOAL.md. Scene motion renders on ComfyUI but
+MULLET rejects the output with "ComfyUI returned an unexpected inline-scene video
+filename". ComfyUI returns the file under the `images` key (not `videos`) on node 15 as
+`scene-motion-loop_000NN_.mp4` with `animated:[true]`; the rejection is in
+`inlineSceneVideoReference` in `src/lib/server/comfy-inline-scene-video.ts`. Reproduce
+against firestorm:8189 history before changing anything, and verify on the served build
+through https://barracuda.meteor-tegu.ts.net/mullet/ - a probe against 127.0.0.1 gets 403
+on every multipart POST because of the ORIGIN mismatch, which will look like a product
+bug and is not.

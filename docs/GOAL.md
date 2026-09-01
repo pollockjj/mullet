@@ -4,6 +4,81 @@ This is the objective for every session until the operator retires it. It outran
 any roadmap, appendix, or plan that conflicts with it. Re-read it after every context
 compaction.
 
+## Session record - barracuda, session dcc76bda-13d6-4e99-86bd-b3afdabda720
+
+Machine: `barracuda` (user `johnj`). Repo: `/Users/johnj/dev_master/mullet`.
+Transcript: `/Users/johnj/.claude/projects/-Users-johnj-dev-master-mullet/dcc76bda-13d6-4e99-86bd-b3afdabda720.jsonl`.
+Scratch: `/private/tmp/claude-501/-Users-johnj-dev-master-mullet/dcc76bda-13d6-4e99-86bd-b3afdabda720`.
+Served build at end of session: `903140d` on launchd `com.pollockjj.mullet`, port 8781, base path
+`/mullet`, ORIGIN `https://barracuda.meteor-tegu.ts.net`.
+
+### Delivered and verified
+
+- Repository-owned browser check (`tools/cdp.mjs`, `tools/browser-check.mjs`), zero
+  dependency, drives a real Chrome against the served build.
+- `mp4.ts` no longer discards correct ComfyUI output. Reproduced on the exact bytes:
+  a 576x1024 silent avc1 loop of 56 frames over 2.000 s was being rejected because MULLET
+  asked for 24 fps and H3 delivered 28. Pinned by `tests/mp4-regression.test.mjs`.
+- Scenario-declared portrait model is honoured instead of a hardcoded H3 override.
+- ComfyUI lanes split by pipeline: expression still/end-frame/motion on
+  `EXPRESSION_COMFY_BASE_URL`, scene still/motion on `SCENE_COMFY_BASE_URL`.
+- Every unaccelerated path deleted. Survivors are 4-8 step with a distillation LoRA or
+  distilled turbo weights. `grep "steps: 20"` over src/ returns nothing.
+- LTX 2.5 removed entirely. `grep -ri ltx` over src/ and tests/ returns nothing.
+- Model and mode selection removed. No per-feature checkboxes. One Media panel with two
+  buttons: turn media off, refresh images.
+- Scene motion is a three-second 1024x576 FL2VA loop (the expression portrait's aspect
+  inverted). First working scene motion in the project: previously every attempt ended
+  `execution_interrupted` at the 900 s timeout.
+- Subject continuity chain: scenario details -> expression prompt -> the generated still
+  is captioned by the local vision model -> that caption is appended verbatim to the scene
+  still and scene loop prompts. Observed working end to end on 903140d through the real
+  origin: the rendered scene prompt carried "Jan Pollock: brown hair with bangs, blue and
+  white patterned top, ... wooden structure and green foliage".
+- ~9,300 lines removed: personal-assistant mode, living history, dead `webm.ts`, and six
+  test files holding 373 regex assertions against `+page.svelte` source text.
+
+### Damage this session induced, and its state
+
+- **b529cd3 deadlocked all scene generation.** A gate made scene reconciliation wait for a
+  caption; every early return and failure in the caption path left it permanently closed,
+  so no scene reached ComfyUI at all. Operator was blocked by this. Fixed in `903140d` by
+  failing open - a scene defers only while a caption for that exact portrait is genuinely
+  in flight, released in a `finally` on any outcome. VERIFIED FIXED.
+- **Three gutted functions.** A regex bulk-removal deleted the bodies of
+  `startSelectedScenario`, `importCharacterCard` and `clearConversation`, because each did
+  its work inside a wrapper the pass removed. Type checking and the whole unit suite
+  stayed green through it; only a browser comparison caught it. FIXED.
+- **A shared duration constant broke every Ref2VA request.** Changing
+  `INLINE_SCENE_VIDEO_DURATION_SECONDS` from 5 to 3 for the new loop also changed it for
+  templates still carrying 124 frames, so their declared duration contradicted their frame
+  count and every request failed `unsupported inline-scene video duration`. FIXED by
+  making duration per template.
+
+### OPEN defects, not fixed
+
+1. **Scene motion still fails to store.** `ComfyUI returned an unexpected inline-scene
+   video filename` is occurring currently, not historically. The loop renders on ComfyUI
+   (`scene-motion-loop_000NN_.mp4`, node 15, `animated:[true]`) but MULLET rejects it.
+   Scene motion is therefore still not reaching the operator.
+2. **Caption filler leaks into the prompt.** The captioner returns the literal word
+   `none` for empty slots and it is passed through verbatim into the image prompt.
+3. **Caption background contradicts the clause.** The portrait's background is captured
+   and injected, while the clause itself says surroundings may change. Background should
+   be captured but excluded from the continuity text.
+
+### Process failures to carry forward
+
+- Twice this session a turn ended on a forward-looking claim ("I'm now verifying",
+  "fixing those three now") with nothing running. A statement of intent is not work and
+  must not be written as though it were. End a turn on an executed result or on an
+  explicit statement that nothing is running.
+- `f973971` contained a fix and sat committed but undeployed while a verification run
+  finished, leaving the operator on a broken served build and having to ask why. When the
+  served build is actively broken: deploy the fix, then verify the deployed build.
+- A change was shipped on reasoning about a race rather than on evidence that the system
+  still worked afterwards. That is what caused the scene deadlock.
+
 ## Objective
 
 Deliver one fast, identity-consistent core media loop in the operator's browser:
