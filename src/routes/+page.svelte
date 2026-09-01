@@ -404,6 +404,9 @@
   // Live appearance facts captioned from the expression still that is currently on
   // screen, keyed by character. Injected verbatim into every later image and clip.
   let subjectDescriptors: Record<string, SubjectDescriptor> = {};
+  // Which portrait each descriptor was captioned from, so a descriptor is never treated
+  // as current for a portrait it does not describe.
+  let subjectDescriptorPortraitKeys: Record<string, string> = {};
   let sidecarState: SidecarState | null = null;
   let expressionSnapshot: ExpressionSidecarRequest | null = null;
   let expressionResult: ExpressionSidecarResult | null = null;
@@ -2114,6 +2117,7 @@
     stillMode: InlineSceneStillMode
   ) {
     if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current || profiles.length < 1) return;
+    if (!subjectContinuityReady()) return;
     const continuityScene = inlineSceneAncestralMasterScene(
       generatedInlineScene,
       request,
@@ -2598,6 +2602,10 @@
         payload.caption
       );
       subjectDescriptors = { ...subjectDescriptors, [characterId]: descriptor };
+      subjectDescriptorPortraitKeys = {
+        ...subjectDescriptorPortraitKeys,
+        [characterId]: portrait.requestKey
+      };
     } catch {
       // continuity is an enhancement; the portrait stands on its own
     }
@@ -4165,6 +4173,19 @@
   $: mediaBusy = sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy;
   $: mediaError = portraitError || portraitVideoError || inlineSceneError || inlineSceneVideoError || sidecarError;
   $: mediaRefreshable = Boolean(portraitRequest || inlineSceneSidecarRequest);
+
+  // True once every visible subject that currently has a portrait on screen also has a
+  // caption read from that exact portrait. Without this the scene can be directed before
+  // the caption lands and go out with no continuity at all - it would self-correct on the
+  // next reconciliation, because continuity is part of the request key, but only after
+  // burning a whole scene generation.
+  function subjectContinuityReady(): boolean {
+    if (!generatedPortrait || !portraitCurrent) return true;
+    const characterId = generatedPortrait.source.characterId;
+    if (!characterId) return true;
+    const descriptor = subjectDescriptors[characterId];
+    return Boolean(descriptor) && subjectDescriptorPortraitKeys[characterId] === generatedPortrait.requestKey;
+  }
 
   function castContinuityClause(cast: { identities: readonly { characterId?: string; profileId?: string }[] }): string {
     const descriptors = cast.identities
