@@ -49,7 +49,9 @@ const READ_PANELS = `(() => {
     // the "Generated expression portrait" panel holds only the controls.
     const root = label === 'Generated expression portrait'
       ? document.querySelector('.portrait')
-      : panel(label);
+      : label === 'Inline landscape scene'
+        ? document.querySelector('.scene-card')
+        : panel(label);
     if (!root) return null;
     const image = root.querySelector('img');
     const video = root.querySelector('video');
@@ -155,7 +157,7 @@ async function main() {
     if (record.timings.interactiveMs !== null) {
       // Enable expressions BEFORE the scenario loads. The classifier fires on the
       // finalized-response transition; switching it on afterwards leaves it idle.
-      if (argValue('generate') === 'portrait') {
+      if (argValue('generate') === 'portrait' || argValue('generate') === 'scene') {
         record.drove.expressionsToggle = await enablePanelToggle(page, 'Expression sidecar');
       }
       if (scenario) {
@@ -249,6 +251,66 @@ async function main() {
           });
         record.generate.elapsedMs = Date.now() - clickedAt;
       }
+    }
+
+    // Scene still then scene motion, the two stages that were never exercised.
+    // Enabling the scene toggle starts the still automatically; "Generate motion" lives
+    // inside the same panel, not in a separate one.
+    if (generate === 'scene' && record.timings.interactiveMs !== null) {
+      const SCENE = '[aria-label="Inline landscape scene"]';
+      record.scene = {};
+      const sceneStart = Date.now();
+      record.scene.toggle = await enablePanelToggle(page, 'Inline landscape scene');
+      record.scene.stillModel = await page.evaluate(
+        `(() => { const s = document.querySelector('select[aria-label="Inline scene still model"]');
+                  return s ? s.options[s.selectedIndex].textContent.trim() : null; })()`
+      );
+      const sceneModel = argValue('scene-model');
+      if (sceneModel) {
+        record.scene.selectedVideoModel = await page.selectByText('Inline scene video model', sceneModel);
+        await page.waitFor('true', { timeoutMs: 1200, pollMs: 300 }).catch(() => {});
+      }
+      record.scene.videoModel = await page.evaluate(
+        `(() => { const s = document.querySelector('select[aria-label="Inline scene video model"]');
+                  return s ? s.options[s.selectedIndex].textContent.trim() : null; })()`
+      );
+
+      record.timings.sceneStillMs = await page
+        .waitFor(
+          `(() => { const i = document.querySelector('.scene-card img');
+                    return i && i.complete && i.naturalWidth > 0; })()`,
+          { timeoutMs: 400_000, pollMs: 1_000, label: 'scene still visible' }
+        )
+        .catch((error) => { record.scene.stillError = error.message; return null; });
+      record.scene.stillElapsedMs = Date.now() - sceneStart;
+
+      record.timings.motionButtonReadyMs = await page
+        .waitFor(
+          `(() => [...document.querySelectorAll('${SCENE} button')]
+              .some((b) => /generate motion/i.test(b.textContent) && !b.disabled))()`,
+          { timeoutMs: 120_000, pollMs: 1_000, label: 'generate motion enabled' }
+        )
+        .catch((error) => { record.scene.motionNotReady = error.message; return null; });
+
+      const motionStart = Date.now();
+      record.scene.clickedMotion = await page.clickText(`${SCENE} button`, 'generate motion');
+      if (record.scene.clickedMotion) {
+        record.timings.sceneMotionMs = await page
+          .waitFor(
+            `(() => { const v = document.querySelector('.scene-card video');
+                      return v && v.readyState >= 2 && v.videoWidth > 0; })()`,
+            { timeoutMs: 900_000, pollMs: 2_000, label: 'scene motion playable' }
+          )
+          .catch((error) => { record.scene.motionError = error.message; return null; });
+      }
+      record.scene.motionElapsedMs = Date.now() - motionStart;
+      record.scene.panelText = await page.evaluate(
+        `document.querySelector('${SCENE}')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`
+      );
+      record.scene.video = await page.evaluate(
+        `(() => { const v = document.querySelector('.scene-card video');
+                  return v ? { w: v.videoWidth, h: v.videoHeight, dur: v.duration, ready: v.readyState } : null; })()`
+      );
     }
 
     record.observed = await page.evaluate(READ_PANELS);

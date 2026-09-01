@@ -375,7 +375,7 @@
   let inlineSceneVideoController: AbortController | null = null;
   let lastInlineSceneVideoAttemptKey = '';
   let inlineSceneVideoComponentDestroying = false;
-  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   let inlineSceneH3ReferenceSummary = '';
   let inlineSceneH3StillReferenceSummary = '';
@@ -399,7 +399,7 @@
   let bodyReferenceOverlayBusyProfileId = '';
   let bodyReferenceOverlayError = '';
   let inlineSceneSelectedModelAvailable = false;
-  let inlineSceneStillMode: InlineSceneStillMode = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
+  let inlineSceneStillMode: InlineSceneStillMode = 'automatic';
   let inlineSceneH3StillCapability: InlineSceneCapabilities['templates'][number] | null = null;
   let scenarioLoading = false;
   let conversationId = '';
@@ -816,14 +816,14 @@
     inlineSceneStillMode = savedInlineSceneStillMode === 'automatic'
       || savedInlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
       ? savedInlineSceneStillMode as InlineSceneStillMode
-      : MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
+      : 'automatic';
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
     inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
       ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
-      : MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      : MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     restorePortraitSettings();
     restoreInlineSceneSettings();
@@ -961,7 +961,7 @@
     if (
       inlineSceneStillMode !== 'automatic'
       && inlineSceneStillMode !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-    ) inlineSceneStillMode = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
+    ) inlineSceneStillMode = 'automatic';
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     persistInlineSceneSettings();
   }
@@ -1803,7 +1803,7 @@
       }
       inlineSceneVideoCapabilities = normalizeInlineSceneVideoCapabilities(payload);
       if (!inlineSceneVideoCapabilities.templates.some(({ template }) => template.id === inlineSceneVideoModelTemplate)) {
-        inlineSceneVideoModelTemplate = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+        inlineSceneVideoModelTemplate = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
         localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
       }
     } catch (cause) {
@@ -2038,7 +2038,7 @@
 
   function persistInlineSceneVideoModelTemplate() {
     if (!inlineSceneVideoTemplateCapability(inlineSceneVideoCapabilities, inlineSceneVideoModelTemplate)) {
-      inlineSceneVideoModelTemplate = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      inlineSceneVideoModelTemplate = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
     }
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     inlineSceneVideoGeneration += 1;
