@@ -123,14 +123,31 @@ export async function runGraph(baseUrl, graph, { timeoutMs = 600_000, label = 'g
   }
 }
 
-// Cold = first run of this model in this process's view (weights likely not resident).
-// Warm = immediately repeated with an identical graph except the seed stays fixed.
-export async function pairedRun(baseUrl, graph, { label = 'candidate', warmRuns = 2 } = {}) {
-  const cold = await runGraph(baseUrl, graph, { label: `${label} cold` });
+// ComfyUI caches execution: resubmitting an identical graph returns the previous result
+// without running the sampler, which reads as a ~10ms "warm" time and is meaningless.
+// Every repeat run must change the noise seed so the sampler genuinely re-executes.
+function withSeed(graph, seed) {
+  const copy = JSON.parse(JSON.stringify(graph));
+  for (const node of Object.values(copy)) {
+    const inputs = node?.inputs ?? {};
+    if (typeof inputs.seed === 'number') inputs.seed = seed;
+    if (typeof inputs.noise_seed === 'number') inputs.noise_seed = seed;
+  }
+  return copy;
+}
+
+// cold      = first run: model load plus inference.
+// warm      = weights already resident, fresh seed, so this is real inference cost.
+// The base seed is fixed per candidate so runs stay reproducible.
+export async function pairedRun(baseUrl, graph, { label = 'candidate', warmRuns = 2, baseSeed = 19790213 } = {}) {
+  const cold = await runGraph(baseUrl, withSeed(graph, baseSeed), { label: `${label} cold` });
   const warm = [];
   for (let index = 0; index < warmRuns; index += 1) {
-    warm.push(await runGraph(baseUrl, graph, { label: `${label} warm ${index + 1}` }));
+    warm.push(
+      await runGraph(baseUrl, withSeed(graph, baseSeed + 1 + index), { label: `${label} warm ${index + 1}` })
+    );
   }
   const warmBest = warm.reduce((best, run) => (run.totalMs < best.totalMs ? run : best), warm[0]);
-  return { label, cold, warm, warmBest };
+  const warmMedian = [...warm].sort((a, b) => a.totalMs - b.totalMs)[Math.floor(warm.length / 2)];
+  return { label, cold, warm, warmBest, warmMedian };
 }

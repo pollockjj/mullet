@@ -103,9 +103,9 @@ const READ_PANELS = `(() => {
 
 // Enable a feature toggle by the panel it lives in, then confirm it actually flipped.
 async function enablePanelToggle(page, panelLabel) {
+  const selector = `[aria-label="${panelLabel}"] input[type="checkbox"]`;
   return page.evaluate(`(() => {
-    const panel = document.querySelector('[aria-label="' + ${JSON.stringify(JSON.stringify(panelLabel)).slice(1, -1)} + '"]');
-    const box = panel?.querySelector('input[type="checkbox"]');
+    const box = document.querySelector(${JSON.stringify(selector)});
     if (!box) return 'no-toggle';
     if (box.checked) return 'already-on';
     box.click();
@@ -131,6 +131,10 @@ async function main() {
     await page.goto(url, { timeoutMs: 45_000 });
     record.timings.navigateMs = Date.now() - navigationStarted;
 
+    // Scenario activation asks for confirmation when a transcript exists. Headless Chrome
+    // leaves window.confirm unanswered, so the starter click silently does nothing.
+    await page.evaluate('window.confirm = () => true; window.alert = () => undefined; true');
+
     record.timings.shellVisibleMs = await page.waitFor('document.querySelector("h1")', {
       timeoutMs: 30_000,
       label: 'server-rendered shell'
@@ -150,6 +154,7 @@ async function main() {
         await page.waitFor('true', { timeoutMs: 1_000, pollMs: 250 }).catch(() => {});
       }
       if (starter) {
+        await page.evaluate('window.confirm = () => true; true');
         record.drove.starter = await page.clickText('button', starter);
         record.timings.starterSettledMs = await page
           .waitFor(INTERACTIVE, { timeoutMs: 30_000, label: 'capabilities after starter' })
@@ -168,6 +173,21 @@ async function main() {
         `(() => { const s = document.querySelector('select[aria-label="Portrait image model"]');
                   return s ? s.options[s.selectedIndex].textContent.trim() : null; })()`
       );
+      // The expression classifier must land a label before the portrait can be requested.
+      // Clicking before then hits a disabled button and silently measures nothing.
+      record.timings.expressionLabelMs = await page
+        .waitFor(
+          `(() => { const b = [...document.querySelectorAll('[aria-label="Generated expression portrait"] button')]
+              .find((x) => /generate portrait|regenerate portrait/i.test(x.textContent));
+            return b && !b.disabled; })()`,
+          { timeoutMs: 120_000, pollMs: 500, label: 'generate button enabled' }
+        )
+        .catch((error) => {
+          record.generate.notReady = error.message;
+          record.generate.sidecar = document.title;
+          return null;
+        });
+
       const clickedAt = Date.now();
       record.generate.clicked = await page.clickText(
         '[aria-label="Generated expression portrait"] button',

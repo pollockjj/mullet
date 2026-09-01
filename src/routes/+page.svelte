@@ -276,7 +276,7 @@
   let portraitLora = '';
   const portraitAspectRatio: PortraitAspectRatio = '9:16';
   let portraitMegapixels: PortraitMegapixels = 0.5;
-  let portraitModelTemplate: PortraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
+  let portraitModelTemplate: PortraitModelTemplate = PORTRAIT_TEMPLATE_ID;
   let portraitModelSelectionPersisted = false;
   let portraitRequest: PortraitRequest | null = null;
   let portraitH3ReferenceSummary = '';
@@ -890,11 +890,7 @@
     else localStorage.removeItem(portraitModelTemplateStorageKey);
     localStorage.removeItem(previousPortraitModelTemplateStorageKey);
     portraitModelSelectionPersisted = savedModelTemplate !== null;
-    portraitModelTemplate = savedModelTemplate
-      ? savedModelTemplate
-      : isScenarioCard(activeCard)
-        ? PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-        : PORTRAIT_TEMPLATE_ID;
+    portraitModelTemplate = savedModelTemplate ?? declaredPortraitModelTemplate();
     const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       portraitMegapixels = savedMegapixels;
@@ -915,11 +911,19 @@
     invalidatePortraitVideoForPortraitChange(true);
   }
 
+  // The scenario data declares model_template per character: Blake's 7 subjects are
+  // qwen-image-edit-2511-reference-v1 (identity reference), cabin subjects are
+  // z-image-turbo-v1 (trained subject LoRA). Honour that instead of forcing one model
+  // on every scenario, which is what the H3 default did.
+  function declaredPortraitModelTemplate(): PortraitModelTemplate {
+    if (!isScenarioCard(activeCard)) return PORTRAIT_TEMPLATE_ID;
+    return scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)?.modelTemplate
+      ?? PORTRAIT_TEMPLATE_ID;
+  }
+
   function persistPortraitModelTemplate() {
     if (!portraitCapabilities?.templates.some(({ template }) => template.id === portraitModelTemplate)) {
-      portraitModelTemplate = isScenarioCard(activeCard)
-        ? PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-        : PORTRAIT_TEMPLATE_ID;
+      portraitModelTemplate = declaredPortraitModelTemplate();
     }
     if (isPortraitH3ReferenceTemplateId(portraitModelTemplate)) portraitMegapixels = 0.5;
     portraitModelSelectionPersisted = true;
@@ -2578,9 +2582,7 @@
       if (!portraitCapabilities.templates.some(({ template }) => template.id === portraitModelTemplate)) {
         localStorage.removeItem(portraitModelTemplateStorageKey);
         portraitModelSelectionPersisted = false;
-        portraitModelTemplate = isScenarioCard(activeCard)
-          ? PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-          : PORTRAIT_TEMPLATE_ID;
+        portraitModelTemplate = declaredPortraitModelTemplate();
       }
       if (portraitLora && !portraitCapabilities.loras.includes(portraitLora)) {
         portraitLora = '';
@@ -3809,6 +3811,39 @@
         (profile) => profile.id === starter.portraitProfileId
       );
       if (!starterProfile) throw new Error('Bundled scenario portrait profile failed validation.');
+      restoreUnchangedWorkspace(expectedWorkspace);
+      if (hasRealTranscript() && !window.confirm(`Replace the current conversation with the ${starter.label} opening?`)) return;
+
+      activeCard = packaged.card;
+      selectedScenarioId = scenario.id;
+      localStorage.setItem(selectedScenarioStorageKey, selectedScenarioId);
+      activeScenarioStarterId = starterId;
+      localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
+      // The scenario declares its own model per character. Use it.
+      portraitModelTemplate = starterProfile.modelTemplate;
+      portraitMegapixels = 0.5;
+      portraitModelSelectionPersisted = true;
+      localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
+      cardSourceIdentifier = characterSourceIdentifier(scenario.card);
+      portraitDataUrl = '';
+      embeddedLorebook = embeddedLoreFromCard(activeCard);
+      loreEnabled = true;
+      loreTimedState = emptyLoreTimedState();
+      lastLoreActivations = null;
+      lastLoreActivationCount = 0;
+      lastLoreBudget = 0;
+      localStorage.removeItem(loreTimedStateStorageKey);
+      persistCard();
+      persistLoreEnabled();
+      messages = freshConversation();
+      await resetSidecarForConversation();
+      bindAuthoredFictionOpeningReceipt();
+      if (!publishScenarioOpeningInlineSceneSource()) {
+        throw new Error('Bundled scenario opening could not be bound to inline-scene provenance.');
+      }
+      persist();
+      noticeMessage = `${starter.label} · ${starter.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
+      await scrollToLatest();
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario failed to start.';
     } finally {
@@ -3930,14 +3965,21 @@
   }
 
   async function clearConversation() {
-    if (
-      streaming
-      || workspaceBusy
-      || assistantTurnBusy
-    ) return;
+    if (streaming || workspaceBusy || assistantTurnBusy) return;
     const expectedWorkspace = currentWorkspaceMutationFingerprint();
     workspaceBusy = true;
     try {
+      restoreUnchangedWorkspace(expectedWorkspace);
+      messages = freshConversation();
+      errorMessage = '';
+      noticeMessage = '';
+      lastLoreActivations = null;
+      lastLoreBudget = 0;
+      loreTimedState = emptyLoreTimedState();
+      localStorage.removeItem(loreTimedStateStorageKey);
+      await resetSidecarForConversation();
+      bindAuthoredFictionOpeningReceipt();
+      persist();
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Conversation could not be reset.';
     } finally {
@@ -3980,6 +4022,27 @@
         ? extractPngCharacterCard(await file.arrayBuffer())
         : parseCharacterCardJson(await file.text());
       const nextPortrait = isPng ? await portraitFromPng(file) : '';
+      restoreUnchangedWorkspace(expectedWorkspace);
+      const replaceOpeningGreeting = activeCard ? containsOnlyOpeningGreeting(activeCard) : false;
+      const seedGreeting = messages.length === 0 || replaceOpeningGreeting;
+
+      activeCard = imported;
+      cardSourceIdentifier = characterSourceIdentifier(file.name);
+      portraitDataUrl = nextPortrait;
+      embeddedLorebook = embeddedLoreFromCard(imported);
+      lastLoreActivations = null;
+      lastLoreBudget = 0;
+      persistCard();
+      if (seedGreeting) {
+        messages = freshConversation();
+        await resetSidecarForConversation();
+        bindAuthoredFictionOpeningReceipt();
+        persist();
+      } else if (recoverCanonicalAuthoredOpeningReceipt()) {
+        persist();
+      }
+      noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
+      await scrollToLatest();
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Character card import failed.';
     } finally {

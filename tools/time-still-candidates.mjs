@@ -79,8 +79,8 @@ function h3Still({ steps, lora }) {
 const CANDIDATES = [
   { label: 'qwen-image-edit-2511-lightning-4step', graph: qwen, warmRuns: 2, reference: true },
   { label: 'z-image-turbo-8step', graph: zimage, warmRuns: 2, reference: false },
-  { label: 'h3-ref2va-still-4step-turbo', graph: h3Still({ steps: 4, lora: 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors' }), warmRuns: 1, reference: true },
-  { label: 'h3-ref2va-still-20step-current-default', graph: h3Still({ steps: 20, lora: null }), warmRuns: 1, reference: true }
+  { label: 'h3-ref2va-still-4step-turbo', graph: h3Still({ steps: 4, lora: 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors' }), warmRuns: 2, reference: true },
+  { label: 'h3-ref2va-still-20step-current-default', graph: h3Still({ steps: 20, lora: null }), warmRuns: 2, reference: true }
 ];
 
 const results = [];
@@ -100,9 +100,10 @@ await writeFile('scratch/still-candidate-timings.json', `${JSON.stringify(result
 
 console.log('\n=== expression still, 576x1024, same reference and seed ===');
 console.log('candidate                                 cold(s)  warm(s)  ref  gate<=8s');
+console.log('(warm = weights resident, fresh seed, real inference - not a ComfyUI cache hit)');
 for (const r of results) {
   if (!r.ok) { console.log(`${r.label.padEnd(41)} FAILED  ${r.error.slice(0, 60)}`); continue; }
-  const warm = r.warmBest.totalMs / 1000;
+  const warm = r.warmMedian.totalMs / 1000;
   console.log(
     `${r.label.padEnd(41)} ${(r.cold.totalMs / 1000).toFixed(1).padStart(6)}  ${warm.toFixed(1).padStart(6)}  `
     + `${r.reference ? 'yes' : 'no '}  ${warm <= 8 ? 'PASS' : 'FAIL'}`

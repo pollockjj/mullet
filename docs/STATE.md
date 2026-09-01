@@ -62,3 +62,23 @@ Rewrite the line above on every commit. One line. Milestones are defined in docs
   whole artifact set, not just the diffusion weight. Same check retired krea2/ideogram4
   as immediate candidates. Real shortlist: Qwen Image Edit 2511 + Lightning-4step
   (reference-conditioned edit) and Z-Image Turbo (LoRA identity, no reference).
+
+## Regression I introduced and fixed inside milestone 0
+
+The bulk statement-removal pass that stripped personal-assistant code deleted the bodies
+of three core fiction functions, because each did its real work inside an
+`await runPersonalAssistantTurnExclusive(async () => { ... })` wrapper and the pass
+removed whole `await ...` statements:
+
+- `startSelectedScenario` - scenario starters silently did nothing
+- `importCharacterCard` - card import silently did nothing
+- `clearConversation` - reset silently did nothing
+
+Caught by comparing per-function line counts before and after the discard, then confirmed
+in a browser against the operator's served build: baseline activated the Jenna starter,
+the candidate did not. All three restored with the wrapper removed and the mode branches
+dropped. Verified in a browser: starter activates and selects its declared model.
+
+Lesson recorded: a regex-driven bulk removal over a 6,456-line component needs a
+per-function size diff afterwards. Type checking and the unit suite both stayed green
+through this breakage - only the browser caught it.
