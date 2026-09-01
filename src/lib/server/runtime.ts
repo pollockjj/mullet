@@ -13,8 +13,14 @@ export const runtime = {
   service: 'mullet',
   modelBaseUrl: (env.MODEL_BASE_URL ?? 'http://127.0.0.1:1234/v1').replace(/\/$/, ''),
   modelId: env.MODEL_ID ?? 'local-model',
-  imageComfyBaseUrl: (env.IMAGE_COMFY_BASE_URL ?? '').trim().replace(/\/$/, ''),
-  videoComfyBaseUrl: (env.VIDEO_COMFY_BASE_URL ?? '').trim().replace(/\/$/, ''),
+  // Lanes are split by PIPELINE, not by media type. The expression pipeline (still and
+  // motion) owns one ComfyUI instance and the scene pipeline (still and motion) owns the
+  // other, so a portrait job can never queue ahead of a scene job or vice versa.
+  // The legacy IMAGE_/VIDEO_ variables are accepted as the defaults for each lane.
+  expressionComfyBaseUrl: (env.EXPRESSION_COMFY_BASE_URL ?? env.IMAGE_COMFY_BASE_URL ?? '')
+    .trim().replace(/\/$/, ''),
+  sceneComfyBaseUrl: (env.SCENE_COMFY_BASE_URL ?? env.VIDEO_COMFY_BASE_URL ?? '')
+    .trim().replace(/\/$/, ''),
   maxTokens,
   defaultMaxTokens,
   temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : 0.85,

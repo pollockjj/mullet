@@ -23,13 +23,13 @@ import { runtime } from '$lib/server/runtime';
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
 function configuredImageComfyBaseUrl(): string {
-  if (!runtime.imageComfyBaseUrl) throw error(503, 'Portrait end-frame generation is not configured.');
-  return runtime.imageComfyBaseUrl;
+  if (!runtime.expressionComfyBaseUrl) throw error(503, 'Portrait end-frame generation is not configured.');
+  return runtime.expressionComfyBaseUrl;
 }
 
 function configuredVideoComfyBaseUrl(): string {
-  if (!runtime.videoComfyBaseUrl) throw error(503, 'Portrait motion is not configured.');
-  return runtime.videoComfyBaseUrl;
+  if (!runtime.expressionComfyBaseUrl) throw error(503, 'Portrait motion is not configured.');
+  return runtime.expressionComfyBaseUrl;
 }
 
 function randomSeed(): number {

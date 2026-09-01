@@ -395,10 +395,12 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     await close(fake.server);
   });
   const comfyBaseUrl = await listen(fake.server);
-  process.env.IMAGE_COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.VIDEO_COMFY_BASE_URL = comfyBaseUrl;
+  // This route belongs to the scene pipeline, so only that lane is live;
+  // every other endpoint points at a dead server to prove the boundary holds.
+  process.env.SCENE_COMFY_BASE_URL = comfyBaseUrl;
   process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.IMAGE_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.VIDEO_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
   process.env.BODY_SIZE_LIMIT = '32M';

@@ -16,8 +16,8 @@ import { loadPortraitCapabilities, runComfyPortrait } from '$lib/server/comfy-po
 import { runtime } from '$lib/server/runtime';
 
 function configuredImageComfyBaseUrl(): string {
-  if (!runtime.imageComfyBaseUrl) throw error(503, 'Portrait generation is not configured.');
-  return runtime.imageComfyBaseUrl;
+  if (!runtime.expressionComfyBaseUrl) throw error(503, 'Portrait generation is not configured.');
+  return runtime.expressionComfyBaseUrl;
 }
 
 function randomSeed(): number {

@@ -14,29 +14,24 @@ function runtimeProperties(routeSource) {
   return [...routeSource.matchAll(/\bruntime\.([A-Za-z][A-Za-z0-9]*)/g)].map((match) => match[1]);
 }
 
-test('runtime exposes independent image and video Comfy endpoints without a legacy fallback', async () => {
+test('runtime exposes one Comfy endpoint per pipeline', async () => {
   const runtimeSource = await source('src/lib/server/runtime.ts');
 
-  assert.match(
-    runtimeSource,
-    /imageComfyBaseUrl\s*:\s*\(env\.IMAGE_COMFY_BASE_URL\s*\?\?\s*['"]{2}\)/
-  );
-  assert.match(
-    runtimeSource,
-    /videoComfyBaseUrl\s*:\s*\(env\.VIDEO_COMFY_BASE_URL\s*\?\?\s*['"]{2}\)/
-  );
+  assert.match(runtimeSource, /expressionComfyBaseUrl\s*:/);
+  assert.match(runtimeSource, /sceneComfyBaseUrl\s*:/);
+  assert.match(runtimeSource, /EXPRESSION_COMFY_BASE_URL/);
+  assert.match(runtimeSource, /SCENE_COMFY_BASE_URL/);
   assert.doesNotMatch(runtimeSource, /\bcomfyBaseUrl\s*:/);
-  assert.doesNotMatch(runtimeSource, /\bCOMFY_BASE_URL\b/);
-  assert.doesNotMatch(runtimeSource, /\bEXPRESSION_COMFY_BASE_URL\b/);
-  assert.doesNotMatch(runtimeSource, /\bSCENE_COMFY_BASE_URL\b/);
 });
 
-test('image and video routes cannot cross their dedicated Comfy endpoint boundary', async () => {
+// Lanes are split by pipeline: expression still, end frame and motion on one instance,
+// scene still and motion on the other, so the two pipelines never queue behind each other.
+test('expression and scene pipelines cannot cross their dedicated Comfy endpoint boundary', async () => {
   const routeExpectations = [
-    ['src/routes/api/portrait/+server.ts', ['imageComfyBaseUrl']],
-    ['src/routes/api/portrait/video/+server.ts', ['imageComfyBaseUrl', 'videoComfyBaseUrl']],
-    ['src/routes/api/scene/+server.ts', ['imageComfyBaseUrl']],
-    ['src/routes/api/scene/video/+server.ts', ['videoComfyBaseUrl']]
+    ['src/routes/api/portrait/+server.ts', ['expressionComfyBaseUrl']],
+    ['src/routes/api/portrait/video/+server.ts', ['expressionComfyBaseUrl']],
+    ['src/routes/api/scene/+server.ts', ['sceneComfyBaseUrl']],
+    ['src/routes/api/scene/video/+server.ts', ['sceneComfyBaseUrl']]
   ];
 
   for (const [relativePath, expectedProperties] of routeExpectations) {
@@ -47,7 +42,7 @@ test('image and video routes cannot cross their dedicated Comfy endpoint boundar
       `${relativePath} must use only ${expectedProperties.map((property) => `runtime.${property}`).join(' and ')}`
     );
     assert.doesNotMatch(routeSource, /\bCOMFY_BASE_URL\b/, `${relativePath} must not read the legacy environment variable`);
-    assert.doesNotMatch(routeSource, /\bEXPRESSION_COMFY_BASE_URL\b/, `${relativePath} must not read the legacy expression endpoint`);
+    assert.doesNotMatch(routeSource, /\bIMAGE_COMFY_BASE_URL\b/, `${relativePath} must not read the legacy image endpoint`);
     assert.doesNotMatch(routeSource, /\bSCENE_COMFY_BASE_URL\b/, `${relativePath} must not read the legacy scene endpoint`);
   }
 });

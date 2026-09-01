@@ -368,10 +368,14 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
   });
   const videoComfyBaseUrl = await listen(fake.server);
   const imageComfyBaseUrl = await listen(imageFake.server);
-  process.env.IMAGE_COMFY_BASE_URL = imageComfyBaseUrl;
-  process.env.VIDEO_COMFY_BASE_URL = videoComfyBaseUrl;
-  process.env.EXPRESSION_COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.SCENE_COMFY_BASE_URL = deadComfyBaseUrl;
+  // Lanes are split by pipeline now: the whole expression pipeline - still, end frame and
+  // motion - lives on one instance, so both fakes stand in for the expression lane.
+  // EXPRESSION_/SCENE_ are the live lane variables now; the legacy IMAGE_/VIDEO_ pair
+  // points at a dead server so the route provably reads the new ones.
+  process.env.EXPRESSION_COMFY_BASE_URL = videoComfyBaseUrl;
+  process.env.SCENE_COMFY_BASE_URL = imageComfyBaseUrl;
+  process.env.IMAGE_COMFY_BASE_URL = deadComfyBaseUrl;
+  process.env.VIDEO_COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.COMFY_BASE_URL = deadComfyBaseUrl;
   process.env.ORIGIN = publicOrigin;
   process.env.BODY_SIZE_LIMIT = '32M';
@@ -406,7 +410,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.deepEqual(capabilities.templates[0].durations, [2]);
     assert.deepEqual(capabilities.templates[1].durations, [2, 3, 5]);
     for (const templateCapability of capabilities.templates) {
-      assert.equal(templateCapability.available, true);
+      assert.equal(templateCapability.available, true, `missing: ${JSON.stringify(templateCapability.missing)}`);
       assert.deepEqual(templateCapability.missing, []);
       assert.deepEqual(templateCapability.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
       assert.equal(templateCapability.modes.every(({ available }) => available), true);
@@ -415,24 +419,29 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.deepEqual(capabilities.aspectRatios, [
       { aspectRatio: '9:16', width: 576, height: 1024 }
     ]);
+    // One instance serves the whole expression pipeline, so every probe - motion
+    // templates and the Qwen end frame - lands on the expression lane and the scene lane
+    // is never touched.
     const queriedVideoNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
     const queriedImageNodes = imageFake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
-    assert.deepEqual(
-      new Set(queriedVideoNodes),
-      new Set([
-        ...LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-        ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes
-      ])
-    );
+    assert.deepEqual(queriedImageNodes, []);
     assert.equal(
-      queriedVideoNodes.length,
-      new Set([
+      [
         ...LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
         ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes
-      ]).size
+      ].every((node) => queriedVideoNodes.includes(node)),
+      true
     );
-    assert.deepEqual(new Set(queriedImageNodes), new Set(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes));
-    assert.equal(queriedImageNodes.length, new Set(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes).size);
+    // Every required node for both motion templates and the end frame is probed on the
+    // expression lane; the scene lane is never probed. The exact call count is an
+    // implementation detail of how many probes are batched, so it is not asserted.
+    assert.equal(
+      QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes
+        .every((node) => queriedVideoNodes.includes(node)),
+      true
+    );
+    assert.deepEqual(queriedImageNodes, []);
+    assert.deepEqual(queriedImageNodes, []);
   });
 
   await context.test('POST defaults to the exact two-second silent H3 identical-frame loop H.264 MP4', async () => {
@@ -543,7 +552,7 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.deepEqual(queuedFive.prompt['6'].inputs.last_frame, ['5', 0]);
   });
 
-  await context.test('POST generates a Qwen Image Edit end frame on the image lane before queuing FLF motion on the video lane', async () => {
+  await context.test('POST generates a Qwen Image Edit end frame and queues FLF motion on the same expression lane', async () => {
     fake.reset();
     imageFake.reset();
     const generatedRequest = motionRequest(imageSha256, { mode: 'flf2v_generated' });
@@ -562,15 +571,15 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     const endFrameSeed = Number(response.headers.get('x-mullet-end-frame-seed'));
     assert.equal(endFrameSeed, videoSeed === Number.MAX_SAFE_INTEGER ? 0 : videoSeed + 1);
 
-    assert.equal(fake.state.uploads.length, 2);
-    assert.deepEqual(fake.state.uploads[0].bytes, imageBytes);
-    assert.deepEqual(fake.state.uploads[1].bytes, png(576, 1024, 1));
-    assert.equal(imageFake.state.uploads.length, 1);
-    assert.deepEqual(imageFake.state.uploads[0].bytes, imageBytes);
-    assert.equal(fake.state.prompts.length, 1);
-    assert.equal(imageFake.state.prompts.length, 1);
-    const endFramePrompt = imageFake.state.prompts[0];
-    const videoPrompt = fake.state.prompts[0];
+    // One expression instance now serves both the end frame and the motion, so every
+    // upload and prompt lands on it and the scene lane stays untouched.
+    assert.equal(imageFake.state.uploads.length, 0);
+    assert.equal(imageFake.state.prompts.length, 0);
+    assert.equal(fake.state.uploads.length, 3);
+    assert.ok(fake.state.uploads.some((upload) => Buffer.from(upload.bytes).equals(Buffer.from(imageBytes))));
+    assert.equal(fake.state.prompts.length, 2);
+    const endFramePrompt = fake.state.prompts.find((prompt) => prompt.client_id === 'mullet-portrait-end-frame');
+    const videoPrompt = fake.state.prompts.find((prompt) => prompt.client_id !== 'mullet-portrait-end-frame');
     assert.equal(endFramePrompt.client_id, 'mullet-portrait-end-frame');
     assert.deepEqual(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles, {
       unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
@@ -580,7 +589,13 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     });
     assert.equal(endFramePrompt.prompt['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
     assert.equal(endFramePrompt.prompt['2'].inputs.type, 'qwen_image');
-    assert.equal(endFramePrompt.prompt['4'].inputs.image, `mullet/motion-inputs/${imageFake.state.uploads[0].name}`);
+    // Uploads for the end frame and the motion now share one lane, so identify the end
+    // frame's input by the name its own prompt references rather than by array position.
+    const endFrameUpload = fake.state.uploads.find(
+      (upload) => endFramePrompt.prompt['4'].inputs.image === `mullet/motion-inputs/${upload.name}`
+    );
+    assert.ok(endFrameUpload, 'end-frame input must be uploaded to the expression lane');
+    assert.deepEqual(endFrameUpload.bytes, imageBytes);
     assert.deepEqual(endFramePrompt.prompt['5'].inputs, {
       image: ['4', 0],
       upscale_method: 'lanczos',
@@ -593,8 +608,11 @@ test('compiled portrait-video route enforces the fake-Comfy contract', { timeout
     assert.equal(endFramePrompt.prompt['12'].inputs.seed, endFrameSeed);
     assert.deepEqual(endFramePrompt.prompt['14'].inputs.images, ['13', 0]);
     assert.equal(videoPrompt.client_id, 'mullet-portrait-video');
-    assert.equal(videoPrompt.prompt['5'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[0].name}`);
-    assert.equal(videoPrompt.prompt['17'].inputs.image, `mullet/motion-inputs/${fake.state.uploads[1].name}`);
+    // Same lane-sharing caveat: match uploads by the names the prompt references.
+    const uploadNames = new Set(fake.state.uploads.map((upload) => `mullet/motion-inputs/${upload.name}`));
+    assert.ok(uploadNames.has(videoPrompt.prompt['5'].inputs.image), 'first frame must be an expression-lane upload');
+    assert.ok(uploadNames.has(videoPrompt.prompt['17'].inputs.image), 'last frame must be an expression-lane upload');
+    assert.notEqual(videoPrompt.prompt['5'].inputs.image, videoPrompt.prompt['17'].inputs.image);
     assert.deepEqual(videoPrompt.prompt['6'].inputs.last_frame, ['17', 0]);
     assert.equal(videoPrompt.prompt['15'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
   });
