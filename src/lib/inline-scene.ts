@@ -74,7 +74,7 @@ export const Z_IMAGE_TURBO_SCENE_TEMPLATE = Object.freeze({
 
 export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE = Object.freeze({
   id: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
-  label: 'MiniMax H3 Ref2VA · Native T=1 still (20-step)',
+  label: 'MiniMax H3 Ref2VA · Experimental T=1 still (20-step)',
   modelFamily: 'minimax-h3-ref2va-still',
   promptGuide: 'one cinematic realistic landscape still, exact identity from the numbered references, coherent anatomy and spatial relationships, natural lighting, no motion description, no text, and no watermark',
   modelFiles: {

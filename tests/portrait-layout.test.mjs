@@ -94,7 +94,7 @@ test('scene motion visibly defaults to LTX after refresh while retaining additiv
   assert.match(pageSource, /on:click=\{\(\) => void loadInlineSceneVideoGenerator\(\)\}/);
 });
 
-test('scene cast readiness stays compact while native H3 still remains an additive persisted choice', () => {
+test('scene cast readiness stays compact while experimental H3 still remains an additive persisted choice', () => {
   assert.match(inlineScenePanel, /<small class="scene-cast-status">/);
   assert.match(inlineScenePanel, /Selecting visible cast…/);
   assert.match(inlineScenePanel, /generatedInlineScene\.request\.cast\.kind === 'solo' \? 'Solo'/);
@@ -103,8 +103,8 @@ test('scene cast readiness stays compact while native H3 still remains an additi
   assert.match(pageSource, /return 'Qwen multi-reference master';/);
   assert.match(inlineScenePanel, /aria-label="Inline scene still model"/);
   assert.match(inlineScenePanel, /Automatic · Z-Image solo \/ Qwen references/);
-  assert.match(inlineScenePanel, /MiniMax H3 Ref2VA · Native T=1 still \(20-step\)/);
-  assert.match(inlineScenePanel, /Native one-frame Ref2VA · ordered identity\/continuity references · base H3 · no LoRA/);
+  assert.match(inlineScenePanel, /MiniMax H3 Ref2VA · Experimental T=1 still \(20-step\)/);
+  assert.match(inlineScenePanel, /Validated experimental one-frame Ref2VA · base H3 · no LoRA/);
   assert.match(pageSource, /inlineSceneStillModeStorageKey = 'mullet\.inline-scene-still-mode\.v1'/);
   assert.match(pageSource, /localStorage\.setItem\(inlineSceneStillModeStorageKey, inlineSceneStillMode\)/);
   assert.match(inlineScenePanel, /No deterministic static-scene driver is currently available for this scenario state/);
@@ -114,6 +114,67 @@ test('scene cast readiness stays compact while native H3 still remains an additi
   assert.doesNotMatch(inlineScenePanel, /<span>Image model<\/span>/);
   assert.doesNotMatch(inlineScenePanel, /<span>Identity driver<\/span>/);
   assert.doesNotMatch(inlineScenePanel, /inlineSceneProfileDriver/);
+});
+
+test('managed body references stay collapsed, exact, accessible, and planner-bound', () => {
+  assert.match(inlineScenePanel, /<details class="h3-reference-pack" open=\{bodyReferenceOverlayCorruptProfileIds\.length > 0\}>/);
+  assert.match(inlineScenePanel, /Scene reference library/);
+  assert.match(inlineScenePanel, /Body anchors are exact 576×1024 PNGs/);
+  assert.match(inlineScenePanel, /class="body-reference-file-input"/);
+  assert.match(inlineScenePanel, /accept="image\/png"/);
+  assert.match(inlineScenePanel, /aria-label=\{`Add or replace \$\{profile\.displayName\} body and wardrobe reference`\}/);
+  assert.match(inlineScenePanel, /`Remove corrupt saved body and wardrobe reference for \$\{profile\.displayName\}`/);
+  assert.match(inlineScenePanel, /`Remove \$\{profile\.displayName\} managed body and wardrobe reference`/);
+  assert.match(pageSource, /request\.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID/);
+  assert.match(pageSource, /entry\.kind === 'body_wardrobe' \? \[entry\.referenceImage\.sha256\] : \[\]/);
+  assert.match(pageSource, /request\.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID/);
+  assert.match(pageSource, /entry\.kind === 'body_identity' \? \[entry\.referenceImage\.sha256\] : \[\]/);
+  assert.match(pageSource, /if \(!isMiniMaxH3InlineSceneVideoTemplate\(request\.modelTemplate\)\) return \[\];/);
+  assert.match(pageSource, /appendManagedBodyReferenceParts\(imageForm, inlineSceneManagedBodyReferenceHashes\(imageRequest\)\)/);
+  assert.match(pageSource, /appendManagedBodyReferenceParts\(form, inlineSceneVideoManagedBodyReferenceHashes\(selectedRequest\)\)/);
+  assert.doesNotMatch(pageSource, /appendManagedBodyReferenceParts\([^\n]*\.cast\)/);
+  assert.match(pageSource, /!bodyReferenceOverlayReady \|\| Boolean\(bodyReferenceOverlayBusyProfileId\)/);
+});
+
+test('managed body-reference restore is race-safe, preserves valid profiles, and exposes explicit corrupt-record recovery', () => {
+  const restore = pageSource.match(
+    /async function restoreBodyReferenceOverlays\([\s\S]*?\n  }\n\n  function managedBodyReferenceForProfile/
+  )?.[0] ?? '';
+  const importReference = pageSource.match(
+    /async function importBodyReference\([\s\S]*?\n  }\n\n  async function clearBodyReference/
+  )?.[0] ?? '';
+  const removeReference = pageSource.match(
+    /async function clearBodyReference\([\s\S]*?\n  }\n\n  function appendManagedBodyReferenceParts/
+  )?.[0] ?? '';
+
+  assert.match(pageSource, /let bodyReferenceOverlayRestoreGeneration = 0;/);
+  assert.match(pageSource, /let bodyReferenceOverlayCorruptProfileIds: string\[\] = \[\];/);
+  assert.match(restore, /const restoreGeneration = \+\+bodyReferenceOverlayRestoreGeneration;/);
+  assert.match(restore, /await Promise\.allSettled\(profiles\.map/);
+  assert.match(restore, /restoreGeneration !== bodyReferenceOverlayRestoreGeneration/);
+  assert.match(restore, /bodyReferenceOverlayProfileSetKey !== profileSetKey/);
+  assert.match(restore, /if \(result\.value\) restored\.push\(result\.value\);/);
+  assert.match(restore, /corruptProfileIds\.push\(profiles\[index\]\.id\);/);
+  assert.match(restore, /bodyReferenceOverlays = restored;/);
+  assert.match(restore, /bodyReferenceOverlayCorruptProfileIds = corruptProfileIds;/);
+  assert.match(restore, /Scene image and motion generation are blocked until Remove corrupt saved ref/);
+  assert.doesNotMatch(restore, /removeBodyReferenceOverlay/);
+
+  assert.match(inlineScenePanel, /body corrupt saved reference/);
+  assert.match(inlineScenePanel, /\{#if managedBody \|\| corruptBody\}/);
+  assert.match(inlineScenePanel, /Remove corrupt saved ref/);
+  assert.match(inlineScenePanel, /\(!bodyReferenceOverlayReady && !corruptBody\)/);
+  assert.match(inlineScenePanel, /inlineSceneBusy \|\| inlineSceneVideoBusy/);
+  assert.match(
+    inlineScenePanel,
+    /bodyReferenceOverlayError[\s\S]*?<details class="h3-reference-pack"[\s\S]*?\{#if inlineSceneCapabilities\}/
+  );
+  assert.match(importReference, /\|\| inlineSceneBusy\s+\|\| inlineSceneVideoBusy/);
+  assert.match(importReference, /await saveBodyReferenceOverlay\(overlay\);[\s\S]*?await restoreBodyReferenceOverlays\(operationProfileSetKey, operationProfiles\);/);
+  assert.doesNotMatch(importReference, /bodyReferenceOverlays = \[/);
+  assert.match(removeReference, /\|\| inlineSceneBusy\s+\|\| inlineSceneVideoBusy/);
+  assert.match(removeReference, /\(!bodyReferenceOverlayReady && !corruptReference\)/);
+  assert.match(removeReference, /await removeBodyReferenceOverlay\(profile\.id, profile\.fingerprint\);[\s\S]*?await restoreBodyReferenceOverlays\(operationProfileSetKey, operationProfiles\);/);
 });
 
 test('selected portrait-video template controls modes and durations without hiding unavailable options', () => {

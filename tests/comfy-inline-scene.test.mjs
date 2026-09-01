@@ -270,7 +270,7 @@ function png(width = 864, height = 576) {
 
 const h3Validated = { minimaxH3T1StillValidated: true };
 
-test('reports additive Z-Image, Qwen, and native H3 still capabilities with the linked LoRA inventory', async () => {
+test('reports additive Z-Image, Qwen, and experimental H3 still capabilities with the linked LoRA inventory', async () => {
   const queried = [];
   const fetcher = async (url) => {
     const parsed = new URL(String(url));

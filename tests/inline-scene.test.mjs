@@ -741,7 +741,7 @@ test('builds a continuity graph only from a verified master and its exact select
   );
 });
 
-test('builds an additive native H3 T=1 still graph with ordered prior, canonical, and body references', () => {
+test('builds an additive experimental H3 T=1 still graph with ordered prior, canonical, and body references', () => {
   const initial = h3StillRequest(
     ['jenna-stannis', 'cally'],
     undefined,

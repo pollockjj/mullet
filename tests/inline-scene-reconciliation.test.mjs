@@ -184,8 +184,10 @@ test('publishing the next finalized source retains the prior verified static mas
 test('scene reconciliation supplies the complete scenario cast and compiles the selected solo, duo, or trio', () => {
   assert.match(
     pageSource,
-    /\$: scenarioSceneProfiles = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard\(activeCard\)[\s\S]*?scenarioPortraitCast\(activeCard\)\?\.profiles \?\? \[\]/
+    /\$: scenarioBaseSceneProfiles = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard\(activeCard\)[\s\S]*?scenarioPortraitCast\(activeCard\)\?\.profiles \?\? \[\]/
   );
+  assert.match(pageSource, /\$: scenarioSceneProfiles = scenarioBaseSceneProfiles\.map\(\(profile\) => \{/);
+  assert.match(pageSource, /return overlay \? applyBodyReferenceOverlay\(profile, overlay\) : profile;/);
 
   const sidecarRequest = sourceBetween(
     'function currentInlineSceneSidecarRequest(',

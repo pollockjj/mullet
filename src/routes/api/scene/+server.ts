@@ -2,12 +2,16 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
   INLINE_SCENE_IMAGE_TIMEOUT_MS,
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS,
   inlineSceneDimensionsForTemplate,
+  inlineSceneH3StillReferencePlan,
   inlineSceneModelTemplateAvailable,
+  inlineSceneQwenReferencePlan,
   normalizeInlineSceneImageRequest
 } from '$lib/inline-scene';
+import type { PortraitReferenceImage } from '$lib/portrait';
 import {
   ComfyInlineSceneOutputTooLargeError,
   loadInlineSceneCapabilities,
@@ -15,6 +19,7 @@ import {
   uploadInlineSceneContinuityMasterInput,
   validateInlineScenePng
 } from '$lib/server/comfy-inline-scene';
+import { ensureComfyManagedReferences } from '$lib/server/comfy-managed-reference';
 import { runtime } from '$lib/server/runtime';
 
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
@@ -30,16 +35,22 @@ function randomSeed(): number {
   return (words[0] % 65_536) * 2 ** 32 + words[1];
 }
 
-function exactMultipartParts(form: FormData): { requestJson: string; master: Blob | null } {
+function exactMultipartParts(form: FormData): {
+  requestJson: string;
+  master: Blob | null;
+  references: Blob[];
+} {
   const keys = [...form.keys()];
   const requests = form.getAll('request');
   const masters = form.getAll('master');
+  const references = form.getAll('reference');
   if (
     requests.length !== 1
     || masters.length > 1
-    || keys.length !== requests.length + masters.length
-    || keys.some((key) => key !== 'request' && key !== 'master')
-  ) throw error(400, 'multipart body must contain exactly one request and at most one master');
+    || references.length > 3
+    || keys.length !== requests.length + masters.length + references.length
+    || keys.some((key) => key !== 'request' && key !== 'master' && key !== 'reference')
+  ) throw error(400, 'multipart body must contain exactly one request, at most one master, and at most three references');
   const requestJson = requests[0];
   const master = masters[0] ?? null;
   if (typeof requestJson !== 'string' || requestJson.length < 1 || requestJson.length > 100_000) {
@@ -51,12 +62,43 @@ function exactMultipartParts(form: FormData): { requestJson: string; master: Blo
   if (master instanceof Blob && master.size > INPUT_LIMIT_BYTES) {
     throw error(413, 'inline-scene continuity master exceeds 20 MiB');
   }
-  return { requestJson, master: master instanceof Blob ? master : null };
+  if (references.some((reference) => (
+    !(reference instanceof Blob) || reference.type !== 'image/png' || reference.size < 33
+  ))) throw error(400, 'inline-scene managed references must be PNG files');
+  if (references.reduce((total, reference) => total + (reference instanceof Blob ? reference.size : 0), 0) > INPUT_LIMIT_BYTES) {
+    throw error(413, 'inline-scene managed references exceed 20 MiB in aggregate');
+  }
+  return {
+    requestJson,
+    master: master instanceof Blob ? master : null,
+    references: references as Blob[]
+  };
 }
 
 async function sha256Bytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function validateManagedReferenceAttachments(
+  attachments: readonly Blob[],
+  requested: readonly PortraitReferenceImage[]
+): Promise<void> {
+  const requestedByHash = new Map(requested.map((reference) => [reference.sha256, reference]));
+  const seen = new Set<string>();
+  for (const attachment of attachments) {
+    const bytes = new Uint8Array(await attachment.arrayBuffer());
+    const digest = await sha256Bytes(bytes);
+    const reference = requestedByHash.get(digest);
+    if (!reference) throw error(400, 'inline-scene managed reference was not selected by the active reference plan');
+    if (seen.has(digest)) throw error(400, 'inline-scene managed reference is duplicated');
+    try {
+      validateInlineScenePng(bytes, reference.width, reference.height);
+    } catch {
+      throw error(400, 'inline-scene managed reference does not match its declared PNG');
+    }
+    seen.add(digest);
+  }
 }
 
 export const GET: RequestHandler = async ({ fetch, request }) => {
@@ -90,6 +132,15 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene image request');
   }
+  const bodyReferences = sceneRequest.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
+    ? inlineSceneQwenReferencePlan(sceneRequest)
+        .filter((slot) => slot.kind === 'body_wardrobe')
+        .map((slot) => slot.referenceImage)
+    : sceneRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      ? inlineSceneH3StillReferencePlan(sceneRequest)
+          .flatMap((slot) => slot.kind === 'body_identity' ? [slot.referenceImage] : [])
+      : [];
+  await validateManagedReferenceAttachments(parts.references, bodyReferences);
   if (sceneRequest.continuityMaster && !parts.master) {
     throw error(400, 'inline-scene continuity metadata requires exactly one master PNG');
   }
@@ -129,6 +180,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
     if (sceneRequest.lora && !capabilities.loras.includes(sceneRequest.lora.path)) {
       throw error(400, 'The selected inline-scene LoRA is unavailable.');
+    }
+    if (bodyReferences.length > 0) {
+      await ensureComfyManagedReferences(fetch, baseUrl, bodyReferences, parts.references, signal);
     }
     const uploadedMaster = sceneRequest.continuityMaster && continuityMasterBytes
       ? await uploadInlineSceneContinuityMasterInput(

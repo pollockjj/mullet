@@ -27,6 +27,7 @@ import {
   inlineSceneVideoSourceRequestSha256
 } from '../src/lib/inline-scene-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
+import { buildPngFixture } from './png-fixture.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-inline-scene-video-route');
@@ -52,7 +53,7 @@ const sceneCandidate = Object.freeze({
 });
 const identityReferenceBytes = png(400, 600);
 const identityReferenceSha256 = sha256(identityReferenceBytes);
-const bodyReferenceBytes = png(512, 768);
+const bodyReferenceBytes = buildPngFixture(576, 1024);
 const bodyReferenceSha256 = sha256(bodyReferenceBytes);
 const soloCast = Object.freeze({
   kind: 'solo',
@@ -71,13 +72,13 @@ const soloCast = Object.freeze({
       aspectRatio: '2:3'
     },
     bodyReferenceImage: {
-      name: 'jenna-stannis-body-v1.png',
+      name: `body-jenna-stannis-1234abcd-${bodyReferenceSha256}.png`,
       subfolder: 'mullet/identity',
       type: 'input',
       sha256: bodyReferenceSha256,
-      width: 512,
-      height: 768,
-      aspectRatio: '2:3'
+      width: 576,
+      height: 1024,
+      aspectRatio: '9:16'
     }
   }]
 });
@@ -288,12 +289,22 @@ function fakeComfy() {
             responseJson(response, 404, { error: 'missing identity' });
             return;
           }
-          const expectedBytes = url.searchParams.get('filename') === 'jenna-stannis-body-v1.png'
+          const isBodyReference = url.searchParams.get('filename') === soloCast.identities[0].bodyReferenceImage.name;
+          const uploaded = state.uploads.find((entry) => (
+            entry.name === soloCast.identities[0].bodyReferenceImage.name && entry.subfolder === 'mullet/identity'
+          ));
+          if (state.mode === 'managed-body-missing' && isBodyReference && !uploaded) {
+            responseJson(response, 404, { error: 'missing managed body reference' });
+            return;
+          }
+          const expectedBytes = isBodyReference
             ? bodyReferenceBytes
             : identityReferenceBytes;
-          const bytes = state.mode === 'identity-hash'
+          const bytes = uploaded && isBodyReference
+            ? uploaded.bytes
+            : state.mode === 'identity-hash'
             ? new Uint8Array([...identityReferenceBytes, 0])
-            : state.mode === 'body-hash' && url.searchParams.get('filename') === 'jenna-stannis-body-v1.png'
+            : state.mode === 'body-hash' && url.searchParams.get('filename') === soloCast.identities[0].bodyReferenceImage.name
               ? new Uint8Array([...bodyReferenceBytes, 0])
             : state.mode === 'identity-dimensions'
               ? png(416, 600)
@@ -356,11 +367,12 @@ async function close(server) {
   await closed;
 }
 
-function formFor(request, imageBytes, includeExtra = false, masterBytes = null) {
+function formFor(request, imageBytes, includeExtra = false, masterBytes = null, references = []) {
   const form = new FormData();
   form.append('request', JSON.stringify(request));
   form.append('image', new Blob([imageBytes], { type: 'image/png' }), 'scene.png');
   if (masterBytes) form.append('master', new Blob([masterBytes], { type: 'image/png' }), 'master.png');
+  references.forEach((reference, index) => form.append('reference', reference, `reference-${index}.png`));
   if (includeExtra) form.append('extra', 'forbidden');
   return form;
 }
@@ -504,13 +516,15 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     const promptIndex = fake.state.calls.findIndex(({ path }) => path === '/prompt');
     assert.ok(identityViewIndex >= 0 && identityViewIndex < promptIndex);
     const identityViews = fake.state.calls.filter(({ path }) => path.includes('subfolder=mullet%2Fidentity'));
-    assert.equal(identityViews.length, 2);
+    assert.equal(identityViews.length, 3);
+    assert.equal(identityViews.filter(({ path }) => path.includes(`filename=${soloCast.identities[0].bodyReferenceImage.name}`)).length, 2);
+    assert.equal(identityViews.filter(({ path }) => path.includes('filename=jenna-stannis-v1.png')).length, 1);
     assert.ok(identityViews.every(({ path }) => fake.state.calls.findIndex((call) => call.path === path) < promptIndex));
     assert.equal(fake.state.uploads.length, 1);
     const queued = fake.state.prompts[0];
     assert.equal(queued.prompt['1'].inputs.unet_name, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.unet);
     assert.equal(queued.prompt['6'].inputs.image, 'mullet/identity/jenna-stannis-v1.png');
-    assert.equal(queued.prompt['7'].inputs.image, 'mullet/identity/jenna-stannis-body-v1.png');
+    assert.equal(queued.prompt['7'].inputs.image, `mullet/identity/${soloCast.identities[0].bodyReferenceImage.name}`);
     assert.equal(queued.prompt['20'].inputs.length, 124);
     assert.equal(queued.prompt['20'].inputs.ref_image_size, 'match');
     assert.deepEqual(queued.prompt['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
@@ -521,6 +535,58 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(JSON.stringify(queued).includes('fl2va'), false);
     assert.equal(JSON.stringify(queued).includes('i2v'), false);
     assert.equal(JSON.stringify(queued).includes('turbo'), false);
+  });
+
+  await context.test('POST uploads and reverifies a missing planner-selected H3 body reference before its source image', async () => {
+    fake.reset('managed-body-missing');
+    const minimaxRequest = motionRequest(imageSha256, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    const response = await post(formFor(
+      minimaxRequest,
+      imageBytes,
+      false,
+      null,
+      [new Blob([bodyReferenceBytes], { type: 'image/png' })]
+    ));
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(fake.state.uploads.length, 2);
+    const [bodyUpload, sceneUpload] = fake.state.uploads;
+    assert.equal(bodyUpload.name, soloCast.identities[0].bodyReferenceImage.name);
+    assert.deepEqual(bodyUpload.bytes, bodyReferenceBytes);
+    assert.equal(bodyUpload.subfolder, 'mullet/identity');
+    assert.equal(bodyUpload.type, 'input');
+    assert.equal(bodyUpload.overwrite, 'false');
+    assert.match(sceneUpload.name, /^scene-motion-[0-9a-f-]{36}\.png$/i);
+    assert.equal(sceneUpload.subfolder, 'mullet/motion-inputs');
+    const uploadCalls = fake.state.calls.filter(({ path }) => path === '/upload/image');
+    assert.equal(uploadCalls.length, 2);
+    const promptIndex = fake.state.calls.findIndex(({ path }) => path === '/prompt');
+    assert.ok(fake.state.calls.findIndex(({ path }) => path === '/upload/image') < promptIndex);
+    assert.equal(fake.state.prompts[0].prompt['7'].inputs.image, `mullet/identity/${soloCast.identities[0].bodyReferenceImage.name}`);
+  });
+
+  await context.test('managed references reject LTX, unplanned, duplicate, malformed, over-count, and oversized parts before ComfyUI', async () => {
+    const minimaxRequest = motionRequest(imageSha256, MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID);
+    const bodyPart = () => new Blob([bodyReferenceBytes], { type: 'image/png' });
+    const otherPng = buildPngFixture(576, 1024, 1);
+    const rejected = [
+      formFor(request, imageBytes, false, null, [bodyPart()]),
+      formFor(minimaxRequest, imageBytes, false, null, [new Blob([otherPng], { type: 'image/png' })]),
+      formFor(minimaxRequest, imageBytes, false, null, [bodyPart(), bodyPart()]),
+      formFor(minimaxRequest, imageBytes, false, null, [new Blob([bodyReferenceBytes], { type: 'text/plain' })]),
+      formFor(minimaxRequest, imageBytes, false, null, [bodyPart(), bodyPart(), bodyPart(), bodyPart()])
+    ];
+    for (const body of rejected) {
+      fake.reset();
+      const response = await post(body);
+      assert.equal(response.status, 400, await response.text());
+      assert.equal(fake.state.calls.length, 0);
+    }
+
+    fake.reset();
+    const large = new Blob([bodyReferenceBytes, new Uint8Array(11 * 1024 * 1024)], { type: 'image/png' });
+    const oversizedResponse = await post(formFor(minimaxRequest, imageBytes, false, null, [large, large]));
+    assert.equal(oversizedResponse.status, 413, await oversizedResponse.text());
+    assert.equal(fake.state.calls.length, 0);
   });
 
   await context.test('POST keeps the published LightX Ref2VA profile as a separate 544p preview', async () => {
@@ -573,7 +639,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(queued.prompt['5'].inputs.image, `mullet/motion-inputs/${currentUpload.name}`);
     assert.equal(queued.prompt['6'].inputs.image, `mullet/motion-inputs/${masterUpload.name}`);
     assert.equal(queued.prompt['7'].inputs.image, 'mullet/identity/jenna-stannis-v1.png');
-    assert.equal(queued.prompt['8'].inputs.image, 'mullet/identity/jenna-stannis-body-v1.png');
+    assert.equal(queued.prompt['8'].inputs.image, `mullet/identity/${soloCast.identities[0].bodyReferenceImage.name}`);
     assert.deepEqual(queued.prompt['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
     assert.deepEqual(queued.prompt['20'].inputs['ref_images.ref_image_1'], ['6', 0]);
     assert.deepEqual(queued.prompt['20'].inputs['ref_images.ref_image_2'], ['7', 0]);
@@ -598,7 +664,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(fake.state.uploads.length, 1);
     const queued = fake.state.prompts[0];
     assert.equal(queued.prompt['6'].inputs.image, 'mullet/identity/jenna-stannis-v1.png');
-    assert.equal(queued.prompt['7'].inputs.image, 'mullet/identity/jenna-stannis-body-v1.png');
+    assert.equal(queued.prompt['7'].inputs.image, `mullet/identity/${soloCast.identities[0].bodyReferenceImage.name}`);
     assert.equal(queued.prompt['8'], undefined);
     assert.doesNotMatch(queued.prompt['20'].inputs.prompt, /verified prior scene master/);
 

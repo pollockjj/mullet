@@ -9,6 +9,7 @@ import test from 'node:test';
 import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
 import {
   INLINE_SCENE_QWEN_TEMPLATE_ID,
+  INLINE_SCENE_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE,
   MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
@@ -18,6 +19,7 @@ import {
   createInlineSceneContinuityMaster,
   createInlineSceneResult
 } from '../src/lib/inline-scene.ts';
+import { buildPngFixture } from './png-fixture.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const buildDirectory = resolve(repositoryRoot, 'scratch/build-inline-scene-route');
@@ -74,9 +76,37 @@ function png(width = 864, height = 576) {
   return bytes;
 }
 
+const managedPng = buildPngFixture;
+
+const bodyReferenceBytes = managedPng(576, 1024);
+const bodyReferenceSha256 = sha256(bodyReferenceBytes);
+const bodyReference = Object.freeze({
+  name: `body-jenna-stannis-${candidate.profileFingerprint}-${bodyReferenceSha256}.png`,
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: bodyReferenceSha256,
+  width: 576,
+  height: 1024,
+  aspectRatio: '9:16'
+});
+const castWithBody = Object.freeze({
+  kind: 'solo',
+  identities: Object.freeze([Object.freeze({
+    ...cast.identities[0],
+    bodyReferenceImage: bodyReference
+  })])
+});
+const sceneLora = Object.freeze({
+  path: 'zimage/unused.safetensors',
+  trigger: 'jennastannis',
+  modelHash: 'c'.repeat(64)
+});
+
 function sceneRequest(
   continuityMaster,
-  modelTemplate = INLINE_SCENE_QWEN_TEMPLATE_ID
+  modelTemplate = INLINE_SCENE_QWEN_TEMPLATE_ID,
+  selectedCast = cast,
+  lora = null
 ) {
   const messages = [
     { role: 'user', content: 'What happens on the flight deck?' },
@@ -94,9 +124,9 @@ function sceneRequest(
   });
   return buildInlineSceneImageRequest(result, {
     modelTemplate,
-    cast,
+    cast: selectedCast,
     ...(continuityMaster ? { continuityMaster } : {}),
-    lora: null,
+    lora,
     aspectRatio: modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID ? '16:9' : '3:2',
     megapixels: 0.5
   });
@@ -183,8 +213,9 @@ function webHeaders(request) {
 function fakeComfy() {
   const outputBytes = png();
   const h3OutputBytes = png(960, 544);
-  const state = { calls: [], uploads: [], prompts: [] };
-  const reset = () => {
+  const state = { mode: 'happy', calls: [], uploads: [], prompts: [] };
+  const reset = (mode = 'happy') => {
+    state.mode = mode;
     state.calls = [];
     state.uploads = [];
     state.prompts = [];
@@ -242,6 +273,19 @@ function fakeComfy() {
         if (filename === reference.name) {
           response.writeHead(200, { 'content-type': 'image/jpeg' });
           response.end(referenceBytes);
+          return;
+        }
+        if (filename === bodyReference.name && url.searchParams.get('subfolder') === bodyReference.subfolder) {
+          const uploaded = state.uploads.find((entry) => (
+            entry.name === bodyReference.name && entry.subfolder === bodyReference.subfolder
+          ));
+          if (state.mode === 'managed-body-missing' && !uploaded) {
+            responseJson(response, 404, { error: 'missing managed body reference' });
+            return;
+          }
+          const bytes = uploaded?.bytes ?? bodyReferenceBytes;
+          response.writeHead(200, { 'content-type': 'image/png' });
+          response.end(bytes);
           return;
         }
         response.writeHead(200, { 'content-type': 'image/png' });
@@ -340,7 +384,7 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
     assert.equal(fake.state.prompts[0].prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
   });
 
-  await context.test('the validated native H3 T=1 route returns the exact one-frame PNG contract', async () => {
+  await context.test('the validated experimental H3 T=1 route returns the exact one-frame PNG contract', async () => {
     fake.reset();
     const response = await post(formFor(h3First));
     const responseBytes = new Uint8Array(await response.arrayBuffer());
@@ -358,6 +402,64 @@ test('compiled inline-scene route binds exact optional continuity-master bytes b
     assert.equal(JSON.stringify(graph).includes('["20",1]'), false);
     assert.deepEqual(graph['25'].inputs, { width: 960, height: 544, batch_size: 1 });
     assert.equal(graph['28'].class_type, 'SaveImage');
+  });
+
+  await context.test('Qwen and H3 still upload and reverify only their planner-selected managed body reference', async () => {
+    for (const modelTemplate of [INLINE_SCENE_QWEN_TEMPLATE_ID, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID]) {
+      fake.reset('managed-body-missing');
+      const request = sceneRequest(undefined, modelTemplate, castWithBody);
+      const response = await post(formFor(request, null, (form) => {
+        form.append('reference', new Blob([bodyReferenceBytes], { type: 'image/png' }), 'untrusted-client-name.png');
+      }));
+      assert.equal(response.status, 200, await response.text());
+      const bodyUploads = fake.state.uploads.filter(({ subfolder }) => subfolder === 'mullet/identity');
+      assert.equal(bodyUploads.length, 1);
+      assert.equal(bodyUploads[0].name, bodyReference.name);
+      assert.deepEqual(bodyUploads[0].bytes, bodyReferenceBytes);
+      assert.equal(bodyUploads[0].type, 'input');
+      assert.equal(bodyUploads[0].overwrite, 'false');
+      const promptIndex = fake.state.calls.findIndex(({ path }) => path === '/prompt');
+      const uploadIndex = fake.state.calls.findIndex(({ path }) => path === '/upload/image');
+      const bodyViews = fake.state.calls.filter(({ path }) => path === '/view');
+      assert.ok(uploadIndex >= 0 && uploadIndex < promptIndex);
+      assert.ok(bodyViews.length >= 2);
+      assert.ok(JSON.stringify(fake.state.prompts[0].prompt).includes(bodyReference.name));
+    }
+  });
+
+  await context.test('managed reference multipart rejects Z-image, unplanned, duplicate, malformed, over-count, and oversized inputs before ComfyUI', async () => {
+    const qwenBodyRequest = sceneRequest(undefined, INLINE_SCENE_QWEN_TEMPLATE_ID, castWithBody);
+    const zImageRequest = sceneRequest(undefined, INLINE_SCENE_TEMPLATE_ID, castWithBody, sceneLora);
+    const otherPng = managedPng(576, 1024, 1);
+    const referencePart = () => new Blob([bodyReferenceBytes], { type: 'image/png' });
+    const rejected = [
+      formFor(zImageRequest, null, (form) => form.append('reference', referencePart(), 'body.png')),
+      formFor(qwenBodyRequest, null, (form) => form.append('reference', new Blob([otherPng], { type: 'image/png' }), 'other.png')),
+      formFor(qwenBodyRequest, null, (form) => {
+        form.append('reference', referencePart(), 'body-1.png');
+        form.append('reference', referencePart(), 'body-2.png');
+      }),
+      formFor(qwenBodyRequest, null, (form) => form.append('reference', new Blob([bodyReferenceBytes], { type: 'text/plain' }), 'body.txt')),
+      formFor(qwenBodyRequest, null, (form) => {
+        for (let index = 0; index < 4; index += 1) form.append('reference', referencePart(), `body-${index}.png`);
+      })
+    ];
+    for (const body of rejected) {
+      fake.reset();
+      const response = await post(body);
+      assert.equal(response.status, 400, await response.text());
+      assert.equal(fake.state.calls.length, 0);
+    }
+
+    fake.reset();
+    const oversized = formFor(qwenBodyRequest, null, (form) => {
+      const large = new Blob([bodyReferenceBytes, new Uint8Array(11 * 1024 * 1024)], { type: 'image/png' });
+      form.append('reference', large, 'large-1.png');
+      form.append('reference', large, 'large-2.png');
+    });
+    const oversizedResponse = await post(oversized);
+    assert.equal(oversizedResponse.status, 413, await oversizedResponse.text());
+    assert.equal(fake.state.calls.length, 0);
   });
 
   await context.test('a continued scene uploads and binds the exact verified master', async () => {

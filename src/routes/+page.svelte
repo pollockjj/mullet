@@ -55,6 +55,8 @@
     buildInlineSceneImageRequest,
     buildInlineSceneRequest,
     createInlineSceneContinuityMaster,
+    inlineSceneH3StillReferencePlan,
+    inlineSceneQwenReferencePlan,
     inlineSceneContinuityMasterEligible,
     inlineSceneImageRequestKey,
     inlineSceneModelTemplateAvailable,
@@ -301,6 +303,14 @@
     type ScenarioPortraitProfile
   } from '$lib/scenario';
   import {
+    applyBodyReferenceOverlay,
+    createBodyReferenceOverlay,
+    loadBodyReferenceOverlay,
+    removeBodyReferenceOverlay,
+    saveBodyReferenceOverlay,
+    type StoredBodyReferenceOverlay
+  } from '$lib/body-reference-storage';
+  import {
     WORKSPACE_MAX_MESSAGES,
     createStoredWorkspace,
     loadStoredWorkspace,
@@ -462,6 +472,7 @@
   let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   let inlineSceneH3ReferenceSummary = '';
+  let inlineSceneH3StillReferenceSummary = '';
   let personaDescription = '';
   let scenarioCatalog: ScenarioCatalog | null = null;
   let scenarioCatalogSettled = false;
@@ -469,7 +480,16 @@
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let activeScenarioStarterId = '';
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
+  let scenarioBaseSceneProfiles: ScenarioPortraitProfile[] = [];
   let scenarioSceneProfiles: ScenarioPortraitProfile[] = [];
+  let bodyReferenceOverlays: StoredBodyReferenceOverlay[] = [];
+  let bodyReferenceOverlayProfileSetKey = '';
+  let bodyReferenceOverlayRequestedKey = '\u0000';
+  let bodyReferenceOverlayRestoreGeneration = 0;
+  let bodyReferenceOverlayReady = false;
+  let bodyReferenceOverlayCorruptProfileIds: string[] = [];
+  let bodyReferenceOverlayBusyProfileId = '';
+  let bodyReferenceOverlayError = '';
   let inlineSceneSelectedModelAvailable = false;
   let inlineSceneStillMode: InlineSceneStillMode = 'automatic';
   let inlineSceneH3StillCapability: InlineSceneCapabilities['templates'][number] | null = null;
@@ -545,6 +565,8 @@
   const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v2';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
   const automaticExpressionRetryDelayMs = 1_500;
+  const bodyReferenceWidth = 576;
+  const bodyReferenceHeight = 1024;
 
   $: livingHistoryApplicable = Boolean(
     conversationMode === CONVERSATION_MODE_FICTION
@@ -585,9 +607,23 @@
   $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
     ? scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)
     : null;
-  $: scenarioSceneProfiles = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
+  $: scenarioBaseSceneProfiles = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
     ? scenarioPortraitCast(activeCard)?.profiles ?? []
     : [];
+  $: bodyReferenceOverlayProfileSetKey = scenarioBaseSceneProfiles
+    .map((profile) => `${profile.id}:${profile.fingerprint}`)
+    .join('|');
+  $: if (browser && bodyReferenceOverlayProfileSetKey !== bodyReferenceOverlayRequestedKey) {
+    bodyReferenceOverlayRequestedKey = bodyReferenceOverlayProfileSetKey;
+    void restoreBodyReferenceOverlays(bodyReferenceOverlayProfileSetKey, scenarioBaseSceneProfiles);
+  }
+  $: scenarioSceneProfiles = scenarioBaseSceneProfiles.map((profile) => {
+    const overlay = bodyReferenceOverlays.find((candidate) => (
+      candidate.profileId === profile.id
+      && candidate.baseProfileFingerprint === profile.fingerprint
+    ));
+    return overlay ? applyBodyReferenceOverlay(profile, overlay) : profile;
+  });
   $: inlineSceneSelectedModelAvailable = inlineScenePotentialDriverAvailable(
     inlineSceneCapabilities,
     scenarioSceneProfiles,
@@ -712,6 +748,10 @@
   $: inlineSceneH3ReferenceSummary = inlineSceneVideoRequest && isMiniMaxH3InlineSceneVideoTemplate(inlineSceneVideoRequest.modelTemplate)
     ? describeInlineSceneH3ReferencePlan(inlineSceneVideoRequest)
     : '';
+  $: inlineSceneH3StillReferenceSummary = inlineSceneCurrent
+    && generatedInlineScene?.request.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+    ? describeInlineSceneH3StillReferences(generatedInlineScene.request)
+    : '';
   $: inlineSceneVideoCurrent = Boolean(
     generatedInlineSceneVideo
     && inlineSceneVideoRequest
@@ -759,7 +799,7 @@
   $: scheduleInlineSceneReconciliation(
     conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
     inlineSceneCapabilities,
-    inlineScenePersistenceReady,
+    inlineScenePersistenceReady && bodyReferenceOverlayReady && !bodyReferenceOverlayBusyProfileId,
     inlineScenePersistenceAvailable,
     streaming,
     inlineSceneBusy,
@@ -774,7 +814,7 @@
     conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
     inlineSceneMotionEnabled,
     inlineSceneVideoCapabilities,
-    inlineSceneVideoPersistenceReady,
+    inlineSceneVideoPersistenceReady && bodyReferenceOverlayReady && !bodyReferenceOverlayBusyProfileId,
     inlineSceneVideoPersistenceAvailable,
     inlineSceneVideoRestorationPending,
     streaming,
@@ -1135,6 +1175,217 @@
     }
   }
 
+  async function restoreBodyReferenceOverlays(
+    profileSetKey: string,
+    profiles: readonly ScenarioPortraitProfile[]
+  ) {
+    const restoreGeneration = ++bodyReferenceOverlayRestoreGeneration;
+    bodyReferenceOverlayReady = false;
+    bodyReferenceOverlayCorruptProfileIds = [];
+    bodyReferenceOverlayError = '';
+    const settled = await Promise.allSettled(profiles.map((profile) => (
+      loadBodyReferenceOverlay(profile.id, profile.fingerprint)
+    )));
+    if (
+      restoreGeneration !== bodyReferenceOverlayRestoreGeneration
+      || bodyReferenceOverlayProfileSetKey !== profileSetKey
+    ) return;
+    const restored: StoredBodyReferenceOverlay[] = [];
+    const corruptProfileIds: string[] = [];
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        if (result.value) restored.push(result.value);
+        return;
+      }
+      corruptProfileIds.push(profiles[index].id);
+    });
+    bodyReferenceOverlays = restored;
+    bodyReferenceOverlayCorruptProfileIds = corruptProfileIds;
+    if (corruptProfileIds.length > 0) {
+      bodyReferenceOverlayReady = false;
+      bodyReferenceOverlayError = `Saved body and wardrobe references failed verification for profile IDs: ${corruptProfileIds.join(', ')}. Scene image and motion generation are blocked until Remove corrupt saved ref is used for each listed profile.`;
+      return;
+    }
+    bodyReferenceOverlayReady = true;
+  }
+
+  function managedBodyReferenceForProfile(profile: ScenarioPortraitProfile): StoredBodyReferenceOverlay | null {
+    return bodyReferenceOverlays.find((overlay) => (
+      overlay.profileId === profile.id
+      && overlay.baseProfileFingerprint === profile.fingerprint
+    )) ?? null;
+  }
+
+  function corruptBodyReferenceForProfile(profile: ScenarioPortraitProfile): boolean {
+    return bodyReferenceOverlayCorruptProfileIds.includes(profile.id);
+  }
+
+  function bodyReferenceReadyCount(): number {
+    return scenarioSceneProfiles.filter((profile) => profile.bodyReferenceImage !== null).length;
+  }
+
+  async function fileAsBodyReferencePng(file: File): Promise<Blob> {
+    if (
+      file.size < 24
+      || file.size > 20 * 1024 * 1024
+      || (file.type !== '' && file.type.toLowerCase() !== 'image/png')
+    ) {
+      throw new Error('Body and wardrobe reference must be a PNG no larger than 20 MiB.');
+    }
+    const header = new Uint8Array(await file.slice(0, 24).arrayBuffer());
+    if (
+      header[0] !== 0x89 || header[1] !== 0x50 || header[2] !== 0x4e || header[3] !== 0x47
+      || header[4] !== 0x0d || header[5] !== 0x0a || header[6] !== 0x1a || header[7] !== 0x0a
+      || header[8] !== 0x00 || header[9] !== 0x00 || header[10] !== 0x00 || header[11] !== 0x0d
+      || header[12] !== 0x49 || header[13] !== 0x48 || header[14] !== 0x44 || header[15] !== 0x52
+    ) throw new Error('Body and wardrobe reference has an invalid PNG header.');
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+    if (view.getUint32(16, false) !== bodyReferenceWidth || view.getUint32(20, false) !== bodyReferenceHeight) {
+      throw new Error(`Body and wardrobe reference must be exactly ${bodyReferenceWidth}×${bodyReferenceHeight} (9:16).`);
+    }
+    const bitmap = await createImageBitmap(file);
+    try {
+      if (bitmap.width !== bodyReferenceWidth || bitmap.height !== bodyReferenceHeight) {
+        throw new Error(`Body and wardrobe reference must decode as exactly ${bodyReferenceWidth}×${bodyReferenceHeight}.`);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = bodyReferenceWidth;
+      canvas.height = bodyReferenceHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('This browser cannot prepare the body and wardrobe reference.');
+      context.drawImage(bitmap, 0, 0);
+      const png = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result);
+          else reject(new Error('This browser could not encode the body and wardrobe reference.'));
+        }, 'image/png');
+      });
+      if (png.size > 20 * 1024 * 1024) {
+        throw new Error('Encoded body and wardrobe reference exceeds 20 MiB.');
+      }
+      return png;
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  async function importBodyReference(profile: ScenarioPortraitProfile, event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (
+      !file
+      || !bodyReferenceOverlayReady
+      || bodyReferenceOverlayCorruptProfileIds.length > 0
+      || bodyReferenceOverlayBusyProfileId
+      || inlineSceneBusy
+      || inlineSceneVideoBusy
+    ) return;
+    const operationProfileSetKey = bodyReferenceOverlayProfileSetKey;
+    const operationProfiles = [...scenarioBaseSceneProfiles];
+    bodyReferenceOverlayBusyProfileId = profile.id;
+    bodyReferenceOverlayError = '';
+    try {
+      const png = await fileAsBodyReferencePng(file);
+      const overlay = await createBodyReferenceOverlay(profile, png);
+      await saveBodyReferenceOverlay(overlay);
+      if (bodyReferenceOverlayProfileSetKey === operationProfileSetKey) {
+        await restoreBodyReferenceOverlays(operationProfileSetKey, operationProfiles);
+      }
+    } catch (cause) {
+      if (bodyReferenceOverlayProfileSetKey === operationProfileSetKey) {
+        bodyReferenceOverlayError = cause instanceof Error
+          ? cause.message
+          : 'Body and wardrobe reference could not be saved.';
+      }
+    } finally {
+      bodyReferenceOverlayBusyProfileId = '';
+    }
+  }
+
+  async function clearBodyReference(profile: ScenarioPortraitProfile) {
+    const corruptReference = corruptBodyReferenceForProfile(profile);
+    if (
+      bodyReferenceOverlayBusyProfileId
+      || inlineSceneBusy
+      || inlineSceneVideoBusy
+      || (!bodyReferenceOverlayReady && !corruptReference)
+    ) return;
+    const operationProfileSetKey = bodyReferenceOverlayProfileSetKey;
+    const operationProfiles = [...scenarioBaseSceneProfiles];
+    bodyReferenceOverlayBusyProfileId = profile.id;
+    bodyReferenceOverlayError = '';
+    try {
+      await removeBodyReferenceOverlay(profile.id, profile.fingerprint);
+      if (bodyReferenceOverlayProfileSetKey === operationProfileSetKey) {
+        await restoreBodyReferenceOverlays(operationProfileSetKey, operationProfiles);
+      }
+    } catch (cause) {
+      if (bodyReferenceOverlayProfileSetKey === operationProfileSetKey) {
+        bodyReferenceOverlayError = cause instanceof Error
+          ? cause.message
+          : 'Body and wardrobe reference could not be removed.';
+      }
+    } finally {
+      bodyReferenceOverlayBusyProfileId = '';
+    }
+  }
+
+  function appendManagedBodyReferenceParts(form: FormData, hashes: readonly string[]) {
+    const requestedHashes = new Set(hashes);
+    const appendedHashes = new Set<string>();
+    for (const overlay of bodyReferenceOverlays) {
+      if (
+        !requestedHashes.has(overlay.referenceImage.sha256)
+        || appendedHashes.has(overlay.referenceImage.sha256)
+      ) continue;
+      form.append('reference', overlay.image, overlay.referenceImage.name);
+      appendedHashes.add(overlay.referenceImage.sha256);
+    }
+  }
+
+  function inlineSceneManagedBodyReferenceHashes(request: InlineSceneImageRequest): string[] {
+    if (request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID) {
+      return inlineSceneQwenReferencePlan(request).flatMap((entry) => (
+        entry.kind === 'body_wardrobe' ? [entry.referenceImage.sha256] : []
+      ));
+    }
+    if (request.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
+      return inlineSceneH3StillReferencePlan(request).flatMap((entry) => (
+        entry.kind === 'body_identity' ? [entry.referenceImage.sha256] : []
+      ));
+    }
+    return [];
+  }
+
+  function inlineSceneVideoManagedBodyReferenceHashes(request: InlineSceneVideoRequest): string[] {
+    if (!isMiniMaxH3InlineSceneVideoTemplate(request.modelTemplate)) return [];
+    return inlineSceneH3ReferencePlan(request).flatMap((entry) => (
+      entry.kind === 'body_identity' ? [entry.referenceImage.sha256] : []
+    ));
+  }
+
+  function describeInlineSceneH3StillReferences(request: InlineSceneImageRequest): string {
+    const plan = inlineSceneH3StillReferencePlan(request);
+    const references: string[] = [];
+    const prior = plan.find((entry) => entry.kind === 'prior_master');
+    if (prior) references.push(`P${prior.picture} prior`);
+    request.cast.identities.forEach((identity, identityIndex) => {
+      const face = plan.find((entry) => (
+        entry.kind === 'canonical_identity' && entry.identityIndex === identityIndex
+      ));
+      const body = plan.find((entry) => (
+        entry.kind === 'body_identity' && entry.identityIndex === identityIndex
+      ));
+      const slots = [
+        ...(face ? [`P${face.picture} face`] : []),
+        ...(body ? [`P${body.picture} body`] : [])
+      ];
+      references.push(`${identity.displayName} ${slots.join('/')}`);
+    });
+    return `${plan.length} refs · ${references.join(' · ')}`;
+  }
+
   function currentInlineSceneSidecarRequest(
     currentConversationId: string,
     currentMessages: readonly Message[],
@@ -1253,7 +1504,7 @@
 
   function inlineSceneStillDriverLabel(modelTemplate: InlineSceneImageRequest['modelTemplate']): string {
     if (modelTemplate === INLINE_SCENE_TEMPLATE_ID) return 'Z-Image + exact linked LoRA';
-    if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) return 'MiniMax H3 native T=1 Ref2VA';
+    if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) return 'MiniMax H3 experimental T=1 Ref2VA';
     return 'Qwen multi-reference master';
   }
 
@@ -1790,6 +2041,8 @@
       || !inlineSceneVideoTemplateAvailable(inlineSceneVideoCapabilities, selectedRequest.modelTemplate)
       || inlineSceneBusy
       || inlineSceneVideoBusy
+      || !bodyReferenceOverlayReady
+      || Boolean(bodyReferenceOverlayBusyProfileId)
       || !inlineSceneVideoPersistenceReady
       || !inlineSceneVideoPersistenceAvailable
     ) return;
@@ -1810,6 +2063,7 @@
       const form = new FormData();
       form.append('request', JSON.stringify(selectedRequest));
       form.append('image', selectedScene.image, 'scene.png');
+      appendManagedBodyReferenceParts(form, inlineSceneVideoManagedBodyReferenceHashes(selectedRequest));
       const priorMasterRequired = isMiniMaxH3InlineSceneVideoTemplate(selectedRequest.modelTemplate)
         && inlineSceneH3ReferencePlan(selectedRequest).some(({ kind }) => kind === 'prior_master');
       if (priorMasterRequired) {
@@ -2136,6 +2390,8 @@
         selectedStillMode
       )
       || inlineSceneBusy
+      || !bodyReferenceOverlayReady
+      || Boolean(bodyReferenceOverlayBusyProfileId)
       || !inlineScenePersistenceReady
       || !inlineScenePersistenceAvailable
     ) return;
@@ -2228,6 +2484,7 @@
       const imageForm = new FormData();
       imageForm.append('request', JSON.stringify(imageRequest));
       if (continuityMasterImage) imageForm.append('master', continuityMasterImage, 'scene-continuity-master.png');
+      appendManagedBodyReferenceParts(imageForm, inlineSceneManagedBodyReferenceHashes(imageRequest));
       const imageResponse = await fetch(`${base}/api/scene`, {
         method: 'POST',
         body: imageForm,
@@ -5402,6 +5659,57 @@
             <span>{inlineScenesEnabled ? 'On' : 'Off'}</span>
           </label>
         </div>
+        {#if bodyReferenceOverlayError}<div class="sidecar-error" role="alert">{bodyReferenceOverlayError}</div>{/if}
+        {#if scenarioBaseSceneProfiles.length > 0}
+          <details class="h3-reference-pack" open={bodyReferenceOverlayCorruptProfileIds.length > 0}>
+            <summary>
+              Scene reference library · {scenarioBaseSceneProfiles.length} face · {bodyReferenceReadyCount()}/{scenarioBaseSceneProfiles.length} body
+            </summary>
+            <small>Clean front-biased face plus optional three-quarter/full-body wardrobe anchor per person. Body anchors are exact 576×1024 PNGs. Scene masters provide composition and location continuity.</small>
+            <div class="h3-reference-list">
+              {#each scenarioBaseSceneProfiles as profile (profile.id)}
+                {@const managedBody = managedBodyReferenceForProfile(profile)}
+                {@const corruptBody = corruptBodyReferenceForProfile(profile)}
+                {@const effectiveProfile = scenarioSceneProfiles.find((candidate) => candidate.id === profile.id)}
+                <div class="h3-reference-row">
+                  <div>
+                    <strong>{profile.displayName}</strong>
+                    <small>
+                      face {profile.referenceImage.width}×{profile.referenceImage.height} · {corruptBody
+                        ? 'body corrupt saved reference'
+                        : effectiveProfile?.bodyReferenceImage
+                        ? `body ${effectiveProfile.bodyReferenceImage.width}×${effectiveProfile.bodyReferenceImage.height}${managedBody ? ' managed' : ' bundled'}`
+                        : 'body missing'}
+                    </small>
+                  </div>
+                  <div class="h3-reference-actions">
+                    <label class="body-reference-upload">
+                      <input
+                        class="body-reference-file-input"
+                        type="file"
+                        accept="image/png"
+                        aria-label={`Add or replace ${profile.displayName} body and wardrobe reference`}
+                        disabled={!bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId) || inlineSceneBusy || inlineSceneVideoBusy}
+                        on:change={(event) => void importBodyReference(profile, event)}
+                      />
+                      <span>{bodyReferenceOverlayBusyProfileId === profile.id ? 'Saving…' : effectiveProfile?.bodyReferenceImage ? 'Replace' : 'Add body'}</span>
+                    </label>
+                    {#if managedBody || corruptBody}
+                      <button
+                        class="body-reference-remove"
+                        aria-label={corruptBody
+                          ? `Remove corrupt saved body and wardrobe reference for ${profile.displayName}`
+                          : `Remove ${profile.displayName} managed body and wardrobe reference`}
+                        disabled={Boolean(bodyReferenceOverlayBusyProfileId) || inlineSceneBusy || inlineSceneVideoBusy || (!bodyReferenceOverlayReady && !corruptBody)}
+                        on:click={() => void clearBodyReference(profile)}
+                      >{corruptBody ? 'Remove corrupt saved ref' : 'Remove'}</button>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </details>
+        {/if}
         {#if inlineSceneCapabilities}
           {#if generatedInlineScene && inlineSceneApplies}
             <small class="scene-cast-status">
@@ -5420,12 +5728,12 @@
             >
               <option value="automatic">Automatic · Z-Image solo / Qwen references</option>
               <option value={MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}>
-                MiniMax H3 Ref2VA · Native T=1 still (20-step){inlineSceneH3StillCapability?.available === false ? ' (unavailable)' : ''}
+                MiniMax H3 Ref2VA · Experimental T=1 still (20-step){inlineSceneH3StillCapability?.available === false ? ' (unavailable)' : ''}
               </option>
             </select>
           </label>
           {#if inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}
-            <small>Native one-frame Ref2VA · ordered identity/continuity references · base H3 · no LoRA · res_multistep/beta · 20 steps</small>
+            <small>Validated experimental one-frame Ref2VA · base H3 · no LoRA · res_multistep/beta · 20 steps · {inlineSceneH3StillReferenceSummary || 'reference plan resolves after cast selection'}</small>
           {/if}
           <div class="portrait-grid">
             <label>
@@ -5446,7 +5754,7 @@
             <div class="sidecar-error capability-error" role="alert">
               <span>
                 {inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-                  ? `MiniMax H3 native still is unavailable.${inlineSceneH3StillCapability?.missing.length ? ` Missing: ${inlineSceneH3StillCapability.missing.join(', ')}.` : ''}`
+                  ? `MiniMax H3 experimental still is unavailable.${inlineSceneH3StillCapability?.missing.length ? ` Missing: ${inlineSceneH3StillCapability.missing.join(', ')}.` : ''}`
                   : 'No deterministic static-scene driver is currently available for this scenario state.'}
               </span>
               <button class="error-retry" on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
@@ -5457,7 +5765,7 @@
           {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
           <button
             on:click={() => void generateInlineScene()}
-            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || scenarioSceneProfiles.length < 1 || !inlineSceneSelectedModelAvailable || !inlineScenesEnabled || !inlineScenePersistenceAvailable}
+            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || scenarioSceneProfiles.length < 1 || !inlineSceneSelectedModelAvailable || !inlineScenesEnabled || !inlineScenePersistenceAvailable || !bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId)}
           >
             {inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Regenerate scene' : 'Generate scene'}
           </button>
@@ -5520,7 +5828,7 @@
               {/if}
               <button
                 on:click={() => void generateInlineSceneVideo()}
-                disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable || !inlineSceneVideoSelectedModelAvailable}
+                disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable || !inlineSceneVideoSelectedModelAvailable || !bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId)}
               >
                 {inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
               </button>
@@ -5948,6 +6256,20 @@
   .portrait-panel > button { padding: 8px; border: 1px solid #49614d; border-radius: 8px; color: #b6d3ba; background: #19221b; font-size: 10px; font-weight: 700; cursor: pointer; }
   .portrait-panel > button:hover:not(:disabled) { border-color: #7db68d; color: #e3f2e5; }
   .portrait-panel > button:disabled { opacity: .4; cursor: default; }
+  .h3-reference-pack { padding: 7px 8px; border: 1px solid #344037; border-radius: 8px; color: #9daf9f; background: #141916; font-size: 9px; }
+  .h3-reference-pack summary { cursor: pointer; font-weight: 700; }
+  .h3-reference-pack > small { display: block; margin-top: 7px; color: #829184; line-height: 1.4; }
+  .h3-reference-list { display: grid; gap: 6px; margin-top: 8px; }
+  .h3-reference-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 6px; border-top: 1px solid #29332b; }
+  .h3-reference-row > div:first-child { min-width: 0; display: grid; gap: 2px; }
+  .h3-reference-row strong { overflow: hidden; color: #c4d4c5; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .h3-reference-row small { color: #829184; font: 8px/1.35 ui-monospace, monospace; }
+  .h3-reference-actions { flex: 0 0 auto; display: flex; gap: 5px; }
+  .body-reference-upload span, .body-reference-remove { display: inline-block; width: auto; padding: 4px 6px; border: 1px solid #49614d; border-radius: 999px; color: #b6d3ba; background: #19221b; font: 700 8px/1 sans-serif; cursor: pointer; }
+  .body-reference-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .body-reference-upload:focus-within span { outline: 2px solid #7db68d; outline-offset: 2px; }
+  .body-reference-upload:has(input:disabled) span, .body-reference-remove:disabled { opacity: .4; cursor: default; }
+  .body-reference-remove { border-color: #5d4942; color: #c9aaa0; background: #211714; }
   .lore-panel { display: grid; gap: 10px; padding-top: 17px; border-top: 1px solid #34302b; }
   .persona-field { display: grid; gap: 7px; }
   .persona-field textarea { width: 100%; resize: vertical; min-height: 64px; padding: 9px 10px; border: 1px solid #413a33; border-radius: 9px; color: #ded6cc; background: #171513; font-size: 11px; line-height: 1.45; }
