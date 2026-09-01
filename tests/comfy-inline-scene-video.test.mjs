@@ -17,6 +17,7 @@ import {
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE,
   buildInlineSceneVideoRequest
 } from '../src/lib/inline-scene-video.ts';
 import {
@@ -141,9 +142,10 @@ function capabilityInfo(nodeName) {
   const ltx = LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
   const minimax = MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE;
   const preview = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE;
+  const loop = MINIMAX_H3_SCENE_LOOP_TEMPLATE;
   const required = {};
   const optional = {};
-  if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet], {}];
+  if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet, loop.modelFiles.unet], {}];
   if (nodeName === 'CLIPLoader') {
     required.clip_name = [[ltx.modelFiles.clip, minimax.modelFiles.clip], {}];
     required.type = [['ltxv', 'minimax'], {}];
@@ -165,7 +167,7 @@ function capabilityInfo(nodeName) {
   }
   if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler, preview.sampler], {}];
   if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler, preview.scheduler], {}];
-  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[preview.modelFiles.lora], {}];
+  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[preview.modelFiles.lora, loop.modelFiles.turboLora], {}];
   if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
   if (nodeName === 'SaveVideo') {
     required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'mp4' }, { key: 'auto' }] }];
@@ -181,11 +183,12 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
   }, 'http://comfy');
   assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v6');
   assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
+    ['minimax-h3-fl2va-scene-loop-v1', true],
     ['ltx-2.5-distilled-scene-v2', true],
     ['minimax-h3-ref2va-scene-v1', true],
     ['minimax-h3-ref2va-lightx-preview-v1', true]
   ]);
-  assert.deepEqual(capabilities.durations, [5]);
+  assert.deepEqual(capabilities.durations, [3]);
   const degradationCases = [
     {
       mutate(info) { info.MiniMaxH3ReferenceToVideo.input.optional.ref_images[1].template.max = 8; },
@@ -211,11 +214,15 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
       if (nodeName === 'MiniMaxH3ReferenceToVideo') mutate(info);
       return Response.json(info);
     }, 'http://comfy');
+    // Order is [loop, ltx, ref2va-quality, ref2va-lightx]. The FL2VA loop uses no
+    // reference slots, so degrading MiniMaxH3ReferenceToVideo cannot affect it.
     assert.equal(degraded.templates[0].available, true);
-    assert.equal(degraded.templates[1].available, false);
-    assert.deepEqual(degraded.templates[1].missing, [diagnostic]);
+    assert.deepEqual(degraded.templates[0].missing, []);
+    assert.equal(degraded.templates[1].available, true);
     assert.equal(degraded.templates[2].available, false);
     assert.deepEqual(degraded.templates[2].missing, [diagnostic]);
+    assert.equal(degraded.templates[3].available, false);
+    assert.deepEqual(degraded.templates[3].missing, [diagnostic]);
   }
   const missingPreviewLora = await loadInlineSceneVideoCapabilities(async (inputUrl) => {
     const nodeName = decodeURIComponent(String(inputUrl).split('/').at(-1));
@@ -223,10 +230,16 @@ test('reports the exact installed LTX and MiniMax stacks additively', async () =
     if (nodeName === 'LoraLoaderModelOnly') info.LoraLoaderModelOnly.input.required.lora_name[0] = [];
     return Response.json(info);
   }, 'http://comfy');
-  assert.equal(missingPreviewLora.templates[0].available, true);
+  // With no LoRAs installed both accelerated paths go unavailable and report exactly
+  // which adapter they need; the two unaccelerated paths are unaffected.
+  assert.equal(missingPreviewLora.templates[0].available, false);
+  assert.deepEqual(missingPreviewLora.templates[0].missing, [
+    `model:lora:${MINIMAX_H3_SCENE_LOOP_TEMPLATE.modelFiles.turboLora}`
+  ]);
   assert.equal(missingPreviewLora.templates[1].available, true);
-  assert.equal(missingPreviewLora.templates[2].available, false);
-  assert.deepEqual(missingPreviewLora.templates[2].missing, [
+  assert.equal(missingPreviewLora.templates[2].available, true);
+  assert.equal(missingPreviewLora.templates[3].available, false);
+  assert.deepEqual(missingPreviewLora.templates[3].missing, [
     `model:lora:${MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE.modelFiles.lora}`
   ]);
 });

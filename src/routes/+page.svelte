@@ -71,6 +71,7 @@
     LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+    MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
     buildInlineSceneVideoRequest,
     describeInlineSceneH3ReferencePlan,
     inlineSceneH3ReferencePlan,
@@ -375,7 +376,7 @@
   let inlineSceneVideoController: AbortController | null = null;
   let lastInlineSceneVideoAttemptKey = '';
   let inlineSceneVideoComponentDestroying = false;
-  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   let inlineSceneH3ReferenceSummary = '';
   let inlineSceneH3StillReferenceSummary = '';
@@ -455,7 +456,7 @@
   const inlineSceneMotionEnabledStorageKey = 'mullet.inline-scene-motion-enabled';
   // v4: discards persisted selections of the unaccelerated 20-step H3 scene video,
   // which never completed inside the 900s timeout.
-  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v4';
+  const inlineSceneVideoModelTemplateStorageKey = 'mullet.inline-scene-video-model-template.v5';
   const maxActiveLorebookBytes = 24 * 1024 * 1024;
   const automaticExpressionRetryDelayMs = 1_500;
   const bodyReferenceWidth = 576;
@@ -826,8 +827,9 @@
     inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
+      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
       ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
-      : MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      : MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     restorePortraitSettings();
     restoreInlineSceneSettings();
@@ -1807,7 +1809,7 @@
       }
       inlineSceneVideoCapabilities = normalizeInlineSceneVideoCapabilities(payload);
       if (!inlineSceneVideoCapabilities.templates.some(({ template }) => template.id === inlineSceneVideoModelTemplate)) {
-        inlineSceneVideoModelTemplate = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+        inlineSceneVideoModelTemplate = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
         localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
       }
     } catch (cause) {
@@ -2042,7 +2044,7 @@
 
   function persistInlineSceneVideoModelTemplate() {
     if (!inlineSceneVideoTemplateCapability(inlineSceneVideoCapabilities, inlineSceneVideoModelTemplate)) {
-      inlineSceneVideoModelTemplate = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      inlineSceneVideoModelTemplate = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
     }
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     inlineSceneVideoGeneration += 1;

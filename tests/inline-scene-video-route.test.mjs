@@ -22,6 +22,7 @@ import {
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE,
   MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
   buildInlineSceneVideoRequest,
   inlineSceneVideoSourceRequestSha256
@@ -153,7 +154,7 @@ function capabilityResponse(nodeName) {
   const preview = MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE;
   const required = {};
   const optional = {};
-  if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet], {}];
+  if (nodeName === 'UNETLoader') required.unet_name = [[ltx.modelFiles.unet, minimax.modelFiles.unet, MINIMAX_H3_SCENE_LOOP_TEMPLATE.modelFiles.unet], {}];
   if (nodeName === 'CLIPLoader') {
     required.clip_name = [[ltx.modelFiles.clip, minimax.modelFiles.clip], {}];
     required.type = [['ltxv', 'minimax'], {}];
@@ -175,7 +176,7 @@ function capabilityResponse(nodeName) {
   }
   if (nodeName === 'KSamplerSelect') required.sampler_name = [[ltx.sampler, minimax.sampler, preview.sampler], {}];
   if (nodeName === 'BasicScheduler') required.scheduler = [[minimax.scheduler, preview.scheduler], {}];
-  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[preview.modelFiles.lora], {}];
+  if (nodeName === 'LoraLoaderModelOnly') required.lora_name = [[preview.modelFiles.lora, MINIMAX_H3_SCENE_LOOP_TEMPLATE.modelFiles.turboLora], {}];
   if (nodeName === 'LoadImage') required.image = [['uploaded.png'], { image_upload: true }];
   if (nodeName === 'SaveVideo') {
     required.format = ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'mp4' }, { key: 'auto' }] }];
@@ -428,6 +429,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     const capabilities = JSON.parse(responseText);
     assert.equal(capabilities.spec, 'mullet_inline_scene_video_capabilities_v6');
     assert.deepEqual(capabilities.templates.map(({ template, available }) => [template.id, available]), [
+      ['minimax-h3-fl2va-scene-loop-v1', true],
       ['ltx-2.5-distilled-scene-v2', true],
       ['minimax-h3-ref2va-scene-v1', true],
       ['minimax-h3-ref2va-lightx-preview-v1', true]
@@ -438,7 +440,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
       { aspectRatio: '5:4', width: 960, height: 768 },
       { aspectRatio: '16:9', width: 1344, height: 768 }
     ]);
-    assert.deepEqual(capabilities.durations, [5]);
+    assert.deepEqual(capabilities.durations, [3]);
     const queriedNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
     const expectedNodes = new Set(INLINE_SCENE_VIDEO_TEMPLATES.flatMap(({ requiredNodes }) => requiredNodes));
     assert.deepEqual(new Set(queriedNodes), expectedNodes);
@@ -459,7 +461,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.equal(response.headers.get('x-mullet-height'), '768');
     assert.equal(response.headers.get('x-mullet-frames'), '121');
     assert.equal(response.headers.get('x-mullet-fps'), '24');
-    assert.equal(request.durationSeconds, 5);
+    assert.equal(request.durationSeconds, 3);
     assert.equal(response.headers.get('x-mullet-duration-seconds'), String(121 / 24));
     assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
     assert.equal(response.headers.get('x-mullet-model-template'), 'ltx-2.5-distilled-scene-v2');

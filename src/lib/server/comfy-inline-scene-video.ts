@@ -7,6 +7,7 @@ import {
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE,
   buildInlineSceneVideoWorkflow,
   isMiniMaxH3InlineSceneVideoTemplate,
   inlineSceneH3ReferencePlan,
@@ -211,6 +212,7 @@ export async function loadInlineSceneVideoCapabilities(
 
   const unique = (items: readonly string[]): string[] => [...new Set(items)];
   const minimaxCapabilities = [
+    MINIMAX_H3_SCENE_LOOP_TEMPLATE,
     MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
     MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE
   ].map((minimax) => {
@@ -224,30 +226,41 @@ export async function loadInlineSceneVideoCapabilities(
     optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.audioVae, `model:vae:${minimax.modelFiles.audioVae}`);
     optionDiagnostic(minimaxMissing, 'KSamplerSelect', 'sampler_name', minimax.sampler, `sampler:${minimax.sampler}`);
     optionDiagnostic(minimaxMissing, 'BasicScheduler', 'scheduler', minimax.scheduler, `scheduler:${minimax.scheduler}`);
-    if ('lora' in minimax.modelFiles) {
+    const acceleratorLora = 'lora' in minimax.modelFiles
+      ? minimax.modelFiles.lora
+      : 'turboLora' in minimax.modelFiles
+        ? minimax.modelFiles.turboLora
+        : null;
+    if (acceleratorLora) {
       optionDiagnostic(
         minimaxMissing,
         'LoraLoaderModelOnly',
         'lora_name',
-        minimax.modelFiles.lora,
-        `model:lora:${minimax.modelFiles.lora}`
+        acceleratorLora,
+        `model:lora:${acceleratorLora}`
       );
     }
-    optionDiagnostic(
-      minimaxMissing,
-      'MiniMaxH3ReferenceToVideo',
-      'ref_image_size',
-      minimax.referenceImageSize,
-      `node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${minimax.referenceImageSize}`
-    );
-    if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
-      diagnostic(minimaxMissing, 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9', () => requireExactAutogrowDefinition(
-        inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
+    // Reference conditioning is Ref2VA-only. The FL2VA scene loop takes the accepted
+    // scene still as its first and last frame and has no reference slots to check.
+    if ('referenceImageSize' in minimax && 'maxReferenceImages' in minimax) {
+      const referenceImageSize = minimax.referenceImageSize;
+      const maxReferenceImages = minimax.maxReferenceImages;
+      optionDiagnostic(
+        minimaxMissing,
         'MiniMaxH3ReferenceToVideo',
-        'ref_images',
-        'ref_image_',
-        minimax.maxReferenceImages
-      ));
+        'ref_image_size',
+        referenceImageSize,
+        `node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${referenceImageSize}`
+      );
+      if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
+        diagnostic(minimaxMissing, 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9', () => requireExactAutogrowDefinition(
+          inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
+          'MiniMaxH3ReferenceToVideo',
+          'ref_images',
+          'ref_image_',
+          maxReferenceImages
+        ));
+      }
     }
     if (nodeAvailable('SaveVideo')) {
       diagnostic(minimaxMissing, `video-format:${minimax.format}`, () => requireOption(
@@ -271,12 +284,13 @@ export async function loadInlineSceneVideoCapabilities(
   return {
     spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
     templates: [
+      minimaxCapabilities[0],
       {
         template: ltx,
         available: ltxMissing.length === 0,
         missing: unique(ltxMissing)
       },
-      ...minimaxCapabilities
+      ...minimaxCapabilities.slice(1)
     ],
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
     durations: [INLINE_SCENE_VIDEO_DURATION_SECONDS]

@@ -14,12 +14,19 @@ export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_c
 export const LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-scene-v2' as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-ref2va-scene-v1' as const;
 export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID = 'minimax-h3-ref2va-lightx-preview-v1' as const;
+export const MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID = 'minimax-h3-fl2va-scene-loop-v1' as const;
+export const MINIMAX_H3_SCENE_LOOP_MODE = 'flf2v_loop' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
-export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 5 as const;
+// Operator order: the scene loop is a three-second 0.66 MP loop, replacing the previous
+// five-second 1 MP non-looping clip.
+export const INLINE_SCENE_VIDEO_DURATION_SECONDS = 3 as const;
 export const INLINE_SCENE_VIDEO_FPS = 24 as const;
 export const LTX25_INLINE_SCENE_VIDEO_FRAMES = 121 as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_FRAMES = 124 as const;
+// MiniMaxH3ImageToVideo accepts lengths of 5 + 17k only; 73 is the valid value nearest
+// three seconds at 24 fps (3.042 s).
+export const MINIMAX_H3_SCENE_LOOP_FRAMES = 73 as const;
 export const INLINE_SCENE_VIDEO_FRAMES = LTX25_INLINE_SCENE_VIDEO_FRAMES;
 export const LTX25_INLINE_SCENE_VIDEO_MODE = 'flf2v_loop' as const;
 export const MINIMAX_H3_INLINE_SCENE_VIDEO_MODE = 'ref2va' as const;
@@ -30,6 +37,15 @@ export const INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
   { aspectRatio: '4:3', width: 1024, height: 768 },
   { aspectRatio: '5:4', width: 960, height: 768 },
   { aspectRatio: '16:9', width: 1344, height: 768 }
+] as const);
+
+// The scene is the expression portrait's aspect ratio inverted: 576x1024 becomes
+// 1024x576. The other ratios hold the same pixel budget, snapped to H3's 32-pixel step.
+export const MINIMAX_H3_SCENE_LOOP_DIMENSIONS = Object.freeze([
+  { aspectRatio: '3:2', width: 928, height: 640 },
+  { aspectRatio: '4:3', width: 896, height: 672 },
+  { aspectRatio: '5:4', width: 864, height: 672 },
+  { aspectRatio: '16:9', width: 1024, height: 576 }
 ] as const);
 
 export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
@@ -160,7 +176,59 @@ export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE = Object.free
   promptGuide: 'official LightX Ref2VA four-step preview profile, generated scene as Picture 1, canonical cast references in stable order, one restrained continuous shot, native ambience without dialogue, narration, or music'
 } as const);
 
+// The scene loop. Identity comes from the accepted scene still itself, which was
+// generated with the cast references, so FL2VA needs no reference conditioning of its
+// own and can use identical first and last frames to produce a genuine seamless loop -
+// the same mechanism the working portrait loop uses.
+export const MINIMAX_H3_SCENE_LOOP_TEMPLATE = Object.freeze({
+  id: MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
+  label: 'MiniMax H3 FL2VA Turbo · 3 s loop (1024x576)',
+  modelFamily: 'minimax-h3-fl2va',
+  modelFiles: {
+    unet: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
+    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
+    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
+    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
+    turboLora: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'MiniMaxH3ImageToVideo',
+    'BasicGuider',
+    'KSamplerSelect',
+    'BasicScheduler',
+    'RandomNoise',
+    'SamplerCustomAdvanced',
+    'VAEDecode',
+    'CreateVideo',
+    'SaveVideo',
+    'LoraLoaderModelOnly',
+    'MiniMaxH3SigmaShift'
+  ],
+  outputNode: '15',
+  mode: MINIMAX_H3_SCENE_LOOP_MODE,
+  dimensions: MINIMAX_H3_SCENE_LOOP_DIMENSIONS,
+  durationSeconds: INLINE_SCENE_VIDEO_DURATION_SECONDS,
+  frames: MINIMAX_H3_SCENE_LOOP_FRAMES,
+  multiple: 32,
+  shortEdge: 576,
+  maxPixels: 1024 * 576,
+  sampler: 'euler',
+  scheduler: 'simple',
+  steps: 4,
+  denoise: 1,
+  shiftVideo: 6,
+  shiftAudio: 3,
+  format: 'auto',
+  codec: 'auto',
+  promptGuide: 'one continuous landscape shot, identical first and last frame so the clip loops seamlessly, restrained natural motion, no cuts, no camera moves'
+} as const);
+
 export const INLINE_SCENE_VIDEO_TEMPLATES = Object.freeze([
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE,
   LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE
@@ -618,6 +686,15 @@ export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): s
     'Preserve every visible subject, identity, attire, object, and spatial relationship while continuing only restrained physical motion implied by the scene.',
     'Use one continuous landscape shot with no cuts, no new subjects, no new objects, no text, and no black frames.'
   ];
+  if (normalized.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
+    return [
+      ...common,
+      'The video opens exactly on the supplied first frame.',
+      'The identical supplied scene is both the first and the final keyframe; all restrained motion returns exactly to that keyframe so the clip loops seamlessly.',
+      'Ambient physical motion only: no talking, no lip or mouth movement, and no speech gestures.',
+      'No camera movement, no cuts, no text, and no black frames.'
+    ].join(' ');
+  }
   if (normalized.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
     return [
         ...common,
@@ -888,6 +965,47 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
   };
 }
 
+// Scene loop: MiniMaxH3ImageToVideo with the accepted scene still wired to BOTH
+// first_frame and last_frame, which is what makes the clip loop. Mirrors the portrait
+// loop graph that already runs reliably at four steps.
+function buildMiniMaxH3SceneLoopWorkflow(
+  normalized: InlineSceneVideoRequest,
+  sceneInput: InlineSceneVideoInputReference,
+  seed: number
+): Record<string, unknown> {
+  const template = MINIMAX_H3_SCENE_LOOP_TEMPLATE;
+  const { width, height, frames, fps } = inlineSceneVideoDimensions(
+    normalized.aspectRatio,
+    normalized.modelTemplate
+  );
+  return {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
+    '5': { class_type: 'LoadImage', inputs: { image: `${sceneInput.subfolder}/${sceneInput.name}` } },
+    '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
+      clip: ['2', 0],
+      vae: ['3', 0],
+      prompt: buildInlineSceneVideoPrompt(normalized),
+      width,
+      height,
+      length: frames,
+      first_frame: ['5', 0],
+      last_frame: ['5', 0]
+    } },
+    '7': { class_type: 'BasicGuider', inputs: { model: ['18', 0], conditioning: ['6', 0] } },
+    '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '9': { class_type: 'BasicScheduler', inputs: { model: ['18', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
+    '10': { class_type: 'RandomNoise', inputs: { noise_seed: seed } },
+    '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
+    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
+    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps } },
+    '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: 'mullet/scene-motion-loop', format: template.format, codec: template.codec } },
+    '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
+    '18': { class_type: 'MiniMaxH3SigmaShift', inputs: { model: ['16', 0], shift_video: template.shiftVideo, shift_audio: template.shiftAudio } }
+  };
+}
+
 export function buildInlineSceneVideoWorkflow(
   request: InlineSceneVideoRequest,
   sceneInput: InlineSceneVideoInputReference,
@@ -895,6 +1013,10 @@ export function buildInlineSceneVideoWorkflow(
   priorMasterInput?: InlineSceneVideoPriorMasterInput
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneVideoRequest(request);
+  if (normalized.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
+    if (priorMasterInput) throw new Error('the scene loop does not accept a prior master input');
+    return buildMiniMaxH3SceneLoopWorkflow(normalized, sceneInput, seed);
+  }
   if (normalized.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
     if (priorMasterInput) throw new Error('LTX inline-scene video does not accept a prior master input');
     return buildLtx25InlineSceneVideoWorkflow(normalized, sceneInput, seed);
