@@ -197,13 +197,25 @@ Observed in the same run, still open:
   never reaches it: the page-level attempt key (`inlineSceneAttemptKey`, +page.svelte:2072)
   and `inlineSceneMatchesSettings` (+page.svelte:1377) ignore continuity, and
   `subjectDescriptors` is neither a reactive input of the scene reconciliation nor
-  persisted. The operator's "no relation between the images" complaint is therefore still
-  live whenever the scene director beats the portrait, which is the common case.
+  persisted. Worse, `castContinuityClause` has no staleness check
+  (`subjectDescriptorPortraitKeys` is written at +page.svelte:2613 and never read), so the
+  clause that does get injected is the previous portrait's caption for that character,
+  and when a fresh caption lands while a scene is generating, the finished scene is
+  discarded at commit by the request-key currency check and never retried: no scene and
+  no loop for that turn (audit: 6 of 6 such turns on firestorm:8189). The operator's "no
+  relation between the images" complaint is therefore still live on the common path.
 - Operator's concurrent cabin run (scene_00068, 16:46:54) carried
   "window frame, outdoor background" inside the continuity clause: defect 3 confirmed.
-- In-pipeline timings: Qwen still 25-34 s and Z-Image still 12-17 s when an H3 loop ran
-  just before on the same lane; FL2VA loops 47-90 s. Both lanes are single 24 GB cards
-  (3090 Ti on 8188, 3090 on 8189) per `/system_stats`; H3's 21 GB model + 27 GB text
-  encoder cannot be resident, so no video gate in docs/GOAL.md is reachable as written.
+- In-pipeline timings (ComfyUI history, MULLET jobs only, medians): expression still
+  Z-Image 4.2 s warm / 13.0 s cold, Qwen 8.4 s warm / 25.6 s cold; expression loop
+  48.8 s warm / 66.8 s cold (56 frames); scene still Z-Image 17.5 s cold, Qwen 39-45 s
+  cold; scene loop 81.2 s cold and never once warm. Stills wait 39-70 s in the lane FIFO
+  when the previous turn's loop is still rendering. Both lanes are single 25 GB cards
+  (3090 Ti on 8188, 3090 on 8189) per `/system_stats`; the H3 model plus video VAE alone
+  are 26 GB, so every alternation reloads (~18 s H3, ~17 s Qwen, ~9 s Z-Image). No gate in
+  docs/GOAL.md is reachable as written; the 5.8 s Qwen figure in docs/PLAN.md is an
+  isolation number that never occurs in pipeline order. Measured lever: H3 4-step at
+  0.59 MP costs ~5.7 s for the first latent frame and ~14 s per further 17 frames, so
+  22 frames is predicted ~20 s warm, 39 frames ~34 s.
 - The operator was playtesting the cabin scenario on the served build during the check;
   their jobs interleaved with the check's on both lanes.
