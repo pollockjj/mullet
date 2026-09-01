@@ -407,6 +407,10 @@
   // Which portrait each descriptor was captioned from, so a descriptor is never treated
   // as current for a portrait it does not describe.
   let subjectDescriptorPortraitKeys: Record<string, string> = {};
+  // Which portrait a caption attempt is currently in flight for. The scene waits only
+  // while an attempt is genuinely running; any terminal outcome, success or failure,
+  // releases it. Continuity must never be able to block media indefinitely.
+  let subjectCaptionInFlight: Record<string, string> = {};
   let sidecarState: SidecarState | null = null;
   let expressionSnapshot: ExpressionSidecarRequest | null = null;
   let expressionResult: ExpressionSidecarResult | null = null;
@@ -2585,6 +2589,7 @@
     const displayName = portraitDisplayProfile?.displayName ?? '';
     const expression = portrait.source.expression;
     if (!characterId || !displayName || !expression) return;
+    subjectCaptionInFlight = { ...subjectCaptionInFlight, [characterId]: portrait.requestKey };
     try {
       const form = new FormData();
       form.append('image', portrait.image, 'portrait.png');
@@ -2592,7 +2597,10 @@
       form.append('displayName', displayName);
       form.append('expression', expression);
       const response = await fetch(`${base}/api/sidecar/caption`, { method: 'POST', body: form });
-      if (!response.ok) return;
+      if (!response.ok) {
+        console.warn('subject caption failed', response.status);
+        return;
+      }
       const payload = await response.json();
       const descriptor = createSubjectDescriptor(
         characterId,
@@ -2608,6 +2616,9 @@
       };
     } catch {
       // continuity is an enhancement; the portrait stands on its own
+    } finally {
+      const { [characterId]: _released, ...rest } = subjectCaptionInFlight;
+      subjectCaptionInFlight = rest;
     }
   }
 
@@ -4183,8 +4194,8 @@
     if (!generatedPortrait || !portraitCurrent) return true;
     const characterId = generatedPortrait.source.characterId;
     if (!characterId) return true;
-    const descriptor = subjectDescriptors[characterId];
-    return Boolean(descriptor) && subjectDescriptorPortraitKeys[characterId] === generatedPortrait.requestKey;
+    // Fail open: only an in-flight caption for this exact portrait defers the scene.
+    return subjectCaptionInFlight[characterId] !== generatedPortrait.requestKey;
   }
 
   function castContinuityClause(cast: { identities: readonly { characterId?: string; profileId?: string }[] }): string {
