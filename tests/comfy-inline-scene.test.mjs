@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
+import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
   INLINE_SCENE_CAPABILITIES_SPEC,
   INLINE_SCENE_QWEN_TEMPLATE_ID,
@@ -126,7 +126,7 @@ function cast(count) {
 function request() {
   const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
   const turns = [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }];
-  const source = inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, turns));
+  const source = inlineSceneSourceForCompletedTurn(transcriptSourceForMessages(conversationId, turns));
   const result = createInlineSceneResult(
     buildInlineSceneRequest(conversationId, turns, source, candidates),
     'gemma-4-ortenzya',
@@ -144,7 +144,7 @@ function request() {
 function qwenRequest(count = 1) {
   const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
   const turns = [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }];
-  const source = inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, turns));
+  const source = inlineSceneSourceForCompletedTurn(transcriptSourceForMessages(conversationId, turns));
   const result = createInlineSceneResult(
     buildInlineSceneRequest(conversationId, turns, source, candidates),
     'gemma-4-ortenzya',

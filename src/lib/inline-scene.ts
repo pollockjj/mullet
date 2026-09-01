@@ -1,9 +1,9 @@
 import {
-  livingHistorySourceMatchesMessages,
-  normalizeLivingHistorySource,
-  type LivingHistorySource,
-  type TranscriptMessage
-} from './living-history.ts';
+  normalizeTranscriptSource,
+  transcriptSourceMatchesMessages,
+  type TranscriptMessage,
+  type TranscriptSource
+} from './transcript-source.ts';
 import { isSidecarConversationId } from './sidecar.ts';
 import { sha256Hex } from './sha256.ts';
 import {
@@ -125,7 +125,7 @@ export type InlineSceneMegapixels = (typeof INLINE_SCENE_MEGAPIXELS)[number];
 export type InlineSceneModelTemplate = (typeof INLINE_SCENE_TEMPLATES)[number]['id'];
 export type InlineSceneTemplate = (typeof INLINE_SCENE_TEMPLATES)[number];
 
-export type InlineSceneCompletedTurnSource = LivingHistorySource & {
+export type InlineSceneCompletedTurnSource = TranscriptSource & {
   sourceKind: 'completed_turn';
   openingFingerprint?: never;
   scenarioId?: never;
@@ -429,8 +429,8 @@ export function inlineSceneOpeningFingerprint(
   ]))}`;
 }
 
-export function inlineSceneSourceForCompletedTurn(source: LivingHistorySource): InlineSceneCompletedTurnSource {
-  return { sourceKind: 'completed_turn', ...normalizeLivingHistorySource(source) };
+export function inlineSceneSourceForCompletedTurn(source: TranscriptSource): InlineSceneCompletedTurnSource {
+  return { sourceKind: 'completed_turn', ...normalizeTranscriptSource(source) };
 }
 
 function normalizedOpeningTurns(value: unknown): [TranscriptMessage] {
@@ -469,7 +469,7 @@ export function inlineSceneSourceForScenarioOpening(
 
 export function normalizeInlineSceneSource(value: unknown): InlineSceneSource {
   if (!isRecord(value)) throw new Error('inline-scene source is invalid');
-  if (value.sourceKind === 'completed_turn') return inlineSceneSourceForCompletedTurn(value as LivingHistorySource);
+  if (value.sourceKind === 'completed_turn') return inlineSceneSourceForCompletedTurn(value as TranscriptSource);
   if (value.sourceKind !== 'scenario_opening' || !isSidecarConversationId(value.conversationId)) {
     throw new Error('inline-scene source is invalid');
   }
@@ -538,7 +538,7 @@ export function inlineSceneSourceMatchesMessages(
   }
   if (normalized.conversationId !== conversationId || normalized.messageCount > messages.length) return false;
   if (normalized.sourceKind === 'completed_turn') {
-    return livingHistorySourceMatchesMessages(normalized, conversationId, messages);
+    return transcriptSourceMatchesMessages(normalized, conversationId, messages);
   }
   try {
     const [opening] = normalizedOpeningTurns(messages.slice(0, normalized.messageCount));
@@ -588,12 +588,12 @@ function inlineSceneTurnFingerprint(turns: readonly TranscriptMessage[]): string
 export function buildInlineSceneRequest(
   conversationId: string,
   messages: readonly TranscriptMessage[],
-  finalizedSource: LivingHistorySource | InlineSceneSource,
+  finalizedSource: TranscriptSource | InlineSceneSource,
   candidates: readonly InlineSceneSubjectCandidate[]
 ): InlineSceneRequest {
   const source = isRecord(finalizedSource) && 'sourceKind' in finalizedSource
     ? normalizeInlineSceneSource(finalizedSource)
-    : inlineSceneSourceForCompletedTurn(finalizedSource as LivingHistorySource);
+    : inlineSceneSourceForCompletedTurn(finalizedSource as TranscriptSource);
   if (!inlineSceneSourceMatchesMessages(source, conversationId, messages) || source.messageCount !== messages.length) {
     throw new Error('inline-scene source must identify the latest finalized response');
   }

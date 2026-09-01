@@ -1,10 +1,10 @@
 import {
-  livingHistorySourceForMessages,
-  livingHistorySourceMatchesMessages,
-  normalizeLivingHistorySource,
-  type LivingHistorySource,
-  type TranscriptMessage
-} from './living-history.ts';
+  normalizeTranscriptSource,
+  transcriptSourceForMessages,
+  transcriptSourceMatchesMessages,
+  type TranscriptMessage,
+  type TranscriptSource
+} from './transcript-source.ts';
 import {
   buildExpressionSidecarRequest,
   isSidecarConversationId,
@@ -28,7 +28,7 @@ export type FictionAuthoredOpeningReceipt = {
 
 export type FictionCompletedTurnReceipt = {
   kind: typeof FICTION_COMPLETED_TURN_RECEIPT_KIND;
-  source: LivingHistorySource & {
+  source: TranscriptSource & {
     rawFingerprint: string;
   };
 };
@@ -112,7 +112,7 @@ export function createCompletedFictionResponseReceipt(
   conversationId: string,
   messages: readonly TranscriptMessage[]
 ): FictionCompletedTurnReceipt {
-  const source = livingHistorySourceForMessages(conversationId, messages);
+  const source = transcriptSourceForMessages(conversationId, messages);
   return {
     kind: FICTION_COMPLETED_TURN_RECEIPT_KIND,
     source: {
@@ -161,11 +161,11 @@ export function normalizeFictionResponseReceipt(
       ['conversationId', 'messageCount', 'messageIndex', 'fingerprint', 'turnFingerprint', 'rawFingerprint'],
       'stored workspace completed-turn source'
     );
-    const source = normalizeLivingHistorySource(sourceRecord);
+    const source = normalizeTranscriptSource(sourceRecord);
     if (
       source.conversationId !== conversationId
       || source.messageCount !== messages.length
-      || !livingHistorySourceMatchesMessages(source, conversationId, messages)
+      || !transcriptSourceMatchesMessages(source, conversationId, messages)
       || typeof sourceRecord.rawFingerprint !== 'string'
       || !FINGERPRINT_PATTERN.test(sourceRecord.rawFingerprint)
       || sourceRecord.rawFingerprint !== completedResponseRawFingerprint(conversationId, messages)

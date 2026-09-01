@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
+import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
   INLINE_SCENE_CAPABILITIES_SPEC,
   INLINE_SCENE_IMAGE_REQUEST_SPEC,
@@ -221,7 +221,7 @@ function result(subjectIds = ['jenna-stannis']) {
   const request = buildInlineSceneRequest(
     conversationId,
     messages,
-    livingHistorySourceForMessages(conversationId, messages),
+    transcriptSourceForMessages(conversationId, messages),
     candidates
   );
   return createInlineSceneResult(request, 'gemma-4-ortenzya', { prompt: visualPrompt, subjectIds });
@@ -251,7 +251,7 @@ function h3StillRequest(profileIds, continuity = undefined, selectedCast = cast(
 
 test('builds a finalized-response sidecar request without mutating the transcript', () => {
   const before = JSON.stringify(messages);
-  const source = livingHistorySourceForMessages(conversationId, messages);
+  const source = transcriptSourceForMessages(conversationId, messages);
   const request = buildInlineSceneRequest(conversationId, messages, source, candidates);
   assert.equal(request.turns.length, 2);
   assert.equal(request.source.fingerprint, source.fingerprint);
@@ -318,7 +318,7 @@ test('represents a canonical assistant-only scenario opening without weakening c
   );
   assert.notEqual(inlineSceneImageRequestKey(openingImageRequest), inlineSceneImageRequestKey(otherImageRequest));
 
-  const completed = inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, messages));
+  const completed = inlineSceneSourceForCompletedTurn(transcriptSourceForMessages(conversationId, messages));
   assert.equal(completed.sourceKind, 'completed_turn');
   assert.equal(inlineSceneSourcesMatch(source, completed), false);
   assert.notEqual(inlineSceneSourceKey(source), inlineSceneSourceKey(completed));
@@ -379,7 +379,7 @@ test('shrinks an oversized context tail while retaining the exact finalized pair
     { role: 'assistant', content: 'An earlier answer.' },
     ...messages
   ];
-  const source = livingHistorySourceForMessages(conversationId, transcript);
+  const source = transcriptSourceForMessages(conversationId, transcript);
   const request = buildInlineSceneRequest(conversationId, transcript, source, candidates);
   assert.deepEqual(request.turns, [transcript[2], ...messages]);
   assert.equal(request.turns.some((turn) => turn.content.length > 60_000), false);
@@ -389,7 +389,7 @@ test('rejects forged source provenance unrelated to the supplied latest turn', (
   const request = buildInlineSceneRequest(
     conversationId,
     messages,
-    livingHistorySourceForMessages(conversationId, messages),
+    transcriptSourceForMessages(conversationId, messages),
     candidates
   );
   assert.throws(
@@ -454,7 +454,7 @@ test('binds the scene result and image request to exact transcript and prompt ha
   const sidecarRequest = buildInlineSceneRequest(
     conversationId,
     messages,
-    livingHistorySourceForMessages(conversationId, messages),
+    transcriptSourceForMessages(conversationId, messages),
     candidates
   );
   assert.equal(inlineSceneResultMatchesRequest(sceneResult, sidecarRequest), true);

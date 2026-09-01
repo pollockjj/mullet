@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
+import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
   INLINE_SCENE_TEMPLATE_ID,
   buildInlineSceneImageRequest,
@@ -98,7 +98,7 @@ function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCE
     : buildInlineSceneRequest(
         conversationId,
         messages,
-        livingHistorySourceForMessages(conversationId, messages),
+        transcriptSourceForMessages(conversationId, messages),
         [sceneCandidate]
       );
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', {

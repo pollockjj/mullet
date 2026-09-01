@@ -46,7 +46,7 @@ test('cryptographically receipts one authored assistant opening and exposes its 
   );
 });
 
-test('uses living-history provenance for the latest completed user-assistant turn', () => {
+test('uses transcript provenance for the latest completed user-assistant turn', () => {
   const messages = [
     { role: 'assistant', content: 'An authored opening.' },
     { role: 'user', content: 'Where are we?' },

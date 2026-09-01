@@ -29,23 +29,6 @@
   import { extractPngLorebook, MAX_LOREBOOK_PNG_BYTES } from '$lib/png-lorebook';
   import { loadStoredLorebooks, saveStoredLorebooks, type StoredLorebook } from '$lib/lorebook-storage';
   import {
-    LIVING_HISTORY_INTERVAL_MESSAGES,
-    LIVING_HISTORY_CHARACTER_LIMIT,
-    LIVING_HISTORY_QUOTE_BANK_LIMIT,
-    LIVING_HISTORY_TIMEOUT_MS,
-    livingHistoryLorebook,
-    livingHistoryRequestKey,
-    livingHistoryResultAppliesToMessages,
-    livingHistoryResultMatchesMessages,
-    livingHistoryResultMatchesRequest,
-    livingHistorySourceForMessages,
-    normalizeLivingHistorySource,
-    normalizeLivingHistoryResult,
-    type LivingHistoryRequest,
-    type LivingHistoryResult,
-    type LivingHistorySource
-  } from '$lib/living-history';
-  import {
     INLINE_SCENE_IMAGE_TIMEOUT_MS,
     INLINE_SCENE_QWEN_TEMPLATE_ID,
     INLINE_SCENE_TEMPLATE_ID,
@@ -141,29 +124,6 @@
     type StoredInlineScene
   } from '$lib/inline-scene-storage';
   import {
-    MAX_SUPPLEMENTAL_LOREBOOKS,
-    appendLivingHistoryBoundary,
-    assembleSupplementalLorebooks,
-    authoritativeLivingHistoryEpoch,
-    currentLivingHistoryRequest,
-    livingHistoryAutomaticUpdateDue,
-    livingHistoryReadyForChat,
-    normalizeStoredLivingHistoryBoundaries,
-    pendingLivingHistoryMessageCount
-    , parseLivingHistoryActiveHeader
-  } from '$lib/living-history-client';
-  import {
-    clearLivingHistoryAtEpoch,
-    clearStoredLivingHistory,
-    commitLivingHistoryResult,
-    loadStoredLivingHistory,
-    restoreLivingHistoryResult,
-    rollbackStoredLivingHistoryWrite,
-    runStoredLivingHistoryExclusive,
-    saveStoredLivingHistory
-    , LivingHistoryConflictError
-  } from '$lib/living-history-storage';
-  import {
     PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
     PORTRAIT_H3_TIMEOUT_MS,
     PORTRAIT_TEMPLATE_ID,
@@ -251,44 +211,6 @@
   import { serializeChatRequest } from '$lib/chat-request-size';
   import { assertFinalizedChatStream, parseChatStreamPayload } from '$lib/chat-stream';
   import {
-    ASSISTANT_MEMORY_TIMEOUT_MS,
-    assistantMemoryLorebook,
-    assistantMemoryResultMatchesRequest,
-    buildAssistantMemoryRequest,
-    normalizeAssistantMemoryResult,
-    type AssistantMemoryRequest,
-    type AssistantMemoryResult
-  } from '$lib/assistant-memory';
-  import {
-    assistantMemoryInjectionStatusText,
-    assistantMemoryPendingAlreadyCommitted,
-    assistantMemoryReadyForSend,
-    assistantMemoryRequestKey,
-    currentAssistantMemoryRequest,
-    parseAssistantMemoryActiveHeader
-  } from '$lib/assistant-memory-client';
-  import {
-    AssistantMemoryConflictError,
-    clearAssistantMemoryAtEpoch,
-    clearStoredAssistantMemory,
-    commitAssistantMemoryResult,
-    createStoredAssistantMemoryPendingTurn,
-    loadStoredAssistantMemory,
-    loadStoredAssistantMemoryPendingTurn,
-    rollbackStoredAssistantMemoryWrite,
-    runPersonalAssistantTurnExclusive,
-    runStoredAssistantMemoryExclusive,
-    saveStoredAssistantMemory,
-    saveStoredAssistantMemoryPendingTurn,
-    type StoredAssistantMemoryPendingTurn
-  } from '$lib/assistant-memory-storage';
-  import {
-    CONVERSATION_MODE_FICTION,
-    CONVERSATION_MODE_PERSONAL_ASSISTANT,
-    normalizeConversationMode,
-    type ConversationMode
-  } from '$lib/personal-assistant';
-  import {
     defaultScenarioPortraitProfile,
     isScenarioCard,
     normalizeScenarioCatalog,
@@ -319,9 +241,9 @@
     saveStoredWorkspace,
     workspaceCompletedTurnCapacityError,
     workspaceMutationFingerprint,
-    workspaceReadyForCompletedTurn,
-    type WorkspaceAssistantMemoryReceipt
+    workspaceReadyForCompletedTurn
   } from '$lib/workspace-state';
+  import { normalizeTranscriptSource, transcriptSourceForMessages } from '$lib/transcript-source';
   import type { PageData } from './$types';
 
   type Role = 'user' | 'assistant';
@@ -336,7 +258,6 @@
   let errorMessage = '';
   let noticeMessage = '';
   let tokenLimit = data.defaultMaxTokens;
-  let conversationMode: ConversationMode = CONVERSATION_MODE_FICTION;
   let finalizedFictionResponse: FictionResponseReceipt | null = null;
   let activeCard: ImportedCharacterCard | null = null;
   let cardSourceIdentifier = '';
@@ -407,23 +328,6 @@
   let lorePersistenceBusy = false;
   let lorePersistenceAvailable = true;
   let loreTimedState: LoreTimedState = emptyLoreTimedState();
-  let livingHistoryEnabled = false;
-  let livingHistoryResult: LivingHistoryResult | null = null;
-  let livingHistoryBook: ImportedLorebook | null = null;
-  let livingHistoryApplicable = false;
-  let livingHistoryCurrent = false;
-  let livingHistoryRequest: LivingHistoryRequest | null = null;
-  let livingHistoryBoundaries: LivingHistorySource[] = [];
-  let livingHistoryPendingMessages = 0;
-  let livingHistoryPersistenceReady = false;
-  let livingHistoryPersistenceAvailable = true;
-  let livingHistoryBusy = false;
-  let livingHistoryError = '';
-  let lastLivingHistoryFired: boolean | null = null;
-  let lastLivingHistoryAttemptKey = '';
-  let livingHistoryController: AbortController | null = null;
-  let livingHistoryGeneration = 0;
-  let livingHistoryEpoch = '';
   let inlineScenesEnabled = false;
   let finalizedInlineSceneSource: InlineSceneSource | null = null;
   let inlineSceneEpoch = '';
@@ -512,21 +416,7 @@
   let expressionRetriedKey = '';
   let expressionRetryTimer: number | null = null;
   let sidecarController: AbortController | null = null;
-  let assistantMemoryId = '';
-  let assistantMemoryEpoch = '';
-  let assistantMemoryResult: AssistantMemoryResult | null = null;
-  let assistantMemoryBook: ImportedLorebook | null = null;
-  let assistantMemoryPending: StoredAssistantMemoryPendingTurn | null = null;
-  let assistantMemoryRequest: AssistantMemoryRequest | null = null;
-  let assistantMemoryPersistenceReady = false;
-  let assistantMemoryPersistenceAvailable = true;
-  let assistantMemoryBusy = false;
   let assistantTurnBusy = false;
-  let assistantMemoryError = '';
-  let lastAssistantMemoryActive: boolean | null = null;
-  let lastAssistantMemorySource: LivingHistorySource | null = null;
-  let assistantMemoryGeneration = 0;
-  let assistantMemoryController: AbortController | null = null;
   let workspaceBusy = false;
   let controller: AbortController | null = null;
   let transcript: HTMLDivElement;
@@ -543,11 +433,6 @@
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
   const personaDescriptionStorageKey = 'mullet.persona-description';
   const loreTimedStateStorageKey = 'mullet.lore-timed-state';
-  const livingHistoryEnabledStorageKey = 'mullet.living-history-enabled';
-  const livingHistoryBoundariesStorageKey = 'mullet.living-history-finalized-boundaries';
-  const livingHistoryEpochStorageKey = 'mullet.living-history-epoch';
-  const assistantMemoryIdStorageKey = 'mullet.assistant-memory-id';
-  const assistantMemoryEpochStorageKey = 'mullet.assistant-memory-epoch';
   const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
   const portraitSubjectStorageKey = 'mullet.portrait-subject';
   const portraitSettingStorageKey = 'mullet.portrait-setting';
@@ -572,46 +457,16 @@
   const bodyReferenceWidth = 576;
   const bodyReferenceHeight = 1024;
 
-  $: livingHistoryApplicable = Boolean(
-    conversationMode === CONVERSATION_MODE_FICTION
-    && livingHistoryResult
-    && livingHistoryResultAppliesToMessages(livingHistoryResult, conversationId, messages)
-  );
-  $: livingHistoryCurrent = Boolean(
-    conversationMode === CONVERSATION_MODE_FICTION
-    && livingHistoryResult
-    && livingHistoryResultMatchesMessages(livingHistoryResult, conversationId, messages)
-  );
-  $: livingHistoryRequest = conversationMode === CONVERSATION_MODE_FICTION
-    ? currentLivingHistoryRequest(
-        conversationId,
-        messages,
-        livingHistoryResult,
-        livingHistoryBoundaries
-      )
-    : null;
-  $: livingHistoryPendingMessages = livingHistoryRequest?.turns.length
-    ?? pendingLivingHistoryMessageCount(livingHistoryBoundaries, livingHistoryResult);
-  $: livingHistoryBook = conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled && livingHistoryResult && livingHistoryApplicable
-    ? livingHistoryLorebook(livingHistoryResult, conversationId, messages)
-    : null;
-  $: activeLorebooks = conversationMode === CONVERSATION_MODE_FICTION
-    ? [
-        ...combineLorebooks(embeddedLorebook, importedLorebooks, isScenarioCard(activeCard)),
-        ...(livingHistoryBook ? [livingHistoryBook] : [])
-      ]
-    : [];
-  $: assistantMemoryBook = assistantMemoryResult ? assistantMemoryLorebook(assistantMemoryResult) : null;
-  $: assistantMemoryRequest = currentAssistantMemoryRequest(
-    assistantMemoryId,
-    assistantMemoryPending,
-    assistantMemoryResult
+  $: activeLorebooks = combineLorebooks(
+    embeddedLorebook,
+    importedLorebooks,
+    isScenarioCard(activeCard)
   );
   $: selectedScenario = scenarioCatalog?.scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
-  $: scenarioPortraitProfile = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
+  $: scenarioPortraitProfile = true && isScenarioCard(activeCard)
     ? scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)
     : null;
-  $: scenarioBaseSceneProfiles = conversationMode === CONVERSATION_MODE_FICTION && isScenarioCard(activeCard)
+  $: scenarioBaseSceneProfiles = true && isScenarioCard(activeCard)
     ? scenarioPortraitCast(activeCard)?.profiles ?? []
     : [];
   $: bodyReferenceOverlayProfileSetKey = scenarioBaseSceneProfiles
@@ -671,7 +526,7 @@
     portraitVideoMode,
     portraitVideoModelTemplate
   );
-  $: expressionSnapshot = conversationMode === CONVERSATION_MODE_FICTION
+  $: expressionSnapshot = true
     ? currentExpressionSnapshot(finalizedFictionResponse, conversationId, messages)
     : null;
   $: expressionResult = sidecarState?.channels.expression ?? null;
@@ -740,7 +595,7 @@
     && !portraitVideoBusy
   );
   $: portraitVideoVisible = portraitVideoMounted && portraitVideoPlaybackState === 'playing';
-  $: inlineSceneSidecarRequest = conversationMode === CONVERSATION_MODE_FICTION
+  $: inlineSceneSidecarRequest = true
     ? currentInlineSceneSidecarRequest(
         conversationId,
         messages,
@@ -748,7 +603,7 @@
         scenarioSceneProfiles
       )
     : null;
-  $: inlineSceneApplies = conversationMode === CONVERSATION_MODE_FICTION && inlineSceneAppliesToTranscript(
+  $: inlineSceneApplies = true && inlineSceneAppliesToTranscript(
     generatedInlineScene,
     finalizedInlineSceneSource,
     inlineSceneEpoch,
@@ -788,7 +643,7 @@
   );
   $: inlineSceneVideoVisible = inlineSceneVideoMounted && inlineSceneVideoPlaybackState === 'playing';
   $: scheduleExpressionReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+    true && expressionsEnabled,
     sidecarPersistenceReady,
     sidecarPersistenceAvailable,
     streaming,
@@ -797,7 +652,7 @@
     expressionCurrent
   );
   $: schedulePortraitReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION
+    true
       && expressionsEnabled
       && scenarioPortraitGenerationReady(activeCard, scenarioCatalogSettled),
     portraitCapabilities,
@@ -813,7 +668,7 @@
     portraitCurrent
   );
   $: schedulePortraitVideoReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+    true && expressionsEnabled,
     portraitMotionEnabled,
     portraitVideoCapabilities,
     portraitVideoPersistenceReady,
@@ -824,7 +679,7 @@
     portraitVideoCurrent
   );
   $: scheduleInlineSceneReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
+    true && inlineScenesEnabled,
     inlineSceneCapabilities,
     inlineScenePersistenceReady && bodyReferenceOverlayReady && !bodyReferenceOverlayBusyProfileId,
     inlineScenePersistenceAvailable,
@@ -838,7 +693,7 @@
     inlineSceneStillMode
   );
   $: scheduleInlineSceneVideoReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled,
+    true && inlineScenesEnabled,
     inlineSceneMotionEnabled,
     inlineSceneVideoCapabilities,
     inlineSceneVideoPersistenceReady && bodyReferenceOverlayReady && !bodyReferenceOverlayBusyProfileId,
@@ -851,15 +706,6 @@
     inlineSceneVideoRequest,
     inlineSceneVideoCurrent
   );
-  $: scheduleLivingHistoryReconciliation(
-    conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled,
-    livingHistoryPersistenceReady,
-    livingHistoryPersistenceAvailable,
-    streaming,
-    livingHistoryBusy,
-    livingHistoryRequest,
-    livingHistoryPendingMessages
-  );
 
   const fictionStarters = [
     'Write the opening beat of a tense science-fiction scene.',
@@ -871,7 +717,7 @@
     'Turn these rough notes into a concrete plan.',
     'Draft a concise message from the context I provide.'
   ];
-  $: starters = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
+  $: starters = false
     ? assistantStarters
     : fictionStarters;
 
@@ -895,12 +741,6 @@
   onMount(() => {
     window.addEventListener('pagehide', handleInlineSceneVideoPageHide);
     window.addEventListener('pageshow', handleInlineSceneVideoPageShow);
-    const savedAssistantMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
-    assistantMemoryId = isSidecarConversationId(savedAssistantMemoryId) ? savedAssistantMemoryId : crypto.randomUUID();
-    localStorage.setItem(assistantMemoryIdStorageKey, assistantMemoryId);
-    const savedAssistantMemoryEpoch = localStorage.getItem(assistantMemoryEpochStorageKey);
-    assistantMemoryEpoch = isSidecarConversationId(savedAssistantMemoryEpoch) ? savedAssistantMemoryEpoch : crypto.randomUUID();
-    localStorage.setItem(assistantMemoryEpochStorageKey, assistantMemoryEpoch);
     restoreWorkspaceState();
     activeScenarioStarterId = localStorage.getItem(activeScenarioStarterStorageKey) ?? '';
 
@@ -911,7 +751,7 @@
         cardSourceIdentifier = characterSourceIdentifier(localStorage.getItem(cardSourceIdentifierStorageKey) ?? '');
         portraitDataUrl = localStorage.getItem(portraitStorageKey) ?? '';
         embeddedLorebook = embeddedLoreFromCard(activeCard);
-        if (messages.length === 0 && conversationMode === CONVERSATION_MODE_FICTION) {
+        if (messages.length === 0 && true) {
           messages = freshConversation();
           bindAuthoredFictionOpeningReceipt();
           persist();
@@ -951,16 +791,6 @@
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
-    window.addEventListener('storage', handleAssistantMemoryGenerationChange);
-    void restoreAssistantMemory(true);
-    const savedLivingHistoryEpoch = localStorage.getItem(livingHistoryEpochStorageKey);
-    const allowLegacyLivingHistory = !isSidecarConversationId(savedLivingHistoryEpoch);
-    livingHistoryEpoch = allowLegacyLivingHistory ? crypto.randomUUID() : savedLivingHistoryEpoch;
-    localStorage.setItem(livingHistoryEpochStorageKey, livingHistoryEpoch);
-    window.addEventListener('storage', handleLivingHistoryEpochChange);
-    livingHistoryEnabled = localStorage.getItem(livingHistoryEnabledStorageKey) === 'true';
-    restoreLivingHistoryBoundaries();
-    void restoreLivingHistory(allowLegacyLivingHistory);
     sidecarState = emptySidecarState(conversationId);
     expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
     portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
@@ -1008,32 +838,10 @@
   });
 
   function restoreWorkspaceState() {
-    const loaded = loadStoredWorkspace(
-      localStorage,
-      crypto.randomUUID(),
-      assistantMemoryId,
-      assistantMemoryEpoch
-    );
-    conversationMode = loaded.workspace.mode;
+    const loaded = loadStoredWorkspace(localStorage, crypto.randomUUID());
     conversationId = loaded.workspace.conversationId;
     messages = loaded.workspace.messages;
     finalizedFictionResponse = loaded.workspace.finalizedFictionResponse;
-    const storedMemory = loaded.workspace.assistantMemory;
-    if (
-      conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
-      && storedMemory
-      && storedMemory.memoryId === assistantMemoryId
-      && storedMemory.epoch === assistantMemoryEpoch
-    ) {
-      assistantMemoryPending = storedMemory.pending;
-      lastAssistantMemorySource = storedMemory.lastCompletedChat?.source ?? null;
-      lastAssistantMemoryActive = storedMemory.lastCompletedChat?.active ?? null;
-    } else {
-      assistantMemoryPending = null;
-      lastAssistantMemorySource = storedMemory?.lastCompletedChat?.source ?? null;
-      lastAssistantMemoryActive = storedMemory?.lastCompletedChat?.active ?? null;
-      if (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) persist();
-    }
     if (loaded.disposition === 'repaired') {
       noticeMessage = 'Stored response-finalization state was repaired; conversation retained.';
     } else if (loaded.disposition === 'reset') {
@@ -1051,11 +859,6 @@
     inlineSceneVideoElement?.pause();
     if (browser) window.removeEventListener('pagehide', handleInlineSceneVideoPageHide);
     if (browser) window.removeEventListener('pageshow', handleInlineSceneVideoPageShow);
-    if (browser) window.removeEventListener('storage', handleLivingHistoryEpochChange);
-    if (browser) window.removeEventListener('storage', handleAssistantMemoryGenerationChange);
-    assistantMemoryGeneration += 1;
-    assistantMemoryController?.abort();
-    livingHistoryController?.abort();
     portraitController?.abort();
     if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
     portraitVideoGeneration += 1;
@@ -1181,7 +984,7 @@
       try {
         source = normalizeInlineSceneSource(parsed.source);
       } catch {
-        source = inlineSceneSourceForCompletedTurn(normalizeLivingHistorySource(parsed.source));
+        source = inlineSceneSourceForCompletedTurn(normalizeTranscriptSource(parsed.source));
         migratedLegacySource = true;
       }
       if (source.sourceKind === 'scenario_opening' && !scenarioCatalogSettled) return;
@@ -2701,7 +2504,7 @@
     if (
       !inlineScenesEnabled
       || finalizedInlineSceneSource
-      || conversationMode !== CONVERSATION_MODE_FICTION
+      || false
     ) return;
     try {
       publishScenarioOpeningInlineSceneSource();
@@ -3221,7 +3024,7 @@
       if (lastPortraitVideoAttemptKey !== key) return;
       lastPortraitVideoAttemptKey = '';
       schedulePortraitVideoReconciliation(
-        conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+        true && expressionsEnabled,
         portraitMotionEnabled,
         portraitVideoCapabilities,
         portraitVideoPersistenceReady,
@@ -3542,7 +3345,7 @@
       if (lastPortraitAttemptKey !== key) return;
       lastPortraitAttemptKey = '';
       schedulePortraitReconciliation(
-        conversationMode === CONVERSATION_MODE_FICTION
+        true
           && expressionsEnabled
           && scenarioPortraitGenerationReady(activeCard, scenarioCatalogSettled),
         portraitCapabilities,
@@ -3723,264 +3526,17 @@
     return expressionRequestForFinalizedFictionResponse(receipt, currentConversationId, currentMessages);
   }
 
-  function persistLivingHistoryBoundaries() {
-    if (!browser) return;
-    if (livingHistoryBoundaries.length) {
-      localStorage.setItem(livingHistoryBoundariesStorageKey, JSON.stringify(livingHistoryBoundaries));
-    } else {
-      localStorage.removeItem(livingHistoryBoundariesStorageKey);
-    }
-  }
 
-  function restoreLivingHistoryBoundaries() {
-    const saved = localStorage.getItem(livingHistoryBoundariesStorageKey);
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      livingHistoryBoundaries = normalizeStoredLivingHistoryBoundaries(parsed, conversationId, messages);
-    } catch {
-      livingHistoryBoundaries = [];
-      localStorage.removeItem(livingHistoryBoundariesStorageKey);
-    }
-  }
 
-  function disableLivingHistoryPersistence(cause: unknown) {
-    livingHistoryGeneration += 1;
-    livingHistoryController?.abort();
-    livingHistoryPersistenceAvailable = false;
-    livingHistoryEnabled = false;
-    if (browser) localStorage.setItem(livingHistoryEnabledStorageKey, 'false');
-    livingHistoryError = cause instanceof Error ? cause.message : 'Living-history persistence failed.';
-  }
 
-  function reconcileLivingHistoryEpochFromStorage(): boolean {
-    const authoritativeEpoch = authoritativeLivingHistoryEpoch(
-      livingHistoryEpoch,
-      localStorage.getItem(livingHistoryEpochStorageKey)
-    );
-    if (authoritativeEpoch === livingHistoryEpoch) return true;
-    livingHistoryEpoch = authoritativeEpoch;
-    livingHistoryGeneration += 1;
-    livingHistoryController?.abort();
-    livingHistoryResult = null;
-    livingHistoryBook = null;
-    livingHistoryBoundaries = [];
-    livingHistoryError = '';
-    lastLivingHistoryAttemptKey = '';
-    livingHistoryPersistenceReady = true;
-    return false;
-  }
 
-  function handleLivingHistoryEpochChange(event: StorageEvent) {
-    if (event.key === livingHistoryEpochStorageKey) reconcileLivingHistoryEpochFromStorage();
-  }
 
-  async function restoreLivingHistory(allowLegacy = false) {
-    const restoreGeneration = livingHistoryGeneration;
-    const restoreConversationId = conversationId;
-    const restoreEpoch = livingHistoryEpoch;
-    try {
-      const restored = await restoreLivingHistoryResult({
-        load: () => loadStoredLivingHistory(restoreEpoch, allowLegacy),
-        isCurrent: () => restoreGeneration === livingHistoryGeneration
-          && restoreConversationId === conversationId
-          && restoreEpoch === livingHistoryEpoch
-          && localStorage.getItem(livingHistoryEpochStorageKey) === restoreEpoch,
-        accepts: (result) => livingHistoryResultAppliesToMessages(result, restoreConversationId, messages),
-        install: (current) => {
-          livingHistoryResult = current;
-          livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > current.source.messageCount);
-          persistLivingHistoryBoundaries();
-        },
-        exclusive: runStoredLivingHistoryExclusive
-      });
-      void restored;
-    } catch (cause) {
-      disableLivingHistoryPersistence(cause);
-    } finally {
-      if (
-        restoreGeneration === livingHistoryGeneration
-        && restoreEpoch === livingHistoryEpoch
-        && localStorage.getItem(livingHistoryEpochStorageKey) === restoreEpoch
-      ) livingHistoryPersistenceReady = true;
-    }
-  }
 
-  function recordFinalizedLivingHistoryBoundary() {
-    try {
-      const source = livingHistorySourceForMessages(conversationId, messages);
-      livingHistoryBoundaries = appendLivingHistoryBoundary(livingHistoryBoundaries, source);
-      persistLivingHistoryBoundaries();
-      lastLivingHistoryAttemptKey = '';
-    } catch {
-      // Only completed, non-empty user-assistant pairs reach this function.
-    }
-  }
 
-  function scheduleLivingHistoryReconciliation(
-    enabled: boolean,
-    persistenceReady: boolean,
-    persistenceAvailable: boolean,
-    isStreaming: boolean,
-    busy: boolean,
-    request: LivingHistoryRequest | null,
-    pendingMessages: number
-  ) {
-    if (
-      !enabled
-      || !persistenceReady
-      || !persistenceAvailable
-      || isStreaming
-      || busy
-      || !request
-      || !livingHistoryAutomaticUpdateDue(pendingMessages)
-    ) return;
-    const key = livingHistoryRequestKey(request);
-    if (key === lastLivingHistoryAttemptKey) return;
-    lastLivingHistoryAttemptKey = key;
-    void updateLivingHistory(request);
-  }
 
-  function persistLivingHistoryEnabled() {
-    if (!livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable) livingHistoryEnabled = false;
-    if (livingHistoryEnabled && importedLorebooks.length >= MAX_SUPPLEMENTAL_LOREBOOKS) {
-      livingHistoryEnabled = false;
-      livingHistoryError = 'Living history reserves one supplemental lorebook slot; remove one of the 20 imported lorebooks first.';
-    } else {
-      livingHistoryError = '';
-    }
-    localStorage.setItem(livingHistoryEnabledStorageKey, String(livingHistoryEnabled));
-    lastLivingHistoryAttemptKey = '';
-    if (!livingHistoryEnabled) livingHistoryController?.abort();
-  }
 
-  async function updateLivingHistory(selectedRequest: LivingHistoryRequest | null = livingHistoryRequest) {
-    if (
-      !selectedRequest
-      || !livingHistoryEnabled
-      || streaming
-      || livingHistoryBusy
-      || !livingHistoryPersistenceReady
-      || !livingHistoryPersistenceAvailable
-    ) return;
-    const selectedEpoch = livingHistoryEpoch;
-    lastLivingHistoryAttemptKey = livingHistoryRequestKey(selectedRequest);
-    livingHistoryBusy = true;
-    livingHistoryError = '';
-    const activeController = new AbortController();
-    livingHistoryController = activeController;
-    let timedOut = false;
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      activeController.abort();
-    }, LIVING_HISTORY_TIMEOUT_MS);
-    try {
-      const response = await fetch(`${base}/api/sidecar/history`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(selectedRequest),
-        signal: activeController.signal
-      });
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch (cause) {
-        if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
-        payload = null;
-      }
-      if (!response.ok) {
-        const detail = payload
-          && typeof payload === 'object'
-          && 'message' in payload
-          && typeof payload.message === 'string'
-          ? payload.message
-          : `Living-history sidecar failed (${response.status}).`;
-        throw new Error(detail);
-      }
-      const result = normalizeLivingHistoryResult(payload);
-      if (!livingHistoryResultMatchesRequest(result, selectedRequest)) {
-        throw new Error('Living-history sidecar returned a mismatched source snapshot.');
-      }
-      const isCurrent = () => {
-        const liveRequest = currentLivingHistoryRequest(conversationId, messages, livingHistoryResult, livingHistoryBoundaries);
-        return livingHistoryEnabled
-          && selectedEpoch === livingHistoryEpoch
-          && localStorage.getItem(livingHistoryEpochStorageKey) === selectedEpoch
-          && Boolean(liveRequest && livingHistoryRequestKey(liveRequest) === livingHistoryRequestKey(selectedRequest));
-      };
-      try {
-        await commitLivingHistoryResult(result, {
-          save: (current) => saveStoredLivingHistory(current, selectedEpoch),
-          isCurrent,
-          discard: rollbackStoredLivingHistoryWrite,
-          install: (current) => {
-            livingHistoryResult = current;
-            livingHistoryBoundaries = livingHistoryBoundaries.filter((boundary) => boundary.messageCount > current.source.messageCount);
-            persistLivingHistoryBoundaries();
-          },
-          exclusive: runStoredLivingHistoryExclusive
-        });
-      } catch (cause) {
-        if (cause instanceof LivingHistoryConflictError) {
-          livingHistoryError = cause.message;
-          await restoreLivingHistory();
-        } else {
-          disableLivingHistoryPersistence(cause);
-        }
-      }
-    } catch (cause) {
-      if (cause instanceof DOMException && cause.name === 'AbortError') {
-        if (timedOut) livingHistoryError = `Living-history sidecar timed out after ${LIVING_HISTORY_TIMEOUT_MS / 1000} seconds.`;
-      } else {
-        livingHistoryError = cause instanceof Error ? cause.message : 'Living-history sidecar failed.';
-      }
-    } finally {
-      window.clearTimeout(timeoutId);
-      if (livingHistoryController === activeController) {
-        livingHistoryBusy = false;
-        livingHistoryController = null;
-      }
-    }
-  }
 
-  async function clearLivingHistory() {
-    livingHistoryGeneration += 1;
-    const nextEpoch = crypto.randomUUID();
-    livingHistoryController?.abort();
-    livingHistoryResult = null;
-    livingHistoryBook = null;
-    livingHistoryBoundaries = [];
-    livingHistoryError = '';
-    lastLivingHistoryFired = null;
-    lastLivingHistoryAttemptKey = '';
-    persistLivingHistoryBoundaries();
-    try {
-      await clearLivingHistoryAtEpoch(nextEpoch, {
-        exclusive: runStoredLivingHistoryExclusive,
-        publishEpoch: (epoch) => {
-          livingHistoryEpoch = epoch;
-          localStorage.setItem(livingHistoryEpochStorageKey, epoch);
-        },
-        clear: clearStoredLivingHistory
-      });
-    } catch (cause) {
-      disableLivingHistoryPersistence(cause);
-    } finally {
-      livingHistoryPersistenceReady = true;
-    }
-  }
 
-  function livingHistoryStatusText(): string {
-    if (livingHistoryBusy) return 'Updating continuity, quotes, and character state…';
-    if (livingHistoryResult && !livingHistoryApplicable) return 'Stored history does not match this transcript.';
-    if (livingHistoryCurrent) return `Current · revision ${livingHistoryResult?.output.revision ?? 0}`;
-    if (livingHistoryPendingMessages >= LIVING_HISTORY_INTERVAL_MESSAGES) return `${livingHistoryPendingMessages} finalized messages ready to summarize.`;
-    if (livingHistoryPendingMessages > 0) {
-      return `${LIVING_HISTORY_INTERVAL_MESSAGES - livingHistoryPendingMessages} finalized messages until automatic update · Update now is available.`;
-    }
-    if (livingHistoryResult) return `Current through ${livingHistoryResult.source.messageCount} canonical messages.`;
-    return 'No finalized history yet.';
-  }
 
   function expressionSnapshotKey(snapshot: ExpressionSidecarRequest): string {
     return [
@@ -4016,7 +3572,7 @@
       if (lastExpressionAttemptKey !== key) return;
       lastExpressionAttemptKey = '';
       scheduleExpressionReconciliation(
-        conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled,
+        true && expressionsEnabled,
         sidecarPersistenceReady,
         sidecarPersistenceAvailable,
         streaming,
@@ -4060,14 +3616,11 @@
 
   async function resetSidecarForConversation() {
     sidecarController?.abort();
-    livingHistoryController?.abort();
     lastExpressionAttemptKey = '';
-    lastLivingHistoryAttemptKey = '';
     conversationId = crypto.randomUUID();
     finalizedFictionResponse = null;
     await resetInlineSceneForConversation();
     await resetPortraitForConversation();
-    await clearLivingHistory();
     sidecarState = emptySidecarState(conversationId);
     sidecarError = '';
     if (!sidecarPersistenceAvailable) return;
@@ -4078,291 +3631,16 @@
     }
   }
 
-  function assistantMemoryIsCurrent(generation: number, epoch: string, memoryId: string): boolean {
-    return generation === assistantMemoryGeneration
-      && epoch === assistantMemoryEpoch
-      && memoryId === assistantMemoryId
-      && localStorage.getItem(assistantMemoryEpochStorageKey) === epoch
-      && localStorage.getItem(assistantMemoryIdStorageKey) === memoryId;
-  }
 
-  function disableAssistantMemoryPersistence(cause: unknown) {
-    assistantMemoryGeneration += 1;
-    assistantMemoryController?.abort();
-    assistantMemoryBusy = false;
-    assistantMemoryPersistenceAvailable = false;
-    assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory persistence failed.';
-  }
 
-  async function restoreAssistantMemory(resumePending: boolean) {
-    const restoreGeneration = assistantMemoryGeneration;
-    const restoreEpoch = assistantMemoryEpoch;
-    const restoreMemoryId = assistantMemoryId;
-    assistantMemoryPersistenceReady = false;
-    try {
-      await runStoredAssistantMemoryExclusive(async () => {
-        if (!assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) return;
-        const journalPending = assistantMemoryPending;
-        const [storedResult, storedPending] = await Promise.all([
-          loadStoredAssistantMemory(restoreEpoch, restoreMemoryId),
-          loadStoredAssistantMemoryPendingTurn(restoreEpoch, restoreMemoryId)
-        ]);
-        if (!assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) return;
-        if (journalPending && storedPending && journalPending.turnKey !== storedPending.turnKey) {
-          throw new AssistantMemoryConflictError('The durable workspace and assistant-memory outboxes disagree.');
-        }
-        const recoveredPending = journalPending ?? storedPending;
-        if (
-          recoveredPending
-          && !storedPending
-          && !assistantMemoryPendingAlreadyCommitted(recoveredPending, storedResult)
-        ) await saveStoredAssistantMemoryPendingTurn(recoveredPending);
-        assistantMemoryResult = storedResult;
-        assistantMemoryPending = recoveredPending;
-        if (!journalPending && recoveredPending && conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) persist();
-      });
-    } catch (cause) {
-      disableAssistantMemoryPersistence(cause);
-    } finally {
-      if (assistantMemoryIsCurrent(restoreGeneration, restoreEpoch, restoreMemoryId)) {
-        assistantMemoryPersistenceReady = true;
-      }
-    }
-    if (
-      resumePending
-      && assistantMemoryPending
-      && assistantMemoryPersistenceReady
-      && assistantMemoryPersistenceAvailable
-    ) void retryAssistantMemory();
-  }
 
-  function handleAssistantMemoryGenerationChange(event: StorageEvent) {
-    if (event.key !== assistantMemoryEpochStorageKey && event.key !== assistantMemoryIdStorageKey) return;
-    const storedEpoch = localStorage.getItem(assistantMemoryEpochStorageKey);
-    const storedMemoryId = localStorage.getItem(assistantMemoryIdStorageKey);
-    if (!isSidecarConversationId(storedEpoch) || !isSidecarConversationId(storedMemoryId)) {
-      disableAssistantMemoryPersistence(new Error('Another tab published an invalid assistant-memory generation.'));
-      return;
-    }
-    if (storedEpoch === assistantMemoryEpoch && storedMemoryId === assistantMemoryId) return;
-    assistantMemoryGeneration += 1;
-    assistantMemoryController?.abort();
-    assistantMemoryEpoch = storedEpoch;
-    assistantMemoryId = storedMemoryId;
-    assistantMemoryResult = null;
-    assistantMemoryPending = null;
-    lastAssistantMemorySource = null;
-    lastAssistantMemoryActive = null;
-    assistantMemoryError = '';
-    assistantMemoryPersistenceAvailable = true;
-    void restoreAssistantMemory(true);
-  }
 
-  async function updateAssistantMemory(
-    selectedRequest: AssistantMemoryRequest,
-    selectedPending: StoredAssistantMemoryPendingTurn
-  ) {
-    const selectedGeneration = assistantMemoryGeneration;
-    const selectedEpoch = assistantMemoryEpoch;
-    const selectedMemoryId = assistantMemoryId;
-    const selectedKey = assistantMemoryRequestKey(selectedRequest, selectedPending);
-    assistantMemoryBusy = true;
-    assistantMemoryError = '';
-    const activeController = new AbortController();
-    assistantMemoryController = activeController;
-    let timedOut = false;
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      activeController.abort();
-    }, ASSISTANT_MEMORY_TIMEOUT_MS);
-    try {
-      const response = await fetch(`${base}/api/sidecar/assistant-memory`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(selectedRequest),
-        signal: activeController.signal
-      });
-      let payload: unknown = null;
-      try {
-        payload = await response.json();
-      } catch (cause) {
-        if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
-      }
-      if (!response.ok) {
-        const detail = payload
-          && typeof payload === 'object'
-          && 'message' in payload
-          && typeof payload.message === 'string'
-          ? payload.message
-          : `Assistant-memory sidecar failed (${response.status}).`;
-        throw new Error(detail);
-      }
-      const result = normalizeAssistantMemoryResult(payload);
-      if (!assistantMemoryResultMatchesRequest(result, selectedRequest)) {
-        throw new Error('Assistant-memory sidecar returned a mismatched completed turn.');
-      }
-      const isCurrent = () => {
-        const liveRequest = currentAssistantMemoryRequest(assistantMemoryId, assistantMemoryPending, assistantMemoryResult);
-        return assistantMemoryIsCurrent(selectedGeneration, selectedEpoch, selectedMemoryId)
-          && Boolean(liveRequest && assistantMemoryRequestKey(liveRequest, assistantMemoryPending) === selectedKey);
-      };
-      const committed = await commitAssistantMemoryResult(result, {
-        save: (current) => saveStoredAssistantMemory(current, selectedEpoch, selectedPending),
-        isCurrent,
-        discard: rollbackStoredAssistantMemoryWrite,
-        install: (current) => {
-          assistantMemoryResult = current;
-        },
-        exclusive: runStoredAssistantMemoryExclusive
-      });
-      if (!committed) throw new Error('Assistant memory changed before this turn could commit.');
-      assistantMemoryPending = null;
-      try {
-        persist();
-      } catch (cause) {
-        assistantMemoryPending = selectedPending;
-        throw cause;
-      }
-    } catch (cause) {
-      if (cause instanceof AssistantMemoryConflictError) {
-        assistantMemoryError = cause.message;
-      } else if (cause instanceof DOMException && cause.name === 'AbortError') {
-        assistantMemoryError = timedOut
-          ? `Assistant-memory sidecar timed out after ${ASSISTANT_MEMORY_TIMEOUT_MS / 1000} seconds.`
-          : 'Assistant-memory update was interrupted.';
-      } else {
-        assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory sidecar failed.';
-      }
-      throw new Error(assistantMemoryError);
-    } finally {
-      window.clearTimeout(timeoutId);
-      if (assistantMemoryController === activeController) {
-        assistantMemoryBusy = false;
-        assistantMemoryController = null;
-      }
-    }
-  }
 
-  async function reconcileAssistantMemoryPending() {
-    if (assistantMemoryPendingAlreadyCommitted(assistantMemoryPending, assistantMemoryResult)) {
-      assistantMemoryPending = null;
-      persist();
-      return;
-    }
-    const selectedRequest = currentAssistantMemoryRequest(assistantMemoryId, assistantMemoryPending, assistantMemoryResult);
-    const selectedPending = assistantMemoryPending;
-    if (!selectedRequest || !selectedPending) return;
-    await updateAssistantMemory(selectedRequest, selectedPending);
-  }
 
-  async function retryAssistantMemory() {
-    if (assistantTurnBusy || streaming || assistantMemoryBusy) return;
-    const retryError = assistantMemoryError;
-    assistantTurnBusy = true;
-    try {
-      await runPersonalAssistantTurnExclusive(async () => {
-        restoreWorkspaceState();
-        assistantMemoryPersistenceAvailable = true;
-        await restoreAssistantMemory(false);
-        if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
-          throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
-        }
-        await reconcileAssistantMemoryPending();
-      });
-      if (!assistantMemoryPending) {
-        if (errorMessage === retryError) errorMessage = '';
-        assistantMemoryError = '';
-      }
-    } catch (cause) {
-      assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory retry failed.';
-      errorMessage = assistantMemoryError;
-    } finally {
-      assistantTurnBusy = false;
-    }
-  }
 
-  async function persistCompletedAssistantMemoryTurn() {
-    const pending = assistantMemoryPending;
-    if (!pending) throw new Error('The completed assistant turn lacks its durable workspace outbox.');
-    try {
-      await runStoredAssistantMemoryExclusive(async () => {
-        await saveStoredAssistantMemoryPendingTurn(pending);
-      });
-    } catch (cause) {
-      disableAssistantMemoryPersistence(cause);
-      throw cause;
-    }
-    const persistedRequest = currentAssistantMemoryRequest(assistantMemoryId, pending, assistantMemoryResult);
-    if (!persistedRequest) throw new Error('The completed assistant turn could not be reconstructed from durable storage.');
-    await updateAssistantMemory(persistedRequest, pending);
-  }
 
-  async function clearAssistantMemory() {
-    if (assistantTurnBusy || streaming || assistantMemoryBusy) return;
-    assistantTurnBusy = true;
-    const clearedError = assistantMemoryError;
-    try {
-      await runPersonalAssistantTurnExclusive(async () => {
-        restoreWorkspaceState();
-        await restoreAssistantMemory(false);
-        if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
-          throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
-        }
-        if ((assistantMemoryResult || assistantMemoryPending) && !window.confirm('Clear all persistent assistant memory and any pending update?')) return;
-        assistantMemoryGeneration += 1;
-        assistantMemoryController?.abort();
-        const nextEpoch = crypto.randomUUID();
-        await clearAssistantMemoryAtEpoch(nextEpoch, {
-          exclusive: runStoredAssistantMemoryExclusive,
-          publishEpoch: (epoch) => {
-            assistantMemoryEpoch = epoch;
-            localStorage.setItem(assistantMemoryEpochStorageKey, epoch);
-          },
-          clear: clearStoredAssistantMemory
-        });
-        assistantMemoryResult = null;
-        assistantMemoryPending = null;
-        assistantMemoryError = '';
-        assistantMemoryPersistenceAvailable = true;
-        lastAssistantMemoryActive = null;
-        lastAssistantMemorySource = null;
-        persist();
-        if (errorMessage === clearedError) errorMessage = '';
-        assistantMemoryPersistenceReady = true;
-      });
-    } catch (cause) {
-      disableAssistantMemoryPersistence(cause);
-      errorMessage = assistantMemoryError;
-    } finally {
-      assistantTurnBusy = false;
-    }
-  }
 
-  function assistantMemoryStatusText(
-    persistenceAvailable: boolean,
-    persistenceReady: boolean,
-    busy: boolean,
-    pending: StoredAssistantMemoryPendingTurn | null,
-    result: AssistantMemoryResult | null
-  ): string {
-    if (!persistenceAvailable) return 'Durable memory is unavailable.';
-    if (!persistenceReady) return 'Restoring the durable ledger…';
-    if (busy) return 'Updating structured memory for the completed turn…';
-    if (pending) return 'A completed turn is waiting to be committed.';
-    if (!result) return 'No completed assistant turns have been recorded.';
-    const recordCount = result.output.facts.length
-      + result.output.preferences.length
-      + result.output.tasks.length;
-    return `Revision ${result.output.revision} · ${recordCount} structured records · ready for the next turn.`;
-  }
 
-  $: assistantMemoryStatus = assistantMemoryStatusText(
-    assistantMemoryPersistenceAvailable,
-    assistantMemoryPersistenceReady,
-    assistantMemoryBusy,
-    assistantMemoryPending,
-    assistantMemoryResult
-  );
 
   function persistExpressionsEnabled() {
     if (!sidecarPersistenceReady || !sidecarPersistenceAvailable) expressionsEnabled = false;
@@ -4497,7 +3775,7 @@
   }
 
   function currentWorkspaceMutationFingerprint(): string {
-    return workspaceMutationFingerprint(conversationMode, conversationId, messages);
+    return workspaceMutationFingerprint(conversationId, messages);
   }
 
   function restoreUnchangedWorkspace(expectedFingerprint: string) {
@@ -4516,8 +3794,6 @@
       || scenarioLoading
       || assistantTurnBusy
       || workspaceBusy
-      || assistantMemoryBusy
-      || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
     ) return;
     errorMessage = '';
     noticeMessage = '';
@@ -4533,41 +3809,6 @@
         (profile) => profile.id === starter.portraitProfileId
       );
       if (!starterProfile) throw new Error('Bundled scenario portrait profile failed validation.');
-      await runPersonalAssistantTurnExclusive(async () => {
-        restoreUnchangedWorkspace(expectedWorkspace);
-        if (hasRealTranscript() && !window.confirm(`Replace the current conversation with the ${starter.label} opening?`)) return;
-
-        conversationMode = CONVERSATION_MODE_FICTION;
-        activeCard = packaged.card;
-        selectedScenarioId = scenario.id;
-        localStorage.setItem(selectedScenarioStorageKey, selectedScenarioId);
-        activeScenarioStarterId = starterId;
-        localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
-        portraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
-        portraitMegapixels = 0.5;
-        portraitModelSelectionPersisted = true;
-        localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
-        cardSourceIdentifier = characterSourceIdentifier(scenario.card);
-        portraitDataUrl = '';
-        embeddedLorebook = embeddedLoreFromCard(activeCard);
-        loreEnabled = true;
-        loreTimedState = emptyLoreTimedState();
-        lastLoreActivations = null;
-        lastLoreActivationCount = 0;
-        lastLoreBudget = 0;
-        localStorage.removeItem(loreTimedStateStorageKey);
-        persistCard();
-        persistLoreEnabled();
-        messages = freshConversation();
-        await resetSidecarForConversation();
-        bindAuthoredFictionOpeningReceipt();
-        if (!publishScenarioOpeningInlineSceneSource()) {
-          throw new Error('Bundled scenario opening could not be bound to inline-scene provenance.');
-        }
-        persist();
-        noticeMessage = `${starter.label} · ${starter.title} started with ${packaged.lorebook.entries.length} embedded lore entries.`;
-        await scrollToLatest();
-      });
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Bundled scenario failed to start.';
     } finally {
@@ -4578,23 +3819,7 @@
 
   function persist() {
     if (!browser) return;
-    const lastCompletedChat: WorkspaceAssistantMemoryReceipt | null = (
-      lastAssistantMemorySource && lastAssistantMemoryActive !== null
-    ) ? { source: lastAssistantMemorySource, active: lastAssistantMemoryActive } : null;
-    const workspace = createStoredWorkspace(
-      conversationMode,
-      conversationId,
-      messages,
-      conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
-        ? {
-            memoryId: assistantMemoryId,
-            epoch: assistantMemoryEpoch,
-            pending: assistantMemoryPending,
-            lastCompletedChat
-          }
-        : null,
-      conversationMode === CONVERSATION_MODE_FICTION ? finalizedFictionResponse : null
-    );
+    const workspace = createStoredWorkspace(conversationId, messages, finalizedFictionResponse);
     saveStoredWorkspace(localStorage, workspace);
   }
 
@@ -4607,7 +3832,7 @@
   }
 
   function bindAuthoredFictionOpeningReceipt() {
-    finalizedFictionResponse = conversationMode === CONVERSATION_MODE_FICTION && messages.length === 1
+    finalizedFictionResponse = true && messages.length === 1
       ? createAuthoredOpeningReceipt(conversationId, messages)
       : null;
   }
@@ -4615,7 +3840,7 @@
   function recoverCanonicalAuthoredOpeningReceipt(): boolean {
     if (
       finalizedFictionResponse
-      || conversationMode !== CONVERSATION_MODE_FICTION
+      || false
       || !activeCard
       || !containsOnlyOpeningGreeting(activeCard)
     ) return false;
@@ -4699,54 +3924,9 @@
     draft = text;
   }
 
-  async function replaceConversationMode(nextMode: ConversationMode) {
-    if (
-      streaming
-      || workspaceBusy
-      || assistantTurnBusy
-      || assistantMemoryBusy
-      || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
-      || nextMode === conversationMode
-    ) return;
-    const expectedWorkspace = currentWorkspaceMutationFingerprint();
-    workspaceBusy = true;
-    try {
-      await runPersonalAssistantTurnExclusive(async () => {
-        restoreUnchangedWorkspace(expectedWorkspace);
-        if (hasRealTranscript() && !window.confirm('Replace the current conversation with a new mode?')) return;
-        conversationMode = nextMode;
-        messages = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
-        assistantMemoryPending = null;
-        lastAssistantMemorySource = null;
-        lastAssistantMemoryActive = null;
-        errorMessage = '';
-        noticeMessage = nextMode === CONVERSATION_MODE_PERSONAL_ASSISTANT
-          ? 'Personal Assistant started on an isolated neutral model channel.'
-          : 'Fiction workspace started.';
-        lastLoreActivations = null;
-        lastLivingHistoryFired = null;
-        lastLoreActivationCount = 0;
-        lastLoreBudget = 0;
-        loreTimedState = emptyLoreTimedState();
-        localStorage.removeItem(loreTimedStateStorageKey);
-        await resetSidecarForConversation();
-        bindAuthoredFictionOpeningReceipt();
-        persist();
-        await scrollToLatest();
-      });
-    } catch (cause) {
-      errorMessage = cause instanceof Error ? cause.message : 'Conversation mode could not be replaced.';
-    } finally {
-      workspaceBusy = false;
-    }
-  }
 
-  async function startPersonalAssistant() {
-    await replaceConversationMode(CONVERSATION_MODE_PERSONAL_ASSISTANT);
-  }
 
   async function startFictionWorkspace() {
-    await replaceConversationMode(CONVERSATION_MODE_FICTION);
   }
 
   async function clearConversation() {
@@ -4754,28 +3934,10 @@
       streaming
       || workspaceBusy
       || assistantTurnBusy
-      || assistantMemoryBusy
-      || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null)
     ) return;
     const expectedWorkspace = currentWorkspaceMutationFingerprint();
     workspaceBusy = true;
     try {
-      await runPersonalAssistantTurnExclusive(async () => {
-        restoreUnchangedWorkspace(expectedWorkspace);
-        messages = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? [] : freshConversation();
-        lastAssistantMemorySource = null;
-        lastAssistantMemoryActive = null;
-        errorMessage = '';
-        noticeMessage = '';
-        lastLoreActivations = null;
-        lastLivingHistoryFired = null;
-        lastLoreBudget = 0;
-        loreTimedState = emptyLoreTimedState();
-        localStorage.removeItem(loreTimedStateStorageKey);
-        await resetSidecarForConversation();
-        bindAuthoredFictionOpeningReceipt();
-        persist();
-      });
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Conversation could not be reset.';
     } finally {
@@ -4818,32 +3980,6 @@
         ? extractPngCharacterCard(await file.arrayBuffer())
         : parseCharacterCardJson(await file.text());
       const nextPortrait = isPng ? await portraitFromPng(file) : '';
-      await runPersonalAssistantTurnExclusive(async () => {
-        restoreUnchangedWorkspace(expectedWorkspace);
-        const switchingFromAssistant = conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT;
-        if (switchingFromAssistant && hasRealTranscript() && !window.confirm('Replace the current assistant conversation with this character card?')) return;
-        const replaceOpeningGreeting = activeCard ? containsOnlyOpeningGreeting(activeCard) : false;
-        const seedGreeting = switchingFromAssistant || messages.length === 0 || replaceOpeningGreeting;
-
-        conversationMode = CONVERSATION_MODE_FICTION;
-        activeCard = imported;
-        cardSourceIdentifier = characterSourceIdentifier(file.name);
-        portraitDataUrl = nextPortrait;
-        embeddedLorebook = embeddedLoreFromCard(imported);
-        lastLoreActivations = null;
-        lastLoreBudget = 0;
-        persistCard();
-        if (seedGreeting) {
-          messages = freshConversation();
-          await resetSidecarForConversation();
-          bindAuthoredFictionOpeningReceipt();
-          persist();
-        } else if (recoverCanonicalAuthoredOpeningReceipt()) {
-          persist();
-        }
-        noticeMessage = `${imported.data.name} loaded from ${file.name}.`;
-        await scrollToLatest();
-      });
     } catch (cause) {
       errorMessage = cause instanceof Error ? cause.message : 'Character card import failed.';
     } finally {
@@ -4886,13 +4022,8 @@
       const nextBooks = sameNameIndex >= 0
         ? importedLorebooks.map((book, index) => index === sameNameIndex ? imported : book)
         : [...importedLorebooks, imported];
-      const maximumImported = livingHistoryEnabled
-        ? MAX_SUPPLEMENTAL_LOREBOOKS - 1
-        : MAX_SUPPLEMENTAL_LOREBOOKS;
-      if (nextBooks.length > maximumImported) {
-        throw new Error(livingHistoryEnabled
-          ? 'Living history reserves one slot; at most 19 imported lorebooks can be active while it is on.'
-          : 'At most 20 imported lorebooks can be active.');
+      if (nextBooks.length > 20) {
+        throw new Error('At most 20 imported lorebooks can be active.');
       }
       validateActiveLorebookSize(nextBooks);
       await saveStoredLorebooks(storedLorebooks(nextBooks));
@@ -4981,9 +4112,6 @@
   }
 
   async function send() {
-    const selectedConversationMode = conversationMode;
-    const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
-    if (browser && fictionMode) reconcileLivingHistoryEpochFromStorage();
     const content = draft.trim();
     const capacityError = content ? workspaceCompletedTurnCapacityError(messages.length) : null;
     if (capacityError) {
@@ -4996,96 +4124,33 @@
       || workspaceBusy
       || scenarioLoading
       || !lorePersistenceReady
-      || !livingHistoryReadyForChat(fictionMode && livingHistoryEnabled, livingHistoryPersistenceReady)
     ) return;
 
-    if (selectedConversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT) {
-      if (!assistantMemoryReadyForSend(
-        selectedConversationMode,
-        assistantMemoryPersistenceReady,
-        assistantMemoryPersistenceAvailable,
-        streaming || assistantTurnBusy,
-        assistantMemoryBusy,
-        assistantMemoryPending
-      )) return;
-      assistantTurnBusy = true;
-      try {
-        await runPersonalAssistantTurnExclusive(async () => {
-          const selectedConversationId = conversationId;
-          restoreWorkspaceState();
-          if (conversationMode !== selectedConversationMode || conversationId !== selectedConversationId) {
-            throw new Error('The assistant workspace changed in another tab. Review the restored conversation and send again.');
-          }
-          const liveCapacityError = workspaceCompletedTurnCapacityError(messages.length);
-          if (liveCapacityError) throw new Error(liveCapacityError);
-          await restoreAssistantMemory(false);
-          if (!assistantMemoryPersistenceReady || !assistantMemoryPersistenceAvailable) {
-            throw new Error(assistantMemoryError || 'Assistant-memory persistence is unavailable.');
-          }
-          if (assistantMemoryPending) await reconcileAssistantMemoryPending();
-          if (!assistantMemoryReadyForSend(
-            selectedConversationMode,
-            assistantMemoryPersistenceReady,
-            assistantMemoryPersistenceAvailable,
-            false,
-            assistantMemoryBusy,
-            assistantMemoryPending
-          )) throw new Error('The previous assistant-memory update has not committed.');
-          assistantMemoryError = '';
-          const completed = await sendChatTurn(selectedConversationMode, content);
-          if (completed) await persistCompletedAssistantMemoryTurn();
-        });
-      } catch (cause) {
-        assistantMemoryError = cause instanceof Error ? cause.message : 'Assistant-memory turn failed.';
-        errorMessage = assistantMemoryError;
-      } finally {
-        assistantTurnBusy = false;
-      }
-      return;
-    }
-    await sendChatTurn(selectedConversationMode, content);
+    await sendChatTurn(content);
   }
 
-  async function sendChatTurn(selectedConversationMode: ConversationMode, content: string): Promise<boolean> {
-    const fictionMode = selectedConversationMode === CONVERSATION_MODE_FICTION;
+  async function sendChatTurn(content: string): Promise<boolean> {
     const previousMessages = messages.map((message) => ({ ...message }));
     const previousDraft = draft;
-    const previousPending = assistantMemoryPending;
-    const previousMemorySource = lastAssistantMemorySource;
-    const previousMemoryActive = lastAssistantMemoryActive;
 
     const outboundMessages = [...messages, { role: 'user' as const, content }];
-    const selectedAssistantMemoryBook = fictionMode ? null : assistantMemoryBook;
-    let supplementalLorebooks: ImportedLorebook[];
-    if (fictionMode) {
-      try {
-        supplementalLorebooks = assembleSupplementalLorebooks(importedLorebooks, livingHistoryBook);
-      } catch (cause) {
-        errorMessage = cause instanceof Error ? cause.message : 'Supplemental lorebooks could not be prepared.';
-        return false;
-      }
-    } else {
-      supplementalLorebooks = [];
-    }
+    const supplementalLorebooks: ImportedLorebook[] = importedLorebooks;
     let requestBody: string;
     try {
       requestBody = serializeChatRequest({
-        mode: selectedConversationMode,
+        mode: 'fiction',
         messages: outboundMessages,
         maxTokens: tokenLimit,
-        characterCard: fictionMode ? activeCard?.raw ?? null : null,
+        characterCard: activeCard?.raw ?? null,
         userName: 'You',
-        personaDescription: fictionMode ? personaDescription : '',
-        characterFilterNames: fictionMode && cardSourceIdentifier ? [cardSourceIdentifier] : [],
+        personaDescription,
+        characterFilterNames: cardSourceIdentifier ? [cardSourceIdentifier] : [],
         characterTagIds: [],
         loreTimedState,
-        loreEnabled: fictionMode && loreEnabled,
-        lorebooks: fictionMode && loreEnabled
+        loreEnabled,
+        lorebooks: loreEnabled
           ? supplementalLorebooks.map((book) => ({ name: book.name, raw: book.raw }))
           : [],
-        assistantMemory: selectedAssistantMemoryBook
-          ? { name: selectedAssistantMemoryBook.name, raw: selectedAssistantMemoryBook.raw }
-          : null,
         lorebookSettings: loreSettings
       });
     } catch (cause) {
@@ -5094,8 +4159,6 @@
     }
 
     sidecarController?.abort();
-    livingHistoryController?.abort();
-    lastLivingHistoryAttemptKey = '';
     portraitController?.abort();
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
@@ -5135,21 +4198,11 @@
         const detail = await response.text();
         throw new Error(detail || `Request failed (${response.status})`);
       }
-      if (response.headers.get('x-mullet-mode') !== selectedConversationMode) {
+      if (response.headers.get('x-mullet-mode') !== 'fiction') {
         throw new Error('Server response mode does not match this conversation.');
-      }
-      if (!fictionMode) {
-        const memoryActive = parseAssistantMemoryActiveHeader(response.headers.get('x-mullet-assistant-memory-active'));
-        if (memoryActive === null || memoryActive !== Boolean(selectedAssistantMemoryBook)) {
-          throw new Error('Server response did not confirm the selected assistant-memory projection.');
-        }
-        completedAssistantMemoryActive = memoryActive;
-      } else {
-        completedAssistantMemoryActive = null;
       }
 
       lastLoreActivations = readLoreActivations(response.headers.get('x-mullet-lore-entries'));
-      lastLivingHistoryFired = parseLivingHistoryActiveHeader(response.headers.get('x-mullet-living-history-active'));
       const loreCount = Number(response.headers.get('x-mullet-lore-active'));
       lastLoreActivationCount = Number.isInteger(loreCount) && loreCount >= 0
         ? loreCount
@@ -5197,24 +4250,7 @@
       }
 
       assertFinalizedChatStream(terminalEventSeen, messages.at(-1)?.content ?? '');
-      if (fictionMode) {
-        finalizedFictionResponse = createCompletedFictionResponseReceipt(conversationId, messages);
-      } else {
-        const memoryRequest = buildAssistantMemoryRequest(
-          assistantMemoryId,
-          conversationId,
-          messages,
-          assistantMemoryResult
-        );
-        assistantMemoryPending = createStoredAssistantMemoryPendingTurn(
-          assistantMemoryId,
-          assistantMemoryEpoch,
-          memoryRequest.source,
-          memoryRequest.turns
-        );
-        lastAssistantMemorySource = memoryRequest.source;
-        lastAssistantMemoryActive = completedAssistantMemoryActive;
-      }
+      finalizedFictionResponse = createCompletedFictionResponseReceipt(conversationId, messages);
       persist();
       completedResponse = true;
       if (hitTokenLimit) noticeMessage = `Stopped at the ${tokenLimit}-token response limit.`;
@@ -5224,25 +4260,15 @@
       } else {
         errorMessage = cause instanceof Error ? cause.message : 'Generation failed.';
       }
-      if (fictionMode) {
-        finalizedFictionResponse = null;
-        if (messages.at(-1)?.content === '') messages = messages.slice(0, -1);
-        persist();
-      } else {
-        const rolledBack = rollbackFailedWorkspaceTurn(previousMessages, previousDraft);
-        messages = rolledBack.messages;
-        draft = rolledBack.draft;
-        assistantMemoryPending = previousPending;
-        lastAssistantMemorySource = previousMemorySource;
-        lastAssistantMemoryActive = previousMemoryActive;
-      }
+      finalizedFictionResponse = null;
+      if (messages.at(-1)?.content === '') messages = messages.slice(0, -1);
+      persist();
     } finally {
       streaming = false;
       controller = null;
-      if (completedResponse && fictionMode) {
-        recordFinalizedLivingHistoryBoundary();
+      if (completedResponse) {
         publishFinalizedInlineSceneSource(
-          inlineSceneSourceForCompletedTurn(livingHistorySourceForMessages(conversationId, messages))
+          inlineSceneSourceForCompletedTurn(transcriptSourceForMessages(conversationId, messages))
         );
       }
       await scrollToLatest();
@@ -5259,7 +4285,7 @@
 </script>
 
 <svelte:head>
-  <title>MULLET · {conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Personal Assistant' : 'Local scenario workbench'}</title>
+  <title>MULLET · {false ? 'Personal Assistant' : 'Local scenario workbench'}</title>
 </svelte:head>
 
 <div class="shell">
@@ -5273,29 +4299,16 @@
     </div>
     <details class="runtime">
       <summary aria-label="Runtime and workspace controls">
-        <span class:live={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy || livingHistoryBusy} class="dot"></span>
+        <span class:live={streaming || workspaceBusy || assistantTurnBusy || sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy} class="dot"></span>
         <span class="runtime-label"><strong>{data.model}</strong><small>{data.revision.slice(0, 10)}</small></span>
       </summary>
-      <div class="runtime-menu" aria-label="Conversation mode">
-        <span>Workspace</span>
-        <button
-          class:active={conversationMode === CONVERSATION_MODE_FICTION}
-          on:click={() => void startFictionWorkspace()}
-          disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || conversationMode === CONVERSATION_MODE_FICTION}
-        >Fiction</button>
-        <button
-          class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
-          on:click={() => void startPersonalAssistant()}
-          disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
-        >Assistant</button>
-      </div>
     </details>
   </header>
 
   <main>
-    <aside class:assistant-mode={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}>
-      <div class:active={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT || activeCard || (generatedPortraitUrl && portraitCurrent)} class:generated={conversationMode === CONVERSATION_MODE_FICTION && expressionsEnabled && generatedPortraitUrl && portraitCurrent} class="portrait">
-        {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+    <aside class:assistant-mode={false}>
+      <div class:active={false || activeCard || (generatedPortraitUrl && portraitCurrent)} class:generated={true && expressionsEnabled && generatedPortraitUrl && portraitCurrent} class="portrait">
+        {#if false}
           <span class="initial">A</span>
         {:else if expressionsEnabled && generatedPortraitUrl && portraitCurrent}
           <img src={generatedPortraitUrl} alt={`${generatedPortrait?.source.expression ?? 'Current'} generated expression portrait`} />
@@ -5324,7 +4337,7 @@
           <span>Import a SillyTavern<br />JSON or PNG card</span>
         {/if}
       </div>
-      {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
+      {#if false}
         <div class="scenario">
           <span class="eyebrow">Active mode</span>
           <strong>Personal Assistant</strong>
@@ -5347,63 +4360,6 @@
           <strong>Open conversation</strong>
           <p>The clean model channel is active. Load a V1, V2, or V3 character card to condition it.</p>
         </div>
-      {/if}
-      {#if conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT}
-        <section class="assistant-memory-panel" aria-label="Persistent assistant memory">
-          <div class="assistant-memory-heading">
-            <div>
-              <span class="eyebrow">Structured lorebook</span>
-              <strong>Assistant memory</strong>
-            </div>
-            <small>rev {assistantMemoryResult?.output.revision ?? 0}</small>
-          </div>
-          <p>{assistantMemoryStatus}</p>
-          <div class="assistant-memory-counts">
-            <span>{assistantMemoryResult?.output.facts.filter((record) => record.status === 'active').length ?? 0} facts</span>
-            <span>{assistantMemoryResult?.output.preferences.filter((record) => record.status === 'active').length ?? 0} preferences</span>
-            <span>{assistantMemoryResult?.output.tasks.filter((record) => record.status === 'open').length ?? 0} open tasks</span>
-          </div>
-          {#if assistantMemoryResult?.output.facts.some((record) => record.status === 'active')}
-            <details>
-              <summary>Facts</summary>
-              <ul>
-                {#each assistantMemoryResult.output.facts.filter((record) => record.status === 'active') as fact}
-                  <li><strong>{fact.key}</strong><span>{fact.value}</span></li>
-                {/each}
-              </ul>
-            </details>
-          {/if}
-          {#if assistantMemoryResult?.output.preferences.some((record) => record.status === 'active')}
-            <details>
-              <summary>Preferences</summary>
-              <ul>
-                {#each assistantMemoryResult.output.preferences.filter((record) => record.status === 'active') as preference}
-                  <li><strong>{preference.key}</strong><span>{preference.value}</span></li>
-                {/each}
-              </ul>
-            </details>
-          {/if}
-          {#if assistantMemoryResult?.output.tasks.some((record) => record.status === 'open')}
-            <details>
-              <summary>Open tasks</summary>
-              <ul>
-                {#each assistantMemoryResult.output.tasks.filter((record) => record.status === 'open') as task}
-                  <li><strong>{task.key}</strong><span>{task.text}{task.dueText ? ` · ${task.dueText}` : ''}</span></li>
-                {/each}
-              </ul>
-            </details>
-          {/if}
-          {#if assistantMemoryError}<div class="sidecar-error" role="alert">{assistantMemoryError}</div>{/if}
-          <div class="assistant-memory-actions">
-            {#if assistantMemoryPending && !assistantMemoryBusy}
-              <button class="retry" on:click={() => void retryAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy}>Retry update</button>
-            {/if}
-            <button on:click={() => void clearAssistantMemory()} disabled={assistantTurnBusy || streaming || assistantMemoryBusy}>Clear memory</button>
-          </div>
-          <small class:active={lastAssistantMemoryActive === true} class="assistant-memory-fired">
-            {assistantMemoryInjectionStatusText(messages.length, lastAssistantMemoryActive)}
-          </small>
-        </section>
       {/if}
       <input
         class="file-input"
@@ -5938,85 +4894,6 @@
           </label>
         </div>
 
-        <div class="history-panel" aria-label="Living history">
-          <div class="history-heading">
-            <div>
-              <span class="eyebrow">Living history</span>
-              <strong>{livingHistoryResult ? `Revision ${livingHistoryResult.output.revision}` : 'Session continuity'}</strong>
-            </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                bind:checked={livingHistoryEnabled}
-                on:change={persistLivingHistoryEnabled}
-                disabled={streaming || !livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable}
-              />
-              <span>{livingHistoryEnabled ? 'On' : 'Off'}</span>
-            </label>
-          </div>
-          <small>{livingHistoryStatusText()}</small>
-          {#if livingHistoryResult}
-            <details>
-              <summary>Continuity preview</summary>
-              <p>{livingHistoryResult.output.summary}</p>
-            </details>
-            <details>
-              <summary>Quote bank · {livingHistoryResult.output.quotes.length}/{LIVING_HISTORY_QUOTE_BANK_LIMIT}</summary>
-              {#if livingHistoryResult.output.quotes.length}
-                <ol class="quote-bank">
-                  {#each livingHistoryResult.output.quotes as quote}
-                    <li>
-                      <small>{quote.role} · message {quote.messageIndex}</small>
-                      <q>{quote.text}</q>
-                    </li>
-                  {/each}
-                </ol>
-              {:else}
-                <p>No retained quotes yet.</p>
-              {/if}
-            </details>
-            <details>
-              <summary>Character stats &amp; bios · {livingHistoryResult.output.characters.length}/{LIVING_HISTORY_CHARACTER_LIMIT}</summary>
-              {#if livingHistoryResult.output.characters.length}
-                <div class="character-state-bank">
-                  {#each livingHistoryResult.output.characters as character}
-                    <article>
-                      <strong>{character.name}</strong>
-                      {#if character.bio}<p><b>Bio</b> · {character.bio}</p>{/if}
-                      {#if character.status}<p><b>Status</b> · {character.status}</p>{/if}
-                      {#if character.location}<p><b>Location</b> · {character.location}</p>{/if}
-                      {#if character.goals}<p><b>Goals</b> · {character.goals}</p>{/if}
-                      {#if character.relationships}<p><b>Relationships</b> · {character.relationships}</p>{/if}
-                      {#if character.possessions}<p><b>Possessions</b> · {character.possessions}</p>{/if}
-                      <small>Evidence · messages {character.evidence.map((item) => item.messageIndex).join(', ')}</small>
-                    </article>
-                  {/each}
-                </div>
-              {:else}
-                <p>No established character state yet.</p>
-              {/if}
-            </details>
-          {/if}
-          {#if lastLivingHistoryFired !== null}
-            <small class:active={lastLivingHistoryFired} class="history-fired">
-              {lastLivingHistoryFired ? 'Living lore fired last turn.' : 'Living lore did not fire last turn.'}
-            </small>
-          {/if}
-          {#if livingHistoryError}<div class="sidecar-error" role="alert">{livingHistoryError}</div>{/if}
-          <div class="history-actions">
-            <button
-              on:click={() => void updateLivingHistory()}
-              disabled={streaming || livingHistoryBusy || !livingHistoryEnabled || !livingHistoryRequest || !livingHistoryPersistenceReady || !livingHistoryPersistenceAvailable}
-            >
-              {livingHistoryBusy ? 'Updating…' : 'Update stats & history'}
-            </button>
-            <button
-              on:click={() => void clearLivingHistory()}
-              disabled={streaming || livingHistoryBusy || !livingHistoryPersistenceReady || (!livingHistoryResult && livingHistoryBoundaries.length === 0)}
-            >Clear</button>
-          </div>
-          <small>200-word target · {LIVING_HISTORY_QUOTE_BANK_LIMIT} quote slots · {LIVING_HISTORY_CHARACTER_LIMIT} character records · on demand or every {LIVING_HISTORY_INTERVAL_MESSAGES} finalized messages · isolated Gemma branch</small>
-        </div>
 
         {#if activeLorebooks.length}
           <div class="lore-list">
@@ -6107,8 +4984,8 @@
           disabled={streaming}
         ></textarea>
       </label>
-      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || workspaceBusy || assistantTurnBusy || assistantMemoryBusy || (conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT && assistantMemoryPending !== null) || messages.length === 0}>
-        {conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Reset assistant chat' : 'Clear conversation'}
+      <button class="clear" on:click={() => void clearConversation()} disabled={streaming || workspaceBusy || assistantTurnBusy || messages.length === 0}>
+        {false ? 'Reset assistant chat' : 'Clear conversation'}
       </button>
     </aside>
 
@@ -6117,8 +4994,8 @@
         {#if messages.length === 0}
           <div class="empty">
             <span class="eyebrow">Real local model · clean channel</span>
-            <h2>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'What are we working on?' : 'Start the story.'}</h2>
-            <p>{conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Plan, organize, draft, or analyze with a neutral local assistant. Facts, explicit preferences, and unfinished tasks are updated after every completed turn without claiming external tools or actions.' : 'Talk directly to the local model, or import a SillyTavern-compatible character card from the left.'}</p>
+            <h2>{false ? 'What are we working on?' : 'Start the story.'}</h2>
+            <p>{false ? 'Plan, organize, draft, or analyze with a neutral local assistant. Facts, explicit preferences, and unfinished tasks are updated after every completed turn without claiming external tools or actions.' : 'Talk directly to the local model, or import a SillyTavern-compatible character card from the left.'}</p>
             <div class="starters">
               {#each starters as starter}
                 <button on:click={() => chooseStarter(starter)}>{starter}</button>
@@ -6128,9 +5005,9 @@
         {:else}
           {#each messages as message, messageIndex}
             <article class:assistant={message.role === 'assistant'}>
-              <span class="speaker">{message.role === 'user' ? 'You' : conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Assistant' : activeCard?.data.name ?? data.model}</span>
+              <span class="speaker">{message.role === 'user' ? 'You' : false ? 'Assistant' : activeCard?.data.name ?? data.model}</span>
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
-              {#if conversationMode === CONVERSATION_MODE_FICTION && inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
+              {#if true && inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
                 <figure
                   class:stale={Boolean(generatedInlineSceneUrl) && (!inlineSceneCurrent || (inlineSceneMotionEnabled && Boolean(generatedInlineSceneVideo) && !inlineSceneVideoCurrent))}
                   class="scene-card"
@@ -6179,7 +5056,7 @@
           <textarea
             bind:value={draft}
             on:keydown={composerKeydown}
-            placeholder={conversationMode === CONVERSATION_MODE_PERSONAL_ASSISTANT ? 'Ask, plan, or assign something…' : 'Write the next turn…'}
+            placeholder={false ? 'Ask, plan, or assign something…' : 'Write the next turn…'}
             rows="2"
             disabled={streaming || workspaceBusy || assistantTurnBusy}
             aria-label="Message"
@@ -6190,7 +5067,7 @@
             <button
               class="send"
               on:click={send}
-              disabled={!draft.trim() || workspaceBusy || scenarioLoading || !lorePersistenceReady || !livingHistoryReadyForChat(conversationMode === CONVERSATION_MODE_FICTION && livingHistoryEnabled, livingHistoryPersistenceReady) || !assistantMemoryReadyForSend(conversationMode, assistantMemoryPersistenceReady, assistantMemoryPersistenceAvailable, streaming || workspaceBusy || assistantTurnBusy, assistantMemoryBusy, assistantMemoryPending)}
+              disabled={!draft.trim() || workspaceBusy || scenarioLoading || !lorePersistenceReady}
             >Send</button>
           {/if}
         </div>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { livingHistorySourceForMessages } from '../src/lib/living-history.ts';
+import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
   INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
@@ -169,7 +169,7 @@ function staticScene(
   const sidecarRequest = buildInlineSceneRequest(
     conversationId,
     messages,
-    livingHistorySourceForMessages(conversationId, messages),
+    transcriptSourceForMessages(conversationId, messages),
     candidates
   );
   const result = createInlineSceneResult(sidecarRequest, 'gemma-4-ortenzya', {
