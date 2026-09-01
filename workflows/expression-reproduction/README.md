@@ -21,13 +21,11 @@ The Cally Qwen graph proves the distortion source. It samples from a 360×254 la
 
 | Graph | Character | Model / contract | Exact input | Exact generated output |
 | --- | --- | --- | --- | --- |
-| `api/jenna-ltx-2.5-loop.json` | Jenna | Historical LTX 2.5 identical-frame loop with the superseded VP9 WebM encoder | `inputs/jenna-qwen-fear.png` | `outputs/jenna-ltx-2.5-loop.webm` |
 | `api/jenna-minimax-h3-loop-silent.json` | Jenna | MiniMax H3, identical-frame loop, silent MP4 | `inputs/jenna-qwen-fear-768x1152.png` | `outputs/jenna-minimax-h3-loop-silent.mp4` |
 | `api/cally-minimax-h3-loop-historical-audio.json` | Cally | Historical MiniMax H3 graph with audio nodes | `inputs/cally-qwen-grief.png` | `outputs/cally-minimax-h3-loop-historical-audio.mp4` |
 
 The historical Cally MiniMax graph is retained because it is the exact graph that produced the unwanted audio-bearing Cally animation. It contains `VAEDecodeAudio` and passes audio into `CreateVideo`. It is diagnostic evidence, not the current silent expression-animation contract. The silent Jenna MiniMax graph omits those audio nodes and explicitly prompts against speech, mouth motion, music, room tone, and sound effects.
 
-The Jenna LTX WebM graph is also retained as exact historical evidence. The current MULLET LTX portrait and scene contracts replace only that graph's final encoder with silent H.264 MP4 (`CreateVideo` without audio followed by `SaveVideo` using `mp4`/`h264`) because the deployed WebM passed structural validation but did not produce visible playback in the target browser stack.
 
 ## Exact replay
 

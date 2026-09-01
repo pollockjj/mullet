@@ -99,5 +99,14 @@ do not have, and include the completed diagnosis and the exact remaining blocker
 
 ## Operator model exclusions
 
-- LTX 2.5 is rejected on output quality. Do not propose it, benchmark it, or make it a
-  default. It stays only as an already-implemented selectable option. Do not raise it again.
+- LTX 2.5 is rejected on output quality and has been deleted from the codebase entirely -
+  templates, graph builders, capability probing, tests and reproduction artifacts. Do not
+  propose it, benchmark it, reintroduce it, or raise it again.
+- Every media path must use a distillation LoRA to cut step count. Unaccelerated
+  high-step paths are deleted, not demoted to a selectable option.
+- There is no model or method selection in the UI. One image path, one video path, chosen
+  by scenario data. How a reference (LoRA or photo) becomes an image is lorebook/scenario
+  data, never a control.
+- Media is never per-feature switchable. Expression still, expression motion, scene still
+  and scene motion are one unit, always on together. The UI offers exactly two buttons:
+  turn media off, and refresh the latest image of both classes.

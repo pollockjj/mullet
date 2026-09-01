@@ -10,14 +10,11 @@ import {
   INLINE_SCENE_RESULT_SPEC,
   INLINE_SCENE_SYSTEM_PROMPT,
   INLINE_SCENE_TEMPLATE_ID,
-  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE,
-  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
   buildInlineSceneImageRequest,
   buildInlineScenePrompt,
   buildInlineSceneRequest,
-  buildMiniMaxH3InlineSceneStillWorkflow,
   buildQwenImageEditSceneWorkflow,
   buildZImageTurboSceneWorkflow,
   createInlineSceneContinuityMaster,
@@ -25,7 +22,6 @@ import {
   inlineSceneContinuityMasterEligible,
   inlineSceneDimensions,
   inlineSceneDimensionsForTemplate,
-  inlineSceneH3StillReferencePlan,
   inlineSceneImageRequestFingerprint,
   inlineSceneImageRequestKey,
   inlineSceneQwenReferencePlan,
@@ -238,16 +234,6 @@ function qwenRequest(profileIds, continuity = undefined) {
   });
 }
 
-function h3StillRequest(profileIds, continuity = undefined, selectedCast = cast(...profileIds)) {
-  return buildInlineSceneImageRequest(result(profileIds), {
-    modelTemplate: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
-    cast: selectedCast,
-    ...(continuity ? { continuityMaster: continuity } : {}),
-    lora: null,
-    aspectRatio: '16:9',
-    megapixels: 0.5
-  });
-}
 
 test('builds a finalized-response sidecar request without mutating the transcript', () => {
   const before = JSON.stringify(messages);
@@ -741,107 +727,6 @@ test('builds a continuity graph only from a verified master and its exact select
   );
 });
 
-test('builds the H3 five-frame keeper-still graph with ordered prior, canonical, and body references', () => {
-  const initial = h3StillRequest(
-    ['jenna-stannis', 'cally'],
-    undefined,
-    castWithBodyReferences('jenna-stannis', 'cally')
-  );
-  assert.deepEqual(
-    inlineSceneH3StillReferencePlan(initial).map((slot) => [slot.picture, slot.kind, slot.identity?.profileId]),
-    [
-      [1, 'canonical_identity', 'jenna-stannis'],
-      [2, 'canonical_identity', 'cally'],
-      [3, 'body_identity', 'jenna-stannis'],
-      [4, 'body_identity', 'cally']
-    ]
-  );
-  const graph = buildMiniMaxH3InlineSceneStillWorkflow(initial, 43);
-  assert.equal(graph['1'].inputs.unet_name, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['2'].inputs.type, 'minimax');
-  assert.equal(graph['3'].inputs.vae_name, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.modelFiles.videoVae);
-  assert.equal(graph['4'].inputs.vae_name, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.modelFiles.audioVae);
-  assert.deepEqual(graph['5'].inputs, { image: 'mullet/identity/jenna-stannis-v1.jpg' });
-  assert.deepEqual(graph['6'].inputs, { image: 'mullet/identity/cally-v2.jpg' });
-  assert.deepEqual(graph['7'].inputs, { image: 'mullet/identity/jenna-stannis-body-v1.png' });
-  assert.deepEqual(graph['8'].inputs, { image: 'mullet/identity/cally-body-v1.png' });
-  assert.equal(graph['20'].class_type, 'MiniMaxH3ReferenceToVideo');
-  assert.equal(graph['20'].inputs.length, 5);
-  assert.equal(graph['20'].inputs.ref_image_size, 'match');
-  assert.equal(graph['20'].inputs.width, 960);
-  assert.equal(graph['20'].inputs.height, 544);
-  assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
-  assert.deepEqual(graph['20'].inputs['ref_images.ref_image_3'], ['8', 0]);
-  assert.deepEqual(graph['19'].inputs, { model: ['1', 0], shift_video: 12, shift_audio: 3 });
-  assert.deepEqual(graph['21'].inputs, { model: ['19', 0], conditioning: ['20', 0] });
-  assert.deepEqual(graph['22'].inputs, { sampler_name: 'res_multistep' });
-  assert.deepEqual(graph['23'].inputs, { model: ['19', 0], scheduler: 'simple', steps: 20, denoise: 1 });
-  assert.deepEqual(graph['24'].inputs, { noise_seed: 43 });
-  assert.deepEqual(graph['25'].inputs, {
-    noise: ['24', 0],
-    guider: ['21', 0],
-    sampler: ['22', 0],
-    sigmas: ['23', 0],
-    latent_image: ['20', 1]
-  });
-  assert.deepEqual(graph['26'].inputs, { samples: ['25', 0], vae: ['3', 0] });
-  assert.deepEqual(graph['27'].inputs, { image: ['26', 0], batch_index: 0, length: 1 });
-  assert.deepEqual(graph['28'].inputs, { images: ['27', 0], filename_prefix: 'mullet/scene' });
-  assert.equal(JSON.stringify(graph).includes('["20",1]'), true, 'the native Ref2VA AV latent must supply the five-frame packet');
-  assert.equal(Object.values(graph).some(({ class_type }) => [
-    'LoraLoader', 'LoraLoaderModelOnly', 'KSampler', 'ConditioningZeroOut',
-    'EmptyLatentImage', 'VAEDecodeAudio', 'CreateVideo', 'SaveVideo'
-  ].includes(class_type)), false);
-  assert.match(graph['20'].inputs.prompt, /<Picture 1> is the exact canonical identity reference for Jenna Stannis/);
-  assert.match(graph['20'].inputs.prompt, /exactly one static duo landscape scene/);
-  assert.match(graph['20'].inputs.prompt, /^subject_definitions:/);
-  assert.match(graph['20'].inputs.prompt, /\nsummary:\n/);
-  assert.match(graph['20'].inputs.prompt, /\nretention_analysis:\n/);
-  assert.match(graph['20'].inputs.prompt, /\ndetailed_description:\n/);
-  assert.match(graph['20'].inputs.prompt, /no motion, animation/);
-  assert.match(graph['20'].inputs.prompt, /\noverall_soundscape:\nN\/A\. Static image only/);
-  assert.match(graph['20'].inputs.prompt, /\nnon_diegetic_music:\nN\/A\. Static image only/);
-
-  const continued = h3StillRequest(
-    ['jenna-stannis', 'cally'],
-    continuityMaster,
-    castWithBodyReferences('jenna-stannis', 'cally')
-  );
-  assert.deepEqual(
-    inlineSceneH3StillReferencePlan(continued).map((slot) => [slot.picture, slot.kind, slot.identity?.profileId]),
-    [
-      [1, 'prior_master', undefined],
-      [2, 'canonical_identity', 'jenna-stannis'],
-      [3, 'canonical_identity', 'cally'],
-      [4, 'body_identity', 'jenna-stannis'],
-      [5, 'body_identity', 'cally']
-    ]
-  );
-  const continuedGraph = buildMiniMaxH3InlineSceneStillWorkflow(continued, 44, uploadedMaster);
-  assert.equal(continuedGraph['5'].inputs.image, `mullet/motion-inputs/${uploadedMaster.name}`);
-  assert.equal(continuedGraph['6'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(continuedGraph['9'].inputs.image, 'mullet/identity/cally-body-v1.png');
-  assert.match(continuedGraph['20'].inputs.prompt, /<Picture 1> is the verified prior scene master/);
-  assert.throws(
-    () => buildMiniMaxH3InlineSceneStillWorkflow(continued, 44),
-    /requires one uploaded master input/
-  );
-  assert.throws(
-    () => buildMiniMaxH3InlineSceneStillWorkflow(continued, 44, { ...uploadedMaster, imageSha256: '8'.repeat(64) }),
-    /does not match continuity provenance/
-  );
-  assert.throws(
-    () => normalizeInlineSceneImageRequest({ ...initial, lora: subjectLora }),
-    /no LoRA/
-  );
-  assert.throws(
-    () => h3StillRequest(['jenna-stannis'], undefined, {
-      kind: 'solo',
-      identities: [{ ...identities['jenna-stannis'], displayName: '<Subject 9>' }]
-    }),
-    /display name contains a reserved H3 reference token/
-  );
-});
 
 test('binds a Z-Image scene to the linked LoRA trigger and provenance', () => {
   const request = buildInlineSceneImageRequest(result(), {
@@ -872,35 +757,6 @@ test('binds a Z-Image scene to the linked LoRA trigger and provenance', () => {
   }), /Z-Image inline scenes require/);
 });
 
-test('independently snaps all landscape dimensions to the model multiple', () => {
-  assert.deepEqual(inlineSceneDimensions('3:2', 0.5), { width: 864, height: 576, pixels: 497664 });
-  assert.deepEqual(inlineSceneDimensions('4:3', 1), { width: 1152, height: 864, pixels: 995328 });
-  assert.deepEqual(inlineSceneDimensions('5:4', 2), { width: 1584, height: 1264, pixels: 2002176 });
-  assert.deepEqual(inlineSceneDimensions('16:9', 1), { width: 1328, height: 752, pixels: 998656 });
-  for (const ratio of ['3:2', '4:3', '5:4', '16:9']) {
-    for (const megapixels of [0.5, 0.75, 0.9, 1, 1.5, 2]) {
-      const dimensions = inlineSceneDimensions(ratio, megapixels);
-      assert.equal(dimensions.width % Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple, 0);
-      assert.equal(dimensions.height % Z_IMAGE_TURBO_SCENE_TEMPLATE.multiple, 0);
-      assert.ok(dimensions.width <= 2048 && dimensions.height <= 2048);
-    }
-  }
-  assert.deepEqual(
-    inlineSceneDimensionsForTemplate(MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID, '16:9', 0.5),
-    { width: 960, height: 544, pixels: 522240 }
-  );
-  for (const ratio of ['3:2', '4:3', '5:4', '16:9']) {
-    for (const megapixels of [0.5, 0.75, 0.9, 1, 1.5, 2]) {
-      const dimensions = inlineSceneDimensionsForTemplate(
-        MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
-        ratio,
-        megapixels
-      );
-      assert.equal(dimensions.width % MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.multiple, 0);
-      assert.equal(dimensions.height % MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.multiple, 0);
-    }
-  }
-});
 
 test('builds explicit solo, duo, and trio Qwen graphs with stable one-to-one image slots', () => {
   const capabilities = {

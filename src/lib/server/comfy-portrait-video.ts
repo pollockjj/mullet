@@ -1,6 +1,4 @@
 import {
-  LTX25_PORTRAIT_VIDEO_TEMPLATE,
-  LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_VIDEO_CAPABILITIES_SPEC,
@@ -9,7 +7,6 @@ import {
   PORTRAIT_VIDEO_MODES,
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE,
   buildQwenPortraitEndFrameWorkflow,
-  buildLtx25PortraitVideoWorkflow,
   buildMiniMaxH3PortraitVideoWorkflow,
   portraitVideoDimensions,
   portraitVideoOutputNode,
@@ -156,13 +153,9 @@ export async function loadPortraitVideoCapabilities(
   imageBaseUrl: string,
   signal?: AbortSignal
 ): Promise<PortraitVideoCapabilities> {
-  const ltxTemplate = LTX25_PORTRAIT_VIDEO_TEMPLATE;
   const minimaxTemplate = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE;
   const endFrameTemplate = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE;
-  const videoNodeNames = [...new Set([
-    ...ltxTemplate.requiredNodes,
-    ...minimaxTemplate.requiredNodes
-  ])];
+  const videoNodeNames = [...new Set(minimaxTemplate.requiredNodes)];
   const endFrameNodeNames = [...new Set(endFrameTemplate.requiredNodes)];
   const loadNodeBodies = async (baseUrl: string, nodeNames: readonly string[]) => new Map(await Promise.all(
     nodeNames.map(async (nodeName): Promise<[string, unknown | null]> => {
@@ -192,17 +185,6 @@ export async function loadPortraitVideoCapabilities(
   const endFrameInfo = Object.fromEntries(endFrameNodeNames
     .filter(endFrameNodeAvailable)
     .map((nodeName) => [nodeName, nodeInfo(endFrameBodies.get(nodeName), nodeName)])) as Record<string, Record<string, unknown>>;
-  const ltxI2vNodes = new Set(['LTXVImgToVideoInplace']);
-  const ltxFlfNodes = new Set(['LTXVAddGuide', 'LTXVCropGuides']);
-  const ltxCommonMissing = ltxTemplate.requiredNodes
-    .filter((nodeName) => !ltxI2vNodes.has(nodeName) && !ltxFlfNodes.has(nodeName) && !videoNodeAvailable(nodeName))
-    .map((nodeName) => `node:${nodeName}`);
-  const ltxI2vMissing = ltxTemplate.requiredNodes
-    .filter((nodeName) => ltxI2vNodes.has(nodeName) && !videoNodeAvailable(nodeName))
-    .map((nodeName) => `node:${nodeName}`);
-  const ltxFlfMissing = ltxTemplate.requiredNodes
-    .filter((nodeName) => ltxFlfNodes.has(nodeName) && !videoNodeAvailable(nodeName))
-    .map((nodeName) => `node:${nodeName}`);
   const minimaxCommonMissing = minimaxTemplate.requiredNodes
     .filter((nodeName) => !videoNodeAvailable(nodeName))
     .map((nodeName) => `node:${nodeName}`);
@@ -242,19 +224,6 @@ export async function loadPortraitVideoCapabilities(
     ));
   };
 
-  modelOption(ltxCommonMissing, 'UNETLoader', 'unet_name', ltxTemplate.modelFiles.unet, `model:unet:${ltxTemplate.modelFiles.unet}`);
-  modelOption(ltxCommonMissing, 'CLIPLoader', 'clip_name', ltxTemplate.modelFiles.clip, `model:clip:${ltxTemplate.modelFiles.clip}`);
-  modelOption(ltxCommonMissing, 'CLIPLoader', 'type', 'ltxv', 'clip-type:ltxv');
-  modelOption(ltxCommonMissing, 'VAELoader', 'vae_name', ltxTemplate.modelFiles.videoVae, `model:vae:${ltxTemplate.modelFiles.videoVae}`);
-  modelOption(ltxCommonMissing, 'VAELoader', 'vae_name', ltxTemplate.modelFiles.audioVae, `model:vae:${ltxTemplate.modelFiles.audioVae}`);
-  modelOption(
-    ltxCommonMissing,
-    'LatentUpscaleModelLoader',
-    'model_name',
-    ltxTemplate.modelFiles.latentUpscaler,
-    `model:latent-upscaler:${ltxTemplate.modelFiles.latentUpscaler}`
-  );
-  modelOption(ltxCommonMissing, 'KSamplerSelect', 'sampler_name', ltxTemplate.sampler, `sampler:${ltxTemplate.sampler}`);
 
   modelOption(minimaxCommonMissing, 'UNETLoader', 'unet_name', minimaxTemplate.modelFiles.unet, `model:unet:${minimaxTemplate.modelFiles.unet}`);
   modelOption(minimaxCommonMissing, 'CLIPLoader', 'clip_name', minimaxTemplate.modelFiles.clip, `model:clip:${minimaxTemplate.modelFiles.clip}`);
@@ -312,16 +281,6 @@ export async function loadPortraitVideoCapabilities(
     }
   }
   if (videoNodeAvailable('SaveVideo')) {
-    diagnostic(ltxCommonMissing, `video-format:${ltxTemplate.format}`, () => requireOption(
-      dynamicOptionKeys(requiredInput(videoInfo.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
-      ltxTemplate.format,
-      `video-format:${ltxTemplate.format}`
-    ));
-    diagnostic(ltxCommonMissing, `video-codec:${ltxTemplate.codec}`, () => requireOption(
-      dynamicOptionKeys(inputDefinition(videoInfo.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
-      ltxTemplate.codec,
-      `video-codec:${ltxTemplate.codec}`
-    ));
     diagnostic(minimaxCommonMissing, `video-format:${minimaxTemplate.format}`, () => requireOption(
       dynamicOptionKeys(requiredInput(videoInfo.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
       minimaxTemplate.format,
@@ -360,7 +319,7 @@ export async function loadPortraitVideoCapabilities(
     }
   }
   if (videoNodeAvailable('LoadImage')) {
-    for (const missing of [ltxCommonMissing, minimaxCommonMissing]) {
+    for (const missing of [minimaxCommonMissing]) {
       diagnostic(missing, 'node-input:LoadImage.image_upload', () => {
         const uploadInput = requiredInput(videoInfo.LoadImage, 'LoadImage', 'image');
         if (!isRecord(uploadInput[1]) || uploadInput[1].image_upload !== true) throw new Error('upload unavailable');
@@ -395,18 +354,10 @@ export async function loadPortraitVideoCapabilities(
         : unique([...commonMissing, ...i2vMissing]);
     return { ...mode, available: missing.length === 0, missing };
   });
-  const ltxMissing = unique(ltxCommonMissing);
   const minimaxMissing = unique(minimaxCommonMissing);
   return {
     spec: PORTRAIT_VIDEO_CAPABILITIES_SPEC,
     templates: [
-      {
-        template: ltxTemplate,
-        available: ltxMissing.length === 0,
-        missing: ltxMissing,
-        modes: modes(ltxCommonMissing, ltxI2vMissing, ltxFlfMissing),
-        durations: ltxTemplate.durations
-      },
       {
         template: minimaxTemplate,
         available: minimaxMissing.length === 0,
@@ -720,11 +671,9 @@ export async function runComfyPortraitVideo(
   let id = '';
   let validated = false;
   try {
-    const workflow = request.modelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
-      ? buildLtx25PortraitVideoWorkflow(request, input, seed, endFrameInput)
-      : request.modelTemplate === MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
-        ? buildMiniMaxH3PortraitVideoWorkflow(request, input, seed, endFrameInput)
-        : (() => { throw new Error('unsupported portrait-video model template'); })();
+    const workflow = request.modelTemplate === MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+      ? buildMiniMaxH3PortraitVideoWorkflow(request, input, seed, endFrameInput)
+      : (() => { throw new Error('unsupported portrait-video model template'); })();
     const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

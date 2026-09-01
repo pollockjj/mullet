@@ -3,14 +3,10 @@ import {
   INLINE_SCENE_VIDEO_DIMENSIONS,
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
   INLINE_SCENE_VIDEO_TEMPLATES,
-  LTX25_INLINE_SCENE_VIDEO_TEMPLATE,
-  LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
-  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE,
   MINIMAX_H3_SCENE_LOOP_TEMPLATE,
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
   buildInlineSceneVideoWorkflow,
   isMiniMaxH3InlineSceneVideoTemplate,
-  inlineSceneH3ReferencePlan,
   inlineSceneVideoDimensions,
   inlineSceneVideoOutputNode,
   type InlineSceneVideoCapabilities,
@@ -185,37 +181,8 @@ export async function loadInlineSceneVideoCapabilities(
     });
   };
 
-  const ltx = LTX25_INLINE_SCENE_VIDEO_TEMPLATE;
-  const ltxMissing = ltx.requiredNodes
-    .filter((nodeName) => !nodeAvailable(nodeName))
-    .map((nodeName) => `node:${nodeName}`);
-  optionDiagnostic(ltxMissing, 'UNETLoader', 'unet_name', ltx.modelFiles.unet, `model:unet:${ltx.modelFiles.unet}`);
-  optionDiagnostic(ltxMissing, 'CLIPLoader', 'clip_name', ltx.modelFiles.clip, `model:clip:${ltx.modelFiles.clip}`);
-  optionDiagnostic(ltxMissing, 'CLIPLoader', 'type', 'ltxv', 'clip-type:ltxv');
-  optionDiagnostic(ltxMissing, 'VAELoader', 'vae_name', ltx.modelFiles.videoVae, `model:vae:${ltx.modelFiles.videoVae}`);
-  optionDiagnostic(ltxMissing, 'VAELoader', 'vae_name', ltx.modelFiles.audioVae, `model:vae:${ltx.modelFiles.audioVae}`);
-  optionDiagnostic(ltxMissing, 'LatentUpscaleModelLoader', 'model_name', ltx.modelFiles.latentUpscaler, `model:latent-upscaler:${ltx.modelFiles.latentUpscaler}`);
-  optionDiagnostic(ltxMissing, 'KSamplerSelect', 'sampler_name', ltx.sampler, `sampler:${ltx.sampler}`);
-  if (nodeAvailable('SaveVideo')) {
-    diagnostic(ltxMissing, `video-format:${ltx.format}`, () => requireOption(
-      dynamicOptionKeys(requiredInput(info.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
-      ltx.format,
-      `video-format:${ltx.format}`
-    ));
-    diagnostic(ltxMissing, `video-codec:${ltx.codec}`, () => requireOption(
-      dynamicOptionKeys(inputDefinition(info.SaveVideo, 'SaveVideo', 'optional', 'codec'), 'SaveVideo', 'codec'),
-      ltx.codec,
-      `video-codec:${ltx.codec}`
-    ));
-  }
-  uploadDiagnostic(ltxMissing);
-
   const unique = (items: readonly string[]): string[] => [...new Set(items)];
-  const minimaxCapabilities = [
-    MINIMAX_H3_SCENE_LOOP_TEMPLATE,
-    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE,
-    MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE
-  ].map((minimax) => {
+  const minimaxCapabilities = [MINIMAX_H3_SCENE_LOOP_TEMPLATE].map((minimax) => {
     const minimaxMissing = minimax.requiredNodes
       .filter((nodeName) => !nodeAvailable(nodeName))
       .map((nodeName) => `node:${nodeName}`);
@@ -226,11 +193,7 @@ export async function loadInlineSceneVideoCapabilities(
     optionDiagnostic(minimaxMissing, 'VAELoader', 'vae_name', minimax.modelFiles.audioVae, `model:vae:${minimax.modelFiles.audioVae}`);
     optionDiagnostic(minimaxMissing, 'KSamplerSelect', 'sampler_name', minimax.sampler, `sampler:${minimax.sampler}`);
     optionDiagnostic(minimaxMissing, 'BasicScheduler', 'scheduler', minimax.scheduler, `scheduler:${minimax.scheduler}`);
-    const acceleratorLora = 'lora' in minimax.modelFiles
-      ? minimax.modelFiles.lora
-      : 'turboLora' in minimax.modelFiles
-        ? minimax.modelFiles.turboLora
-        : null;
+    const acceleratorLora: string = minimax.modelFiles.turboLora;
     if (acceleratorLora) {
       optionDiagnostic(
         minimaxMissing,
@@ -239,28 +202,6 @@ export async function loadInlineSceneVideoCapabilities(
         acceleratorLora,
         `model:lora:${acceleratorLora}`
       );
-    }
-    // Reference conditioning is Ref2VA-only. The FL2VA scene loop takes the accepted
-    // scene still as its first and last frame and has no reference slots to check.
-    if ('referenceImageSize' in minimax && 'maxReferenceImages' in minimax) {
-      const referenceImageSize = minimax.referenceImageSize;
-      const maxReferenceImages = minimax.maxReferenceImages;
-      optionDiagnostic(
-        minimaxMissing,
-        'MiniMaxH3ReferenceToVideo',
-        'ref_image_size',
-        referenceImageSize,
-        `node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${referenceImageSize}`
-      );
-      if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
-        diagnostic(minimaxMissing, 'node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9', () => requireExactAutogrowDefinition(
-          inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
-          'MiniMaxH3ReferenceToVideo',
-          'ref_images',
-          'ref_image_',
-          maxReferenceImages
-        ));
-      }
     }
     if (nodeAvailable('SaveVideo')) {
       diagnostic(minimaxMissing, `video-format:${minimax.format}`, () => requireOption(
@@ -283,18 +224,10 @@ export async function loadInlineSceneVideoCapabilities(
   });
   return {
     spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
-    templates: [
-      minimaxCapabilities[0],
-      {
-        template: ltx,
-        available: ltxMissing.length === 0,
-        missing: unique(ltxMissing)
-      },
-      ...minimaxCapabilities.slice(1)
-    ],
+    templates: minimaxCapabilities,
     aspectRatios: INLINE_SCENE_VIDEO_DIMENSIONS,
-    // Duration is per template now: the FL2VA loop is three seconds, Ref2VA and LTX are
-    // five. Report the distinct set so the UI cannot claim a duration nothing offers.
+    // Duration is per template: the FL2VA loop is three seconds, Ref2VA is five.
+    // Report the distinct set so the UI cannot claim a duration nothing offers.
     durations: [...new Set(INLINE_SCENE_VIDEO_TEMPLATES.map(({ durationSeconds }) => durationSeconds))]
       .sort((left, right) => left - right)
   };
@@ -441,8 +374,8 @@ function outputVideo(
     throw new Error('ComfyUI inline-scene video history did not mark the output animated');
   }
   const video = references[0];
-  const filenamePattern = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-    ? /^scene-motion-loop-flf_\d+_\.mp4$/
+  const filenamePattern = request.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
+    ? /^scene-motion-loop_\d+_\.mp4$/
     : /^scene-motion_\d+_\.mp4$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected inline-scene video filename');
@@ -541,13 +474,7 @@ export async function runComfyInlineSceneVideo(
   let id = '';
   let completed = false;
   try {
-    if (isMiniMaxH3InlineSceneVideoTemplate(request.modelTemplate)) {
-      for (const entry of inlineSceneH3ReferencePlan(request)) {
-        if (entry.kind === 'canonical_identity' || entry.kind === 'body_identity') {
-          await assertComfyIdentityReference(fetcher, baseUrl, entry.referenceImage, signal);
-        }
-      }
-    }
+    // The scene loop animates the accepted scene still and takes no identity references.
     const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -581,7 +508,7 @@ export async function runComfyInlineSceneVideo(
       || bytes[6] !== 0x79
       || bytes[7] !== 0x70
     ) throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
-    if (request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+    if (request.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
       durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
       audioTracks = 0;
     } else {

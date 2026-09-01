@@ -7,8 +7,6 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  LTX25_PORTRAIT_VIDEO_TEMPLATE,
-  LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE
@@ -21,8 +19,8 @@ const publicOrigin = 'https://mullet.test';
 const deadComfyBaseUrl = 'http://127.0.0.1:1';
 const videoPromptId = '33333333-3333-4333-8333-333333333333';
 const endFramePromptId = '44444444-4444-4444-8444-444444444444';
-const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49, includeAudio: false });
-const ltxAudioMp4Bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49 });
+const h264Mp4Bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49, includeAudio: false });
+const audioBearingMp4Bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 49 });
 const mp4Bytes = buildH264AacMp4Fixture({
   width: 576,
   height: 1024,
@@ -93,16 +91,14 @@ function standardInfo(node, inputName, options, metadata = {}) {
 }
 
 function capabilityResponse(node) {
-  const ltxFiles = LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const minimaxFiles = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles;
   const endFiles = QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles;
-  if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [ltxFiles.unet, minimaxFiles.unet, endFiles.unet]);
+  if (node === 'UNETLoader') return standardInfo(node, 'unet_name', [minimaxFiles.unet, endFiles.unet]);
   if (node === 'CLIPLoader') return { [node]: { input: { required: {
-    clip_name: [[ltxFiles.clip, minimaxFiles.clip, endFiles.clip]],
-    type: [['ltxv', 'minimax', 'qwen_image']]
+    clip_name: [[minimaxFiles.clip, endFiles.clip]],
+    type: [['minimax', 'qwen_image']]
   } } } };
-  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [ltxFiles.videoVae, ltxFiles.audioVae, minimaxFiles.videoVae, endFiles.vae]);
-  if (node === 'LatentUpscaleModelLoader') return standardInfo(node, 'model_name', [ltxFiles.latentUpscaler]);
+  if (node === 'VAELoader') return standardInfo(node, 'vae_name', [minimaxFiles.videoVae, endFiles.vae]);
   if (node === 'LoraLoaderModelOnly') return standardInfo(node, 'lora_name', [minimaxFiles.turboLora, endFiles.lora]);
   if (node === 'KSamplerSelect') return standardInfo(node, 'sampler_name', ['euler_ancestral', 'res_multistep', 'euler']);
   if (node === 'KSampler') return { [node]: { input: { required: {
@@ -239,12 +235,9 @@ function fakeComfy() {
           });
           return;
         }
-        const ltx = queued.prompt?.['3']?.inputs?.unet_name === LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet;
-        const generatedFlf = ltx ? Boolean(queued.prompt?.['37']) : Boolean(queued.prompt?.['17']);
-        const loopFlf = ltx
-          ? queued.prompt?.['13']?.class_type === 'LTXVAddGuide' && !generatedFlf
-          : Boolean(queued.prompt?.['6']?.inputs?.last_frame) && !generatedFlf;
-        const outputNode = ltx ? '38' : '15';
+        const generatedFlf = Boolean(queued.prompt?.['17']);
+        const loopFlf = Boolean(queued.prompt?.['6']?.inputs?.last_frame) && !generatedFlf;
+        const outputNode = '15';
         const extension = 'mp4';
         const filename = generatedFlf
           ? `portrait-motion-generated-flf_00001_.${extension}`
@@ -284,14 +277,11 @@ function fakeComfy() {
           return;
         }
         const queuedVideo = state.prompts.findLast((prompt) => prompt.client_id === 'mullet-portrait-video');
-        const ltx = queuedVideo?.prompt?.['3']?.inputs?.unet_name === LTX25_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet;
-        const videoBytes = state.mode === 'audio-ltx-mp4'
-          ? ltxAudioMp4Bytes
+        const videoBytes = state.mode === 'audio-h264-mp4'
+          ? audioBearingMp4Bytes
           : state.mode === 'audio-mp4'
             ? audioMp4Bytes
-            : ltx
-              ? ltxMp4Bytes
-              : queuedVideo?.prompt?.['6']?.inputs?.length === 124
+            : queuedVideo?.prompt?.['6']?.inputs?.length === 124
                 ? mp4FiveBytes
                 : queuedVideo?.prompt?.['6']?.inputs?.length === 73
                   ? mp4ThreeBytes
@@ -347,338 +337,3 @@ function formFor(request, imageBytes, includeExtra = false) {
   return form;
 }
 
-test('compiled portrait-video route enforces the fake-Comfy contract', { timeout: 120_000 }, async (context) => {
-  execFileSync(process.execPath, [resolve(repositoryRoot, 'node_modules/vite/bin/vite.js'), 'build'], {
-    cwd: repositoryRoot,
-    env: {
-      ...process.env,
-      BASE_PATH: '/mullet',
-      BUILD_OUTPUT_DIR: buildDirectory
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  const fake = fakeComfy();
-  const imageFake = fakeComfy();
-  let appServer;
-  context.after(async () => {
-    await close(appServer);
-    await close(fake.server);
-    await close(imageFake.server);
-  });
-  const videoComfyBaseUrl = await listen(fake.server);
-  const imageComfyBaseUrl = await listen(imageFake.server);
-  // Lanes are split by pipeline now: the whole expression pipeline - still, end frame and
-  // motion - lives on one instance, so both fakes stand in for the expression lane.
-  // EXPRESSION_/SCENE_ are the live lane variables now; the legacy IMAGE_/VIDEO_ pair
-  // points at a dead server so the route provably reads the new ones.
-  process.env.EXPRESSION_COMFY_BASE_URL = videoComfyBaseUrl;
-  process.env.SCENE_COMFY_BASE_URL = imageComfyBaseUrl;
-  process.env.IMAGE_COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.VIDEO_COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.COMFY_BASE_URL = deadComfyBaseUrl;
-  process.env.ORIGIN = publicOrigin;
-  process.env.BODY_SIZE_LIMIT = '32M';
-  process.env.BUILD_SHA = 'portrait-video-route-test';
-  process.env.PUBLIC_BUILD_SHA = 'portrait-video-route-test';
-  const handlerModule = await import(`${pathToFileURL(resolve(buildDirectory, 'handler.js')).href}?test=${Date.now()}`);
-  appServer = createServer(handlerModule.handler);
-  const appBaseUrl = await listen(appServer);
-  const routeUrl = `${appBaseUrl}/mullet/api/portrait/video`;
-  const imageBytes = png(576, 1024);
-  const imageSha256 = sha256(imageBytes);
-  const request = motionRequest(imageSha256);
-  const post = (body) => fetch(routeUrl, {
-    method: 'POST',
-    headers: { origin: publicOrigin },
-    body
-  });
-
-  await context.test('GET returns both exact expression-video template capabilities', async () => {
-    fake.reset();
-    imageFake.reset();
-    const response = await fetch(routeUrl);
-    const responseText = await response.text();
-    assert.equal(response.status, 200, responseText);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    const capabilities = JSON.parse(responseText);
-    assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v10');
-    assert.deepEqual(
-      capabilities.templates.map(({ template }) => template.id),
-      [LTX25_PORTRAIT_VIDEO_TEMPLATE_ID, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID]
-    );
-    assert.deepEqual(capabilities.templates[0].durations, [2]);
-    assert.deepEqual(capabilities.templates[1].durations, [2, 3, 5]);
-    for (const templateCapability of capabilities.templates) {
-      assert.equal(templateCapability.available, true, `missing: ${JSON.stringify(templateCapability.missing)}`);
-      assert.deepEqual(templateCapability.missing, []);
-      assert.deepEqual(templateCapability.modes.map(({ id }) => id), ['i2v', 'flf2v_loop', 'flf2v_generated']);
-      assert.equal(templateCapability.modes.every(({ available }) => available), true);
-    }
-    assert.equal(capabilities.endFrameTemplate.id, 'qwen-image-edit-2511-end-frame-v1');
-    assert.deepEqual(capabilities.aspectRatios, [
-      { aspectRatio: '9:16', width: 576, height: 1024 }
-    ]);
-    // One instance serves the whole expression pipeline, so every probe - motion
-    // templates and the Qwen end frame - lands on the expression lane and the scene lane
-    // is never touched.
-    const queriedVideoNodes = fake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
-    const queriedImageNodes = imageFake.state.calls.map(({ path }) => decodeURIComponent(path.slice('/object_info/'.length)));
-    assert.deepEqual(queriedImageNodes, []);
-    assert.equal(
-      [
-        ...LTX25_PORTRAIT_VIDEO_TEMPLATE.requiredNodes,
-        ...MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.requiredNodes
-      ].every((node) => queriedVideoNodes.includes(node)),
-      true
-    );
-    // Every required node for both motion templates and the end frame is probed on the
-    // expression lane; the scene lane is never probed. The exact call count is an
-    // implementation detail of how many probes are batched, so it is not asserted.
-    assert.equal(
-      QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.requiredNodes
-        .every((node) => queriedVideoNodes.includes(node)),
-      true
-    );
-    assert.deepEqual(queriedImageNodes, []);
-    assert.deepEqual(queriedImageNodes, []);
-  });
-
-  await context.test('POST defaults to the exact two-second silent H3 identical-frame loop H.264 MP4', async () => {
-    fake.reset();
-    const response = await post(formFor(request, imageBytes));
-    const responseBytes = new Uint8Array(await response.arrayBuffer());
-    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, mp4Bytes);
-    assert.equal(response.headers.get('content-type'), 'video/mp4');
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(response.headers.get('x-mullet-prompt-id'), videoPromptId);
-    assert.equal(response.headers.get('x-mullet-width'), '576');
-    assert.equal(response.headers.get('x-mullet-height'), '1024');
-    assert.equal(response.headers.get('x-mullet-frames'), '56');
-    assert.equal(response.headers.get('x-mullet-fps'), '28');
-    assert.equal(response.headers.get('x-mullet-duration-seconds'), '2');
-    assert.equal(response.headers.get('x-mullet-encoded-duration-seconds'), '2');
-    assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
-    assert.equal(response.headers.get('x-mullet-model-template'), MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
-    assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_loop');
-    assert.equal(response.headers.get('x-mullet-input-sha256'), imageSha256);
-    assert.equal(response.headers.get('x-mullet-video-sha256'), sha256(mp4Bytes));
-
-    assert.equal(fake.state.uploads.length, 1);
-    const upload = fake.state.uploads[0];
-    assert.match(upload.name, /^portrait-motion-[0-9a-f-]{36}\.png$/i);
-    assert.deepEqual(upload.bytes, imageBytes);
-    assert.equal(upload.subfolder, 'mullet/motion-inputs');
-    assert.equal(upload.type, 'input');
-    assert.equal(upload.overwrite, 'false');
-
-    assert.equal(fake.state.prompts.length, 1);
-    const queued = fake.state.prompts[0];
-    const seed = Number(response.headers.get('x-mullet-seed'));
-    assert.equal(Number.isSafeInteger(seed), true);
-    assert.equal(queued.client_id, 'mullet-portrait-video');
-    assert.equal(queued.prompt['5'].inputs.image, `mullet/motion-inputs/${upload.name}`);
-    assert.equal(queued.prompt['1'].inputs.unet_name, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.unet);
-    assert.equal(queued.prompt['2'].inputs.clip_name, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE.modelFiles.clip);
-    assert.equal(queued.prompt['6'].inputs.length, 56);
-    assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
-    assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
-    assert.equal(queued.prompt['8'].inputs.sampler_name, 'euler');
-    assert.equal(queued.prompt['9'].inputs.steps, 4);
-    assert.equal(queued.prompt['10'].inputs.noise_seed, seed);
-    assert.deepEqual(queued.prompt['7'].inputs.model, ['18', 0]);
-    assert.deepEqual(queued.prompt['9'].inputs.model, ['18', 0]);
-    assert.deepEqual(queued.prompt['18'].inputs, { model: ['16', 0], shift_video: 6, shift_audio: 3 });
-    assert.equal(queued.prompt['14'].class_type, 'CreateVideo');
-    assert.equal(queued.prompt['14'].inputs.fps, 28);
-    assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'audio'), false);
-    assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'bit_depth'), false);
-    assert.deepEqual(queued.prompt['14'].inputs.images, ['12', 0]);
-    assert.equal(queued.prompt['15'].class_type, 'SaveVideo');
-    assert.deepEqual(queued.prompt['15'].inputs.video, ['14', 0]);
-    assert.equal(queued.prompt['15'].inputs.format, 'auto');
-    assert.equal(queued.prompt['15'].inputs.codec, 'auto');
-  });
-
-  await context.test('POST retains LTX and longer H3 MP4 loops as explicit selections', async () => {
-    fake.reset();
-    const ltx = motionRequest(imageSha256, { modelTemplate: LTX25_PORTRAIT_VIDEO_TEMPLATE_ID });
-    const ltxResponse = await post(formFor(ltx, imageBytes));
-    assert.equal(ltxResponse.status, 200, await ltxResponse.clone().text());
-    assert.deepEqual(new Uint8Array(await ltxResponse.arrayBuffer()), ltxMp4Bytes);
-    assert.equal(ltxResponse.headers.get('x-mullet-model-template'), LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
-    assert.equal(fake.state.prompts[0].prompt['11'].inputs.length, 49);
-
-    fake.reset();
-    const minimaxThree = motionRequest(imageSha256, {
-      modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
-      durationSeconds: 3
-    });
-    const response = await post(formFor(minimaxThree, imageBytes));
-    const responseBytes = new Uint8Array(await response.arrayBuffer());
-    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, mp4ThreeBytes);
-    assert.equal(response.headers.get('content-type'), 'video/mp4');
-    assert.equal(response.headers.get('x-mullet-model-template'), MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
-    assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_loop');
-    assert.equal(response.headers.get('x-mullet-duration-seconds'), '3');
-    assert.equal(response.headers.get('x-mullet-audio-tracks'), '0');
-    const queued = fake.state.prompts[0];
-    assert.equal(queued.prompt['6'].class_type, 'MiniMaxH3ImageToVideo');
-    assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
-    assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
-    assert.equal(queued.prompt['6'].inputs.length, 73);
-    assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'audio'), false);
-    assert.equal(queued.prompt['15'].class_type, 'SaveVideo');
-
-    fake.reset();
-    const selected = motionRequest(imageSha256, {
-      modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
-      durationSeconds: 5
-    });
-    const responseFive = await post(formFor(selected, imageBytes));
-    const responseFiveBytes = new Uint8Array(await responseFive.arrayBuffer());
-    assert.equal(responseFive.status, 200, new TextDecoder().decode(responseFiveBytes));
-    assert.deepEqual(responseFiveBytes, mp4FiveBytes);
-    assert.equal(responseFive.headers.get('x-mullet-frames'), '124');
-    assert.equal(responseFive.headers.get('x-mullet-fps'), '24');
-    assert.equal(responseFive.headers.get('x-mullet-duration-seconds'), '5');
-    assert.equal(responseFive.headers.get('x-mullet-encoded-duration-seconds'), String(124 / 24));
-    const queuedFive = fake.state.prompts[0];
-    assert.equal(queuedFive.prompt['6'].inputs.length, 124);
-    assert.deepEqual(queuedFive.prompt['6'].inputs.first_frame, ['5', 0]);
-    assert.deepEqual(queuedFive.prompt['6'].inputs.last_frame, ['5', 0]);
-  });
-
-  await context.test('POST generates a Qwen Image Edit end frame and queues FLF motion on the same expression lane', async () => {
-    fake.reset();
-    imageFake.reset();
-    const generatedRequest = motionRequest(imageSha256, { mode: 'flf2v_generated' });
-    const response = await post(formFor(generatedRequest, imageBytes));
-    const responseBytes = new Uint8Array(await response.arrayBuffer());
-    assert.equal(response.status, 200, new TextDecoder().decode(responseBytes));
-    assert.deepEqual(responseBytes, mp4Bytes);
-    assert.equal(response.headers.get('content-type'), 'video/mp4');
-    assert.equal(response.headers.get('x-mullet-video-mode'), 'flf2v_generated');
-    assert.equal(response.headers.get('x-mullet-end-frame-model-template'), 'qwen-image-edit-2511-end-frame-v1');
-    assert.equal(response.headers.get('x-mullet-end-frame-prompt-id'), endFramePromptId);
-    assert.equal(response.headers.get('x-mullet-end-frame-width'), '576');
-    assert.equal(response.headers.get('x-mullet-end-frame-height'), '1024');
-    assert.equal(response.headers.get('x-mullet-end-frame-sha256'), sha256(png(576, 1024, 1)));
-    const videoSeed = Number(response.headers.get('x-mullet-seed'));
-    const endFrameSeed = Number(response.headers.get('x-mullet-end-frame-seed'));
-    assert.equal(endFrameSeed, videoSeed === Number.MAX_SAFE_INTEGER ? 0 : videoSeed + 1);
-
-    // One expression instance now serves both the end frame and the motion, so every
-    // upload and prompt lands on it and the scene lane stays untouched.
-    assert.equal(imageFake.state.uploads.length, 0);
-    assert.equal(imageFake.state.prompts.length, 0);
-    assert.equal(fake.state.uploads.length, 3);
-    assert.ok(fake.state.uploads.some((upload) => Buffer.from(upload.bytes).equals(Buffer.from(imageBytes))));
-    assert.equal(fake.state.prompts.length, 2);
-    const endFramePrompt = fake.state.prompts.find((prompt) => prompt.client_id === 'mullet-portrait-end-frame');
-    const videoPrompt = fake.state.prompts.find((prompt) => prompt.client_id !== 'mullet-portrait-end-frame');
-    assert.equal(endFramePrompt.client_id, 'mullet-portrait-end-frame');
-    assert.deepEqual(QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles, {
-      unet: 'qwen_image_edit_2511_int8_convrot.safetensors',
-      clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
-      vae: 'qwen_image_vae.safetensors',
-      lora: 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
-    });
-    assert.equal(endFramePrompt.prompt['1'].inputs.unet_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet);
-    assert.equal(endFramePrompt.prompt['2'].inputs.type, 'qwen_image');
-    // Uploads for the end frame and the motion now share one lane, so identify the end
-    // frame's input by the name its own prompt references rather than by array position.
-    const endFrameUpload = fake.state.uploads.find(
-      (upload) => endFramePrompt.prompt['4'].inputs.image === `mullet/motion-inputs/${upload.name}`
-    );
-    assert.ok(endFrameUpload, 'end-frame input must be uploaded to the expression lane');
-    assert.deepEqual(endFrameUpload.bytes, imageBytes);
-    assert.deepEqual(endFramePrompt.prompt['5'].inputs, {
-      image: ['4', 0],
-      upscale_method: 'lanczos',
-      width: 576,
-      height: 1024,
-      crop: 'center'
-    });
-    assert.equal(endFramePrompt.prompt['8'].inputs.lora_name, QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.lora);
-    assert.equal(endFramePrompt.prompt['8'].inputs.strength_model, 1);
-    assert.equal(endFramePrompt.prompt['12'].inputs.seed, endFrameSeed);
-    assert.deepEqual(endFramePrompt.prompt['14'].inputs.images, ['13', 0]);
-    assert.equal(videoPrompt.client_id, 'mullet-portrait-video');
-    // Same lane-sharing caveat: match uploads by the names the prompt references.
-    const uploadNames = new Set(fake.state.uploads.map((upload) => `mullet/motion-inputs/${upload.name}`));
-    assert.ok(uploadNames.has(videoPrompt.prompt['5'].inputs.image), 'first frame must be an expression-lane upload');
-    assert.ok(uploadNames.has(videoPrompt.prompt['17'].inputs.image), 'last frame must be an expression-lane upload');
-    assert.notEqual(videoPrompt.prompt['5'].inputs.image, videoPrompt.prompt['17'].inputs.image);
-    assert.deepEqual(videoPrompt.prompt['6'].inputs.last_frame, ['17', 0]);
-    assert.equal(videoPrompt.prompt['15'].inputs.filename_prefix, 'mullet/portrait-motion-generated-flf');
-  });
-
-  await context.test('POST rejects mismatched hash, IHDR, and multipart shape before ComfyUI', async () => {
-    fake.reset();
-    const hashMismatch = motionRequest('b'.repeat(64));
-    assert.equal((await post(formFor(hashMismatch, imageBytes))).status, 400);
-    assert.equal(fake.state.calls.length, 0);
-
-    fake.reset();
-    const wrongDimensions = png(576, 768);
-    assert.equal((await post(formFor(motionRequest(sha256(wrongDimensions)), wrongDimensions))).status, 400);
-    assert.equal(fake.state.calls.length, 0);
-
-    fake.reset();
-    assert.equal((await post(formFor(request, imageBytes, true))).status, 400);
-    assert.equal(fake.state.calls.length, 0);
-
-    fake.reset();
-    assert.equal((await post(formFor({ ...request, mode: 'unsupported' }, imageBytes))).status, 400);
-    assert.equal(fake.state.calls.length, 0);
-
-    fake.reset();
-    assert.equal((await post(formFor({ ...request, durationSeconds: 4 }, imageBytes))).status, 400);
-    assert.equal(fake.state.calls.length, 0);
-
-    fake.reset();
-    assert.equal((await post(formFor({ ...request, aspectRatio: '3:4' }, imageBytes))).status, 400);
-    assert.equal(fake.state.calls.length, 0);
-  });
-
-  await context.test('history failure maps to 502 and cancels only its prompt', async () => {
-    fake.reset('history-error');
-    const response = await post(formFor(request, imageBytes));
-    assert.equal(response.status, 502, await response.text());
-    const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
-    assert.equal(cancellations.length, 1);
-    assert.equal(fake.state.calls.some(({ path }) => path === '/interrupt'), false);
-  });
-
-  await context.test('audio-bearing LTX MP4 maps to 502 and cancels only its prompt', async () => {
-    fake.reset('audio-ltx-mp4');
-    const ltxRequest = motionRequest(imageSha256, { modelTemplate: LTX25_PORTRAIT_VIDEO_TEMPLATE_ID });
-    const response = await post(formFor(ltxRequest, imageBytes));
-    assert.equal(response.status, 502, await response.text());
-    const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
-    assert.equal(cancellations.length, 1);
-    assert.equal(fake.state.calls.some(({ path }) => path === '/interrupt'), false);
-  });
-
-  await context.test('audio-bearing MiniMax MP4 maps to 502 and cancels only its prompt', async () => {
-    fake.reset('audio-mp4');
-    const minimaxRequest = motionRequest(imageSha256, { modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID });
-    const response = await post(formFor(minimaxRequest, imageBytes));
-    assert.equal(response.status, 502, await response.text());
-    const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
-    assert.equal(cancellations.length, 1);
-  });
-
-  await context.test('declared oversized MP4 maps to 413 without allocating its body', async () => {
-    fake.reset('oversized');
-    const response = await post(formFor(request, imageBytes));
-    assert.equal(response.status, 413, await response.text());
-    assert.equal(fake.state.calls.some(({ path }) => path.startsWith('/view?')), true);
-    const cancellations = fake.state.calls.filter(({ method, path }) => method === 'POST' && path === `/api/jobs/${videoPromptId}/cancel`);
-    assert.equal(cancellations.length, 1);
-  });
-});

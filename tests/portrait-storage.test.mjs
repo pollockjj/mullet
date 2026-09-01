@@ -12,7 +12,6 @@ import {
   verifyStoredPortrait
 } from '../src/lib/portrait-storage.ts';
 import {
-  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID
 } from '../src/lib/portrait.ts';
@@ -58,19 +57,6 @@ test('normalizes a generated portrait without any canonical transcript text', ()
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('accepts persisted results only from the additive Z-Image, Qwen, and H3 image models', () => {
-  for (const modelTemplate of [
-    PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
-    PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-  ]) {
-    assert.equal(normalizeStoredPortrait(stored({ modelTemplate })).modelTemplate, modelTemplate);
-  }
-  assert.throws(
-    () => normalizeStoredPortrait(stored({ modelTemplate: 'retired-reference-editor-v1' })),
-    /stored portrait template is invalid/
-  );
-});
 
 test('rejects portraits for another conversation, non-image results, or non-9:16 dimensions', () => {
   assert.throws(() => normalizeStoredPortrait(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);

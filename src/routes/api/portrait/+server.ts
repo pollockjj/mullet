@@ -1,12 +1,9 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
-  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
-  PORTRAIT_H3_TIMEOUT_MS,
   PORTRAIT_TIMEOUT_MS,
   normalizePortraitRequest,
   portraitDimensionsForTemplate,
-  portraitH3ReferencePlan,
   portraitModelTemplateAvailable,
   portraitModelTemplateCapability,
   validatePortraitPngDimensions
@@ -58,7 +55,7 @@ async function sha256Bytes(bytes: Uint8Array): Promise<string> {
 
 async function validateManagedBodyAttachment(
   attachments: readonly Blob[],
-  bodyReference: ReturnType<typeof portraitH3ReferencePlan>[number]['referenceImage'] | null
+  bodyReference: { sha256: string; width: number; height: number; name: string; subfolder: string } | null
 ): Promise<void> {
   if (attachments.length === 0) return;
   if (!bodyReference) throw error(400, 'portrait managed reference was not selected by the H3 reference plan');
@@ -115,22 +112,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'invalid portrait request');
   }
-  if (portraitRequest.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID && !multipart) {
-    throw error(400, 'MiniMax H3 portrait requests must be multipart form data');
+  if (multipart) {
+    throw error(400, 'portrait requests do not use multipart form data');
   }
-  if (portraitRequest.modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID && multipart) {
-    throw error(400, 'only MiniMax H3 portrait requests use multipart form data');
-  }
-  const managedBodyReference = portraitRequest.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-    ? portraitH3ReferencePlan(portraitRequest)
-        .find(({ kind }) => kind === 'body_wardrobe')?.referenceImage ?? null
-    : null;
+  const managedBodyReference = null;
   await validateManagedBodyAttachment(referenceAttachments, managedBodyReference);
 
   const seed = portraitRequest.seed ?? randomSeed();
-  const timeout = portraitRequest.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-    ? PORTRAIT_H3_TIMEOUT_MS
-    : PORTRAIT_TIMEOUT_MS;
+  const timeout = PORTRAIT_TIMEOUT_MS;
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]);
   try {
     const capabilities = await loadPortraitCapabilities(fetch, baseUrl, signal);

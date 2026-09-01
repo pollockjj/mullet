@@ -33,12 +33,10 @@
     INLINE_SCENE_QWEN_TEMPLATE_ID,
     INLINE_SCENE_TEMPLATE_ID,
     INLINE_SCENE_TIMEOUT_MS,
-    MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
     MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS,
     buildInlineSceneImageRequest,
     buildInlineSceneRequest,
     createInlineSceneContinuityMaster,
-    inlineSceneH3StillReferencePlan,
     inlineSceneQwenReferencePlan,
     inlineSceneContinuityMasterEligible,
     inlineSceneImageRequestKey,
@@ -68,13 +66,8 @@
     INLINE_SCENE_VIDEO_DURATION_SECONDS,
     INLINE_SCENE_VIDEO_FPS,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
-    LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-    MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-    MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
     buildInlineSceneVideoRequest,
-    describeInlineSceneH3ReferencePlan,
-    inlineSceneH3ReferencePlan,
     isMiniMaxH3InlineSceneVideoTemplate,
     inlineSceneMasterToggleEnabled,
     inlineSceneVideoDecodeFailureTransition,
@@ -125,15 +118,12 @@
     type StoredInlineScene
   } from '$lib/inline-scene-storage';
   import {
-    PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
     PORTRAIT_H3_TIMEOUT_MS,
     PORTRAIT_TEMPLATE_ID,
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
-    isPortraitH3ReferenceTemplateId,
     migratePortraitModelTemplateSelection,
     normalizePortraitCapabilities,
-    portraitH3ReferencePlan,
     portraitModelTemplateAvailable,
     portraitRequestKey,
     type PortraitAspectRatio,
@@ -155,7 +145,6 @@
     type StoredPortrait
   } from '$lib/portrait-storage';
   import {
-    LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
     PORTRAIT_VIDEO_DURATION_SECONDS,
     PORTRAIT_VIDEO_DURATIONS,
@@ -250,7 +239,7 @@
   type Role = 'user' | 'assistant';
   type Message = { role: Role; content: string };
   type InlineSceneImageDriver = Pick<InlineSceneImageRequest, 'modelTemplate' | 'lora'>;
-  type InlineSceneStillMode = 'automatic' | typeof MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID;
+  type InlineSceneStillMode = 'automatic';
   export let data: PageData;
 
   let messages: Message[] = [];
@@ -286,7 +275,7 @@
   let portraitRetriedKey = '';
   let portraitRetryTimer: number | null = null;
   let portraitController: AbortController | null = null;
-  let portraitMotionEnabled = false;
+  let portraitMotionEnabled = true;
   let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;
   let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
   let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
@@ -329,7 +318,7 @@
   let lorePersistenceBusy = false;
   let lorePersistenceAvailable = true;
   let loreTimedState: LoreTimedState = emptyLoreTimedState();
-  let inlineScenesEnabled = false;
+  let inlineScenesEnabled = true;
   let finalizedInlineSceneSource: InlineSceneSource | null = null;
   let inlineSceneEpoch = '';
   let inlineSceneCapabilities: InlineSceneCapabilities | null = null;
@@ -349,7 +338,7 @@
   let inlineSceneGeneration = 0;
   let inlineSceneController: AbortController | null = null;
   let lastInlineSceneAttemptKey = '';
-  let inlineSceneMotionEnabled = false;
+  let inlineSceneMotionEnabled = true;
   let inlineSceneVideoCapabilities: InlineSceneVideoCapabilities | null = null;
   let inlineSceneVideoCapabilitiesLoading = false;
   let inlineSceneVideoPersistenceReady = false;
@@ -404,7 +393,9 @@
   let inlineSceneH3StillCapability: InlineSceneCapabilities['templates'][number] | null = null;
   let scenarioLoading = false;
   let conversationId = '';
-  let expressionsEnabled = false;
+  let expressionsEnabled = true;
+  // Media is one thing. The four stages are never independently switchable.
+  let mediaEnabled = true;
   let sidecarState: SidecarState | null = null;
   let expressionSnapshot: ExpressionSidecarRequest | null = null;
   let expressionResult: ExpressionSidecarResult | null = null;
@@ -434,6 +425,7 @@
   const loreSettingsStorageKey = 'mullet.lorebook-settings';
   const personaDescriptionStorageKey = 'mullet.persona-description';
   const loreTimedStateStorageKey = 'mullet.lore-timed-state';
+  const mediaEnabledStorageKey = 'mullet.media-enabled.v1';
   const expressionsEnabledStorageKey = 'mullet.expressions-enabled';
   const portraitSubjectStorageKey = 'mullet.portrait-subject';
   const portraitSettingStorageKey = 'mullet.portrait-setting';
@@ -504,7 +496,7 @@
     inlineSceneStillMode
   );
   $: inlineSceneH3StillCapability = inlineSceneCapabilities?.templates.find(
-    ({ template }) => template.id === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+    ({ template }) => false
   ) ?? null;
   $: selectedPortraitCapability = portraitCapabilities?.templates.find(
     ({ template }) => template.id === portraitModelTemplate
@@ -557,11 +549,7 @@
     portraitMegapixels
   );
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
-  $: portraitH3ReferenceSummary = portraitRequest && isPortraitH3ReferenceTemplateId(portraitRequest.modelTemplate)
-    ? portraitH3ReferencePlan(portraitRequest)
-        .map((entry) => `P${entry.picture} ${entry.kind === 'canonical_identity' ? 'canonical identity' : 'body/wardrobe'}`)
-        .join(' · ')
-    : '';
+  $: portraitH3ReferenceSummary = '';
   $: portraitVideoRequest = currentPortraitVideoRequest(
     generatedPortrait,
     portraitCurrent,
@@ -628,12 +616,9 @@
     inlineSceneVideoModelTemplate
   );
   $: inlineSceneH3ReferenceSummary = inlineSceneVideoRequest && isMiniMaxH3InlineSceneVideoTemplate(inlineSceneVideoRequest.modelTemplate)
-    ? describeInlineSceneH3ReferencePlan(inlineSceneVideoRequest)
+    ? ''
     : '';
-  $: inlineSceneH3StillReferenceSummary = inlineSceneCurrent
-    && generatedInlineScene?.request.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-    ? describeInlineSceneH3StillReferences(generatedInlineScene.request)
-    : '';
+  $: inlineSceneH3StillReferenceSummary = '';
   $: inlineSceneVideoCurrent = Boolean(
     generatedInlineSceneVideo
     && inlineSceneVideoRequest
@@ -797,10 +782,11 @@
       tokenLimit = savedTokenLimit;
     }
     sidecarState = emptySidecarState(conversationId);
-    expressionsEnabled = localStorage.getItem(expressionsEnabledStorageKey) === 'true';
-    portraitMotionEnabled = localStorage.getItem(portraitMotionEnabledStorageKey) === 'true';
+    mediaEnabled = localStorage.getItem(mediaEnabledStorageKey) !== 'false';
+    expressionsEnabled = mediaEnabled;
+    portraitMotionEnabled = mediaEnabled;
     const savedPortraitVideoModelTemplate = localStorage.getItem(portraitVideoModelTemplateStorageKey);
-    portraitVideoModelTemplate = savedPortraitVideoModelTemplate === LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
+    portraitVideoModelTemplate = savedPortraitVideoModelTemplate === PORTRAIT_VIDEO_TEMPLATE_ID
       || savedPortraitVideoModelTemplate === MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
       ? savedPortraitVideoModelTemplate as PortraitVideoTemplateId
       : PORTRAIT_VIDEO_TEMPLATE_ID;
@@ -815,18 +801,18 @@
     localStorage.setItem(portraitVideoModelTemplateStorageKey, portraitVideoModelTemplate);
     localStorage.setItem(portraitVideoModeStorageKey, portraitVideoMode);
     localStorage.setItem(portraitVideoDurationStorageKey, String(portraitVideoDurationSeconds));
-    inlineScenesEnabled = localStorage.getItem(inlineScenesEnabledStorageKey) === 'true';
-    inlineSceneMotionEnabled = localStorage.getItem(inlineSceneMotionEnabledStorageKey) === 'true';
+    inlineScenesEnabled = mediaEnabled;
+    inlineSceneMotionEnabled = mediaEnabled;
     const savedInlineSceneStillMode = localStorage.getItem(inlineSceneStillModeStorageKey);
     inlineSceneStillMode = savedInlineSceneStillMode === 'automatic'
-      || savedInlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      || false
       ? savedInlineSceneStillMode as InlineSceneStillMode
       : 'automatic';
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
-    inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID
-      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID
-      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID
+    inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
+      || savedInlineSceneVideoModelTemplate === 'removed'
+      || savedInlineSceneVideoModelTemplate === 'removed'
       || savedInlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
       ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
       : MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
@@ -901,7 +887,7 @@
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       portraitMegapixels = savedMegapixels;
     }
-    if (isPortraitH3ReferenceTemplateId(portraitModelTemplate)) portraitMegapixels = 0.5;
+    if (false) portraitMegapixels = 0.5;
   }
 
   function persistPortraitSettings() {
@@ -931,7 +917,7 @@
     if (!portraitCapabilities?.templates.some(({ template }) => template.id === portraitModelTemplate)) {
       portraitModelTemplate = declaredPortraitModelTemplate();
     }
-    if (isPortraitH3ReferenceTemplateId(portraitModelTemplate)) portraitMegapixels = 0.5;
+    if (false) portraitMegapixels = 0.5;
     portraitModelSelectionPersisted = true;
     localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
     portraitController?.abort();
@@ -966,7 +952,7 @@
   function persistInlineSceneStillMode() {
     if (
       inlineSceneStillMode !== 'automatic'
-      && inlineSceneStillMode !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+      && true
     ) inlineSceneStillMode = 'automatic';
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     persistInlineSceneSettings();
@@ -1188,11 +1174,9 @@
     }
   }
 
-  function portraitManagedBodyReferenceHashes(request: PortraitRequest): string[] {
-    if (!isPortraitH3ReferenceTemplateId(request.modelTemplate)) return [];
-    return portraitH3ReferencePlan(request).flatMap((entry) => (
-      entry.kind === 'body_wardrobe' ? [entry.referenceImage.sha256] : []
-    ));
+  function portraitManagedBodyReferenceHashes(_request: PortraitRequest): string[] {
+    // Managed body references belonged to the removed 20-step H3 still.
+    return [];
   }
 
   function inlineSceneManagedBodyReferenceHashes(request: InlineSceneImageRequest): string[] {
@@ -1201,41 +1185,14 @@
         entry.kind === 'body_wardrobe' ? [entry.referenceImage.sha256] : []
       ));
     }
-    if (request.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
-      return inlineSceneH3StillReferencePlan(request).flatMap((entry) => (
-        entry.kind === 'body_identity' ? [entry.referenceImage.sha256] : []
-      ));
-    }
     return [];
   }
 
-  function inlineSceneVideoManagedBodyReferenceHashes(request: InlineSceneVideoRequest): string[] {
-    if (!isMiniMaxH3InlineSceneVideoTemplate(request.modelTemplate)) return [];
-    return inlineSceneH3ReferencePlan(request).flatMap((entry) => (
-      entry.kind === 'body_identity' ? [entry.referenceImage.sha256] : []
-    ));
+  function inlineSceneVideoManagedBodyReferenceHashes(_request: InlineSceneVideoRequest): string[] {
+    // The scene loop animates the accepted still and takes no identity references.
+    return [];
   }
 
-  function describeInlineSceneH3StillReferences(request: InlineSceneImageRequest): string {
-    const plan = inlineSceneH3StillReferencePlan(request);
-    const references: string[] = [];
-    const prior = plan.find((entry) => entry.kind === 'prior_master');
-    if (prior) references.push(`P${prior.picture} prior`);
-    request.cast.identities.forEach((identity, identityIndex) => {
-      const face = plan.find((entry) => (
-        entry.kind === 'canonical_identity' && entry.identityIndex === identityIndex
-      ));
-      const body = plan.find((entry) => (
-        entry.kind === 'body_identity' && entry.identityIndex === identityIndex
-      ));
-      const slots = [
-        ...(face ? [`P${face.picture} face`] : []),
-        ...(body ? [`P${body.picture} body`] : [])
-      ];
-      references.push(`${identity.displayName} ${slots.join('/')}`);
-    });
-    return `${plan.length} refs · ${references.join(' · ')}`;
-  }
 
   function currentInlineSceneSidecarRequest(
     currentConversationId: string,
@@ -1322,9 +1279,6 @@
     continuityMaster: InlineSceneContinuityMaster | null,
     stillMode: InlineSceneStillMode
   ): InlineSceneImageDriver {
-    if (stillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
-      return { modelTemplate: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID, lora: null };
-    }
     if (cast.kind === 'solo' && !continuityMaster) {
       const [identity] = cast.identities;
       const profile = profiles.find((candidate) => (
@@ -1355,7 +1309,7 @@
 
   function inlineSceneStillDriverLabel(modelTemplate: InlineSceneImageRequest['modelTemplate']): string {
     if (modelTemplate === INLINE_SCENE_TEMPLATE_ID) return 'Z-Image + exact linked LoRA';
-    if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) return 'MiniMax H3 Ref2VA keeper still';
+    if (false) return 'MiniMax H3 Ref2VA keeper still';
     return 'Qwen multi-reference master';
   }
 
@@ -1366,9 +1320,6 @@
     stillMode: InlineSceneStillMode
   ): boolean {
     if (!capabilities || profiles.length < 1) return false;
-    if (stillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
-      return inlineSceneModelTemplateAvailable(capabilities, MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID);
-    }
     if (continuityScene) {
       return inlineSceneModelTemplateAvailable(capabilities, INLINE_SCENE_QWEN_TEMPLATE_ID);
     }
@@ -1916,7 +1867,7 @@
       form.append('image', selectedScene.image, 'scene.png');
       appendManagedBodyReferenceParts(form, inlineSceneVideoManagedBodyReferenceHashes(selectedRequest));
       const priorMasterRequired = isMiniMaxH3InlineSceneVideoTemplate(selectedRequest.modelTemplate)
-        && inlineSceneH3ReferencePlan(selectedRequest).some(({ kind }) => kind === 'prior_master');
+        && [].some(({ kind }) => kind === 'prior_master');
       if (priorMasterRequired) {
         if (!selectedScene.continuityMasterImage) {
           throw new Error('MiniMax H3 Ref2VA requires the verified prior scene master.');
@@ -1936,7 +1887,7 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      const isLtx = selectedRequest.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
+      const isSilentLoop = selectedRequest.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
       const expectedContentType = 'video/mp4';
       const minimumBytes = 12;
       if (video.type !== expectedContentType || video.size < minimumBytes) {
@@ -1956,7 +1907,7 @@
       const sourceRequestSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-source-request-sha256');
       const inputImageSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-input-sha256');
       const audioTracks = inlineSceneVideoHeaderInteger(response, 'x-mullet-audio-tracks', 0, 1);
-      const expectedAudioTracks = isLtx ? 0 : 1;
+      const expectedAudioTracks = isSilentLoop ? 0 : 1;
       if (
         modelTemplate !== selectedRequest.modelTemplate
         || mode !== selectedRequest.mode
@@ -2262,7 +2213,7 @@
     const activeController = new AbortController();
     inlineSceneController = activeController;
     let timedOut = false;
-    const imageTimeoutMs = selectedStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+    const imageTimeoutMs = false
       ? MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS
       : INLINE_SCENE_IMAGE_TIMEOUT_MS;
     const timeoutId = window.setTimeout(() => {
@@ -2294,7 +2245,7 @@
         const verifiedMasterScene = await verifyStoredInlineScene(selectedContinuityScene);
         const candidateMaster = inlineSceneContinuityMasterForScene(verifiedMasterScene);
         if (
-          selectedStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
+          false
           || inlineSceneContinuityMasterEligible(cast, candidateMaster)
         ) {
           continuityMaster = candidateMaster;
@@ -3300,9 +3251,7 @@
           attire: profile.attire,
           lora: modelUsesReference ? null : profile.subjectLora?.name ?? null,
           referenceImage: modelUsesReference ? profile.referenceImage : null,
-          bodyReferenceImage: isPortraitH3ReferenceTemplateId(modelTemplate)
-            ? profile.bodyReferenceImage
-            : null,
+          bodyReferenceImage: null,
           characterId: profile.id,
           profileFingerprint: profile.fingerprint,
           promptOverride: modelUsesReference
@@ -3405,7 +3354,7 @@
     const activeController = new AbortController();
     portraitController = activeController;
     let timedOut = false;
-    const timeoutMs = isPortraitH3ReferenceTemplateId(selectedRequest.modelTemplate)
+    const timeoutMs = false
       ? PORTRAIT_H3_TIMEOUT_MS
       : PORTRAIT_TIMEOUT_MS;
     const timeoutId = window.setTimeout(() => {
@@ -3413,7 +3362,7 @@
       activeController.abort();
     }, timeoutMs + 5_000);
     try {
-      const h3ReferenceForm = isPortraitH3ReferenceTemplateId(selectedRequest.modelTemplate)
+      const h3ReferenceForm = false
         ? new FormData()
         : null;
       if (h3ReferenceForm) {
@@ -4171,6 +4120,33 @@
     }
   }
 
+  $: mediaBusy = sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy;
+  $: mediaError = portraitError || portraitVideoError || inlineSceneError || inlineSceneVideoError || sidecarError;
+  $: mediaRefreshable = Boolean(portraitRequest || inlineSceneSidecarRequest);
+
+  function toggleMedia() {
+    mediaEnabled = !mediaEnabled;
+    expressionsEnabled = mediaEnabled;
+    portraitMotionEnabled = mediaEnabled;
+    inlineScenesEnabled = mediaEnabled;
+    inlineSceneMotionEnabled = mediaEnabled;
+    if (!browser) return;
+    localStorage.setItem(mediaEnabledStorageKey, String(mediaEnabled));
+    localStorage.setItem(expressionsEnabledStorageKey, String(mediaEnabled));
+    localStorage.setItem(portraitMotionEnabledStorageKey, String(mediaEnabled));
+    localStorage.setItem(inlineScenesEnabledStorageKey, String(mediaEnabled));
+    localStorage.setItem(inlineSceneMotionEnabledStorageKey, String(mediaEnabled));
+  }
+
+  // Refresh the latest image of both classes. Motion follows its own still automatically.
+  async function refreshLatestMedia() {
+    if (!mediaEnabled || mediaBusy) return;
+    await Promise.all([
+      portraitRequest ? generatePortrait(portraitRequest) : Promise.resolve(),
+      inlineSceneSidecarRequest ? generateInlineScene(inlineSceneSidecarRequest) : Promise.resolve()
+    ]);
+  }
+
   function persistTokenLimit() {
     if (browser) localStorage.setItem('mullet.response-token-limit', String(tokenLimit));
     lastLoreBudget = 0;
@@ -4484,474 +4460,37 @@
           <small>Loading bundled scenarios…</small>
         {/if}
       </section>
-      <section class="expression-panel" aria-label="Expression sidecar">
-        <div class="expression-heading">
-          <div>
-            <span class="eyebrow">Expression sidecar</span>
-            <strong>{expressionResult?.output.expression ?? 'No expression yet'}</strong>
-          </div>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              bind:checked={expressionsEnabled}
-              on:change={persistExpressionsEnabled}
-              disabled={streaming || !sidecarPersistenceReady || !sidecarPersistenceAvailable}
-            />
-            <span>{expressionsEnabled ? 'On' : 'Off'}</span>
-          </label>
+      <!-- One media panel. No model choice, no mode choice, no per-feature checkboxes.
+           Expression still, expression motion, scene still and scene motion are always on
+           together; how a reference (LoRA or photo) becomes an image is scenario data, not
+           a control. Exactly two buttons: turn it all off, and refresh the latest of both
+           classes. -->
+      <section class="media-panel" aria-label="Media">
+        <div class="media-heading">
+          <span class="eyebrow">Media</span>
+          <strong>{mediaEnabled ? 'On' : 'Off'}</strong>
         </div>
-        <div class="expression-meta">
-          {#if expressionResult}
-            <small class:stale={!expressionCurrent}>{expressionCurrent ? 'Current response' : 'Stale · updating'} · {expressionResult.model}</small>
-          {:else}
-            <small>{expressionsEnabled ? 'Waiting for the latest assistant response.' : 'Classifies the latest assistant response on an isolated model branch.'}</small>
-          {/if}
-          {#if expressionsEnabled}
-            <button
-              class="expression-redetermine"
-              on:click={() => void determineExpression()}
-              disabled={streaming || sidecarBusy || !sidecarPersistenceReady || !sidecarPersistenceAvailable || !expressionSnapshot}
-            >
-              {sidecarBusy ? 'Determining…' : 'Redetermine expression'}
-            </button>
-          {/if}
-        </div>
-        {#if sidecarError}<div class="sidecar-error" role="alert">{sidecarError}</div>{/if}
-      </section>
-      <section class="portrait-panel" aria-label="Generated expression portrait">
-        <div class="portrait-heading">
-          <div>
-            <span class="eyebrow">Comfy portrait</span>
-            <strong>{portraitBusy ? 'Generating…' : portraitCurrent ? 'Current' : generatedPortrait ? 'Stale' : 'No image yet'}</strong>
-          </div>
-          {#if generatedPortrait}<small>{generatedPortrait.width}×{generatedPortrait.height}</small>{/if}
-        </div>
-        {#if portraitCapabilities}
-          <label>
-            <span>Image model</span>
-            <select
-              bind:value={portraitModelTemplate}
-              on:change={persistPortraitModelTemplate}
-              disabled={portraitBusy}
-              aria-label="Portrait image model"
-            >
-              {#each portraitCapabilities.templates as capability}
-                <option value={capability.template.id}>
-                  {capability.template.label}{capability.available
-                    ? ''
-                    : ` · unavailable · missing ${capability.missing.join(', ')}`}
-                </option>
-              {/each}
-            </select>
-          </label>
-          {#if portraitDisplayProfile}
-            <label>
-              <span>Character</span>
-              <input value={portraitDisplayProfile.displayName} disabled aria-label="Portrait character" />
-            </label>
-            <label>
-              <span>Identity</span>
-              <input
-                value={isPortraitH3ReferenceTemplateId(portraitModelTemplate)
-                  ? portraitH3ReferenceSummary || 'H3 references · restoring verified body library'
-                  : portraitSelectedModelUsesReference
-                    ? `Canonical reference · ${portraitDisplayProfile.referenceImage.width}×${portraitDisplayProfile.referenceImage.height} · ${portraitDisplayProfile.referenceImage.aspectRatio}`
-                  : portraitDisplayProfile.subjectLora
-                    ? `Z-Image LoRA · ${portraitDisplayProfile.subjectLora.name.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · trigger ${portraitDisplayProfile.subjectLora.trigger}`
-                    : 'Text prompt · no reference or LoRA'}
-                disabled
-                aria-label="Portrait identity source"
-              />
-            </label>
-            <label>
-              <span>Attire</span>
-              <input value={portraitDisplayProfile.attire} disabled aria-label="Portrait attire" />
-            </label>
-            <label>
-              <span>Setting</span>
-              <input value={portraitDisplayProfile.setting} disabled aria-label="Portrait setting" />
-            </label>
-          {:else}
-            <label>
-              <span>Subject</span>
-              <input bind:value={portraitSubject} on:change={persistPortraitSettings} maxlength="500" disabled={portraitBusy} aria-label="Portrait subject" />
-            </label>
-            <label>
-              <span>Subject LoRA</span>
-              <select bind:value={portraitLora} on:change={persistPortraitSettings} disabled={portraitBusy || portraitSelectedModelUsesReference} aria-label="Portrait subject LoRA">
-                <option value="">None</option>
-                {#each portraitCapabilities.loras as lora}
-                  <option value={lora}>{lora.replace(/^zimage\//, '').replace(/\.safetensors$/, '')}</option>
-                {/each}
-              </select>
-            </label>
-            <label>
-              <span>Attire</span>
-              <input bind:value={portraitAttire} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait attire" />
-            </label>
-            <label>
-              <span>Setting</span>
-              <input bind:value={portraitSetting} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait setting" />
-            </label>
-          {/if}
-          {#if isPortraitH3ReferenceTemplateId(portraitModelTemplate)}
-            <small class="prompt-guide">576×1024 · fixed 9:16 · H3 Ref2VA five-frame keeper · frame 0 · 20-step res_multistep/simple · shifts 12/3 · no LoRA</small>
-          {:else}
-            <label>
-              <span>Megapixels</span>
-              <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
-                {#each portraitCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
-              </select>
-            </label>
-          {/if}
-          {#if selectedPortraitCapability && !portraitSelectedModelAvailable}
-            <div class="sidecar-error capability-error" role="alert">
-              <span>{selectedPortraitCapability.template.label} is unavailable{selectedPortraitCapability.missing.length
-                  ? ` · missing ${selectedPortraitCapability.missing.join(', ')}`
-                  : ''}.</span>
-              <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
-                {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
-              </button>
-            </div>
-          {:else if portraitDisplayProfile?.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable}
-            <div class="sidecar-error capability-error" role="alert">
-              <span>Linked identity LoRA is unavailable · {portraitDisplayProfile.subjectLora.name}</span>
-              <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
-                {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
-              </button>
-            </div>
-          {:else if !portraitDisplayProfile && portraitSelectedModelUsesReference}
-            <div class="sidecar-error" role="alert">This reference-edit model requires a scenario identity reference.</div>
-          {:else if selectedPortraitCapability && !isPortraitH3ReferenceTemplateId(portraitModelTemplate)}
-            <small class="prompt-guide">{selectedPortraitCapability.template.promptGuide}</small>
-          {/if}
-          {#if isScenarioCard(activeCard) && !portraitDisplayProfile}
-            <div class="sidecar-error" role="alert">This scenario has no validated portrait identity. No portrait will be generated.</div>
-          {/if}
-          {#if isScenarioCard(activeCard) && ((!bodyReferenceOverlayReady && bodyReferenceOverlayCorruptProfileIds.length === 0) || bodyReferenceOverlayBusyProfileId)}
-            <small>Restoring the verified identity/body reference library before portrait generation.</small>
-          {:else if isScenarioCard(activeCard) && bodyReferenceOverlayCorruptProfileIds.length > 0}
-            <div class="sidecar-error" role="alert">Portrait generation is blocked by a corrupt saved body reference. Remove it under Scene cast references.</div>
-          {/if}
-          {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
-          <button on:click={() => void generatePortrait()} disabled={portraitBusy || !portraitRequest || !expressionsEnabled || !portraitPersistenceAvailable}>
-            {portraitBusy ? 'Generating…' : portraitCurrent ? 'Regenerate portrait' : 'Generate portrait'}
-          </button>
-          {#if !expressionsEnabled}<small>Turn on Expressions to generate and update portraits.</small>{/if}
-        {:else}
-          {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
-          <button on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
-            {portraitCapabilitiesLoading ? 'Connecting…' : 'Retry portrait generator'}
-          </button>
+        {#if mediaEnabled}
+          <dl class="media-status">
+            <dt>Expression</dt>
+            <dd>{sidecarBusy ? 'Determining…' : expressionResult?.output.expression ?? 'waiting for a finalized response'}</dd>
+            <dt>Portrait</dt>
+            <dd>{portraitBusy ? 'Generating…' : portraitCurrent ? `${generatedPortrait?.width}×${generatedPortrait?.height}` : 'none yet'}</dd>
+            <dt>Portrait motion</dt>
+            <dd>{portraitVideoBusy ? 'Animating…' : portraitVideoCurrent ? 'current' : 'none yet'}</dd>
+            <dt>Scene</dt>
+            <dd>{inlineSceneBusy ? 'Directing…' : inlineSceneCurrent ? `${generatedInlineScene?.width}×${generatedInlineScene?.height}` : 'none yet'}</dd>
+            <dt>Scene motion</dt>
+            <dd>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'current' : 'none yet'}</dd>
+          </dl>
+          {#if mediaError}<div class="sidecar-error" role="alert">{mediaError}</div>{/if}
         {/if}
-      </section>
-      <section class="portrait-panel motion-panel" aria-label="Generated portrait motion">
-        <div class="portrait-heading">
-          <div>
-            <span class="eyebrow">Portrait motion</span>
-            <strong>{portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoPlaybackState === 'starting' && portraitVideoMounted ? 'Starting playback…' : portraitVideoPlaybackState === 'playing' && portraitVideoCurrent ? 'Motion playing' : portraitVideoPlaybackState === 'fallback' && portraitVideoCurrent ? 'Static fallback' : portraitVideoError ? 'Generation failed' : portraitVideoCurrent ? 'Motion ready' : generatedPortraitVideo ? 'Stale' : 'No motion yet'}</strong>
-          </div>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              bind:checked={portraitMotionEnabled}
-              on:change={persistPortraitMotionEnabled}
-              disabled={!portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
-            />
-            <span>{portraitMotionEnabled ? 'On' : 'Off'}</span>
-          </label>
+        <div class="media-actions">
+          <button on:click={toggleMedia} disabled={mediaBusy}>{mediaEnabled ? 'Turn media off' : 'Turn media on'}</button>
+          <button on:click={() => void refreshLatestMedia()} disabled={!mediaEnabled || mediaBusy || !mediaRefreshable}>
+            {mediaBusy ? 'Refreshing…' : 'Refresh images'}
+          </button>
         </div>
-        {#if portraitVideoCapabilities}
-          <label>
-            <span>Mode</span>
-            <select
-              bind:value={portraitVideoMode}
-              on:change={persistPortraitVideoMode}
-              disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
-              aria-label="Portrait video mode"
-            >
-              {#each selectedPortraitVideoTemplateCapability?.modes ?? [] as mode}
-                <option value={mode.id}>
-                  {mode.label}{mode.available ? '' : ` · unavailable · missing ${mode.missing.join(', ')}`}
-                </option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>Video model</span>
-            <select
-              bind:value={portraitVideoModelTemplate}
-              on:change={persistPortraitVideoModelTemplate}
-              disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
-              aria-label="Portrait video model"
-            >
-              {#each portraitVideoCapabilities.templates as capability}
-                <option value={capability.template.id}>
-                  {capability.template.label}{capability.available ? '' : ` · unavailable · missing ${capability.missing.join(', ')}`}
-                </option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>Duration</span>
-            <select
-              bind:value={portraitVideoDurationSeconds}
-              on:change={persistPortraitVideoDuration}
-              disabled={portraitVideoBusy || portraitBusy || !portraitVideoPersistenceReady || !portraitVideoPersistenceAvailable}
-              aria-label="Portrait video duration"
-            >
-              {#each selectedPortraitVideoTemplateCapability?.durations ?? [] as duration}<option value={duration}>{duration} seconds</option>{/each}
-            </select>
-          </label>
-          {#if portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF}
-            <label>
-              <span>End-frame image model</span>
-              <select value={portraitVideoCapabilities.endFrameTemplate.id} disabled={portraitVideoBusy} aria-label="Portrait end-frame image model">
-                <option value={portraitVideoCapabilities.endFrameTemplate.id}>{portraitVideoCapabilities.endFrameTemplate.label}</option>
-              </select>
-            </label>
-          {/if}
-          <small>{selectedPortraitVideoModeCapability?.label} · {selectedPortraitVideoTemplateCapability?.template.label} · silent, no speech or talking · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {portraitVideoTiming.fps} FPS · {((portraitVideoTiming.frames - 1) / portraitVideoTiming.fps).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / portraitVideoTiming.fps).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
-          {#if selectedPortraitVideoModeCapability && !portraitVideoSelectedModeAvailable}
-            <div class="sidecar-error" role="alert">
-              {selectedPortraitVideoModeCapability.label} is unavailable{selectedPortraitVideoModeCapability.missing.length
-                ? ` · missing ${selectedPortraitVideoModeCapability.missing.join(', ')}`
-                : ''}.
-            </div>
-          {/if}
-          {#if generatedPortraitVideo}<small>{generatedPortraitVideo.width}×{generatedPortraitVideo.height} · {generatedPortraitVideo.frames} frames · {generatedPortraitVideo.encodedDurationSeconds.toFixed(3)} s encoded · zero audio tracks</small>{/if}
-          {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
-          {#if portraitVideoPlaybackError}
-            <div class="playback-fallback" role="alert">
-              <span>{portraitVideoPlaybackError}</span>
-              <button class="error-retry" on:click={retryPortraitVideoPlayback}>Retry playback</button>
-            </div>
-          {/if}
-          <button
-            on:click={() => void generatePortraitVideo()}
-            disabled={portraitVideoBusy || portraitBusy || !portraitVideoRequest || !portraitVideoSelectedModeAvailable || !portraitMotionEnabled || !expressionsEnabled || !portraitVideoPersistenceAvailable}
-          >
-            {portraitVideoBusy ? (portraitVideoMode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? 'Generating frame + motion…' : 'Animating…') : portraitVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
-          </button>
-          {#if !portraitMotionEnabled}<small>Turn on Portrait motion to animate each current expression portrait.</small>{/if}
-          {#if portraitMotionEnabled && !generatedPortrait}<small>A current Comfy portrait is required before motion starts.</small>{/if}
-        {:else}
-          {#if portraitVideoError}<div class="sidecar-error" role="alert">{portraitVideoError}</div>{/if}
-          <button on:click={() => void loadPortraitVideoGenerator()} disabled={portraitVideoCapabilitiesLoading}>
-            {portraitVideoCapabilitiesLoading ? 'Connecting…' : 'Retry portrait motion'}
-          </button>
-        {/if}
-      </section>
-      <section class="portrait-panel scene-panel" aria-label="Inline landscape scene">
-        <div class="portrait-heading">
-          <div>
-            <span class="eyebrow">Inline scene</span>
-            <strong>{inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Current response' : generatedInlineScene && inlineSceneApplies ? 'Stale settings' : 'No scene yet'}</strong>
-          </div>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              bind:checked={inlineScenesEnabled}
-              on:change={persistInlineScenesEnabled}
-              disabled={!inlineSceneMasterToggleEnabled(
-                inlineScenePersistenceReady,
-                inlineScenePersistenceAvailable,
-                inlineSceneVideoPersistenceReady
-              )}
-            />
-            <span>{inlineScenesEnabled ? 'On' : 'Off'}</span>
-          </label>
-        </div>
-        {#if bodyReferenceOverlayError}<div class="sidecar-error" role="alert">{bodyReferenceOverlayError}</div>{/if}
-        {#if scenarioBaseSceneProfiles.length > 0}
-          <details class="h3-reference-pack" open={bodyReferenceOverlayCorruptProfileIds.length > 0}>
-            <summary>
-              Scene reference library · {scenarioBaseSceneProfiles.length} face · {bodyReferenceReadyCount()}/{scenarioBaseSceneProfiles.length} body
-            </summary>
-            <small>Clean front-biased face plus optional three-quarter/full-body wardrobe anchor per person. Body anchors are exact 576×1024 PNGs. Scene masters provide composition and location continuity.</small>
-            <div class="h3-reference-list">
-              {#each scenarioBaseSceneProfiles as profile (profile.id)}
-                {@const managedBody = managedBodyReferenceForProfile(profile)}
-                {@const corruptBody = corruptBodyReferenceForProfile(profile)}
-                {@const effectiveProfile = scenarioSceneProfiles.find((candidate) => candidate.id === profile.id)}
-                <div class="h3-reference-row">
-                  <div>
-                    <strong>{profile.displayName}</strong>
-                    <small>
-                      face {profile.referenceImage.width}×{profile.referenceImage.height} · {corruptBody
-                        ? 'body corrupt saved reference'
-                        : effectiveProfile?.bodyReferenceImage
-                        ? `body ${effectiveProfile.bodyReferenceImage.width}×${effectiveProfile.bodyReferenceImage.height}${managedBody ? ' managed' : ' bundled'}`
-                        : 'body missing'}
-                    </small>
-                  </div>
-                  <div class="h3-reference-actions">
-                    <label class="body-reference-upload">
-                      <input
-                        class="body-reference-file-input"
-                        type="file"
-                        accept="image/png"
-                        aria-label={`Add or replace ${profile.displayName} body and wardrobe reference`}
-                        disabled={!bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId) || portraitBusy || inlineSceneBusy || inlineSceneVideoBusy}
-                        on:change={(event) => void importBodyReference(profile, event)}
-                      />
-                      <span>{bodyReferenceOverlayBusyProfileId === profile.id ? 'Saving…' : effectiveProfile?.bodyReferenceImage ? 'Replace' : 'Add body'}</span>
-                    </label>
-                    {#if managedBody || corruptBody}
-                      <button
-                        class="body-reference-remove"
-                        aria-label={corruptBody
-                          ? `Remove corrupt saved body and wardrobe reference for ${profile.displayName}`
-                          : `Remove ${profile.displayName} managed body and wardrobe reference`}
-                        disabled={Boolean(bodyReferenceOverlayBusyProfileId) || portraitBusy || inlineSceneBusy || inlineSceneVideoBusy || (!bodyReferenceOverlayReady && !corruptBody)}
-                        on:click={() => void clearBodyReference(profile)}
-                      >{corruptBody ? 'Remove corrupt saved ref' : 'Remove'}</button>
-                    {/if}
-                  </div>
-                </div>
-              {/each}
-            </div>
-          </details>
-        {/if}
-        {#if inlineSceneCapabilities}
-          {#if generatedInlineScene && inlineSceneApplies}
-            <small class="scene-cast-status">
-              {generatedInlineScene.request.cast.kind === 'solo' ? 'Solo' : generatedInlineScene.request.cast.kind === 'duo' ? 'Duo' : 'Trio'} · {generatedInlineScene.request.cast.identities.map((identity) => identity.displayName).join(' + ')} · {inlineSceneStillDriverLabel(generatedInlineScene.request.modelTemplate)}
-            </small>
-          {:else}
-            <small class="scene-cast-status">Selecting visible cast…</small>
-          {/if}
-          <label>
-            <span>Still model</span>
-            <select
-              bind:value={inlineSceneStillMode}
-              on:change={persistInlineSceneStillMode}
-              disabled={inlineSceneBusy}
-              aria-label="Inline scene still model"
-            >
-              <option value="automatic">Automatic alternative · Z-Image solo / Qwen references</option>
-              <option value={MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}>
-                MiniMax H3 Ref2VA · Keeper still (5-frame, 20-step){inlineSceneH3StillCapability?.available === false ? ' (unavailable)' : ''}
-              </option>
-            </select>
-          </label>
-          {#if inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID}
-            <small>Five-frame Ref2VA keeper · base H3 · no LoRA · res_multistep/simple · shifts 12/3 · frame 0 · {inlineSceneH3StillReferenceSummary || 'reference plan resolves after cast selection'}</small>
-          {/if}
-          <div class="portrait-grid">
-            <label>
-              <span>Aspect</span>
-              <select bind:value={inlineSceneAspectRatio} on:change={persistInlineSceneSettings} disabled={inlineSceneBusy} aria-label="Inline scene aspect ratio">
-                {#each inlineSceneCapabilities.aspectRatios as ratio}<option value={ratio.id}>{ratio.label}</option>{/each}
-              </select>
-            </label>
-            <label>
-              <span>Megapixels</span>
-              <select bind:value={inlineSceneMegapixels} on:change={persistInlineSceneSettings} disabled={inlineSceneBusy} aria-label="Inline scene megapixels">
-                {#each inlineSceneCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
-              </select>
-            </label>
-          </div>
-          {#if generatedInlineScene && inlineSceneApplies}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.source.sidecarModel} · {inlineSceneStillDriverLabel(generatedInlineScene.request.modelTemplate)}</small>{/if}
-          {#if !inlineSceneSelectedModelAvailable}
-            <div class="sidecar-error capability-error" role="alert">
-              <span>
-                {inlineSceneStillMode === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-                  ? `MiniMax H3 keeper still is unavailable.${inlineSceneH3StillCapability?.missing.length ? ` Missing: ${inlineSceneH3StillCapability.missing.join(', ')}.` : ''}`
-                  : 'No deterministic static-scene driver is currently available for this scenario state.'}
-              </span>
-              <button class="error-retry" on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
-                {inlineSceneCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
-              </button>
-            </div>
-          {/if}
-          {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
-          <button
-            on:click={() => void generateInlineScene()}
-            disabled={inlineSceneBusy || streaming || !inlineSceneSidecarRequest || scenarioSceneProfiles.length < 1 || !inlineSceneSelectedModelAvailable || !inlineScenesEnabled || !inlineScenePersistenceAvailable || !bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId)}
-          >
-            {inlineSceneBusy ? 'Generating…' : inlineSceneCurrent ? 'Regenerate scene' : 'Generate scene'}
-          </button>
-          {#if !inlineScenesEnabled}<small>Turn on Inline scene to direct and render each finalized response.</small>{/if}
-          {#if inlineScenesEnabled && scenarioSceneProfiles.length < 1}<small>A validated scenario cast is required for scene generation.</small>{/if}
-          {#if inlineScenesEnabled && scenarioSceneProfiles.length > 0 && !inlineSceneSidecarRequest}<small>Finish one user-and-assistant turn before scene generation starts.</small>{/if}
-          <div class="scene-motion-controls">
-            <div class="portrait-heading">
-              <div>
-                <span class="eyebrow">Scene motion</span>
-                <strong>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting playback…' : inlineSceneVideoPlaybackState === 'playing' && inlineSceneVideoCurrent ? 'Motion playing' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Static fallback' : inlineSceneVideoError ? 'Generation failed' : inlineSceneVideoCurrent ? 'Motion ready' : generatedInlineSceneVideo ? 'Stale' : 'No loop yet'}</strong>
-              </div>
-              <label class="toggle">
-                <input
-                  type="checkbox"
-                  bind:checked={inlineSceneMotionEnabled}
-                  on:change={persistInlineSceneMotionEnabled}
-                  disabled={!inlineSceneVideoPersistenceReady || !inlineSceneVideoPersistenceAvailable}
-                />
-                <span>{inlineSceneMotionEnabled ? 'On' : 'Off'}</span>
-              </label>
-            </div>
-            {#if inlineSceneVideoCapabilities}
-              <label>
-                <span>Video model</span>
-                <select
-                  bind:value={inlineSceneVideoModelTemplate}
-                  on:change={persistInlineSceneVideoModelTemplate}
-                  disabled={inlineSceneVideoBusy}
-                  aria-label="Inline scene video model"
-                >
-                  {#each inlineSceneVideoCapabilities.templates as capability}
-                    <option value={capability.template.id}>
-                      {capability.template.label}{capability.available ? '' : ' (unavailable)'}
-                    </option>
-                  {/each}
-                </select>
-              </label>
-              {#if inlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID}
-                <small>Looping identical first/last frame · MiniMax H3 FL2VA Turbo · four-step · {inlineSceneVideoTiming.width}×{inlineSceneVideoTiming.height} ({(inlineSceneVideoTiming.width * inlineSceneVideoTiming.height / 1_000_000).toFixed(2)} MP) · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264 MP4</small>
-              {:else if inlineSceneVideoModelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID}
-                <small>Looping identical first/last frame · LTX 2.5 Distilled · silent · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s first-to-last · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {((inlineSceneVideoTiming.frames - 1) / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s first-to-last · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
-              {:else}
-                <small>Reference-to-video · {inlineSceneVideoModelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'LightX four-step preview · 544p training envelope · Euler/simple · shifts 12/3' : '20-step quality'} · {inlineSceneH3ReferenceSummary || 'reference plan resolves after the current scene'} · native audio · {INLINE_SCENE_VIDEO_DURATION_SECONDS} s selected · {inlineSceneVideoTiming.frames} frames @ {INLINE_SCENE_VIDEO_FPS} FPS · {(inlineSceneVideoTiming.frames / INLINE_SCENE_VIDEO_FPS).toFixed(3)} s encoded · H.264/AAC MP4</small>
-              {/if}
-              {#if selectedInlineSceneVideoTemplateCapability && !inlineSceneVideoSelectedModelAvailable}
-                <small class="prompt-guide">Unavailable: {selectedInlineSceneVideoTemplateCapability.missing.join('; ')}</small>
-                <button
-                  on:click={() => void loadInlineSceneVideoGenerator()}
-                  disabled={inlineSceneVideoCapabilitiesLoading || inlineSceneVideoBusy}
-                >
-                  {inlineSceneVideoCapabilitiesLoading ? 'Checking…' : 'Retry scene motion models'}
-                </button>
-              {/if}
-              {#if generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.frames} frames</small>{/if}
-              {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
-              {#if inlineSceneVideoPlaybackError}
-                <div class="playback-fallback" role="alert">
-                  <span>{inlineSceneVideoPlaybackError}</span>
-                  <button class="error-retry" on:click={retryInlineSceneVideoPlayback}>Retry playback</button>
-                </div>
-              {/if}
-              <button
-                on:click={() => void generateInlineSceneVideo()}
-                disabled={inlineSceneVideoBusy || inlineSceneBusy || !inlineSceneVideoRequest || !inlineSceneMotionEnabled || !inlineScenesEnabled || !inlineSceneVideoPersistenceAvailable || !inlineSceneVideoSelectedModelAvailable || !bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId)}
-              >
-                {inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'Regenerate motion' : 'Generate motion'}
-              </button>
-              {#if !inlineSceneMotionEnabled}<small>Turn on Scene motion to animate each current static landscape.</small>{/if}
-              {#if inlineSceneMotionEnabled && !generatedInlineScene}<small>A current static scene is required before motion starts.</small>{/if}
-            {:else}
-              {#if inlineSceneVideoError}<div class="sidecar-error" role="alert">{inlineSceneVideoError}</div>{/if}
-              <button on:click={() => void loadInlineSceneVideoGenerator()} disabled={inlineSceneVideoCapabilitiesLoading}>
-                {inlineSceneVideoCapabilitiesLoading ? 'Connecting…' : 'Retry scene motion'}
-              </button>
-            {/if}
-          </div>
-        {:else}
-          {#if inlineSceneError}<div class="sidecar-error" role="alert">{inlineSceneError}</div>{/if}
-          <button on:click={() => void loadInlineSceneGenerator()} disabled={inlineSceneCapabilitiesLoading}>
-            {inlineSceneCapabilitiesLoading ? 'Connecting…' : 'Retry inline scene'}
-          </button>
-        {/if}
       </section>
       <section class="lore-panel" aria-label="Active lorebooks">
         <div class="lore-heading">
@@ -5110,7 +4649,7 @@
                     ></video>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 'Current response · LTX 2.5 identical-frame loop · silent' : 'Current response · MiniMax H3 Ref2VA with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? generatedInlineSceneUrl ? 'Updating landscape · prior verified scene shown' : 'Gemma sidecar → deterministic scene driver' : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : `Current response · ${inlineSceneStillDriverLabel(generatedInlineScene?.request.modelTemplate ?? INLINE_SCENE_QWEN_TEMPLATE_ID)}`) : generatedInlineSceneUrl && !inlineSceneApplies ? 'Prior response · verified static fallback' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
+                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID ? 'Current response · H3 FL2VA identical-frame loop · silent' : 'Current response · MiniMax H3 Ref2VA with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? generatedInlineSceneUrl ? 'Updating landscape · prior verified scene shown' : 'Gemma sidecar → deterministic scene driver' : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : `Current response · ${inlineSceneStillDriverLabel(generatedInlineScene?.request.modelTemplate ?? INLINE_SCENE_QWEN_TEMPLATE_ID)}`) : generatedInlineSceneUrl && !inlineSceneApplies ? 'Prior response · verified static fallback' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded · {generatedInlineSceneVideo.audioTracks === 0 ? 'silent' : 'native audio'}</small>{:else if generatedInlineScene}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
                   </figcaption>
                 </figure>

@@ -1,20 +1,16 @@
 import {
   PORTRAIT_ASPECT_RATIOS,
   PORTRAIT_CAPABILITIES_SPEC,
-  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
   PORTRAIT_TEMPLATES,
-  MINIMAX_H3_PORTRAIT_STILL_TEMPLATE,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
-  buildMiniMaxH3PortraitStillWorkflow,
   buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   isPortraitReferenceTemplateId,
   portraitDimensionsForTemplate,
-  portraitH3ReferencePlan,
   portraitTemplate,
   validatePortraitPngDimensions,
   type PortraitCapabilities,
@@ -139,61 +135,13 @@ export async function loadPortraitCapabilities(
   const loras = optionList(loraInfo, 'LoraLoader', 'lora_name');
   const clipType = new Map<PortraitTemplate['id'], string>([
     [Z_IMAGE_TURBO_TEMPLATE.id, 'lumina2'],
-    [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image'],
-    [MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.id, 'minimax']
+    [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image']
   ]);
   const templates = PORTRAIT_TEMPLATES.map((template) => {
     const missing: string[] = [];
     if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);
     if (!clips.includes(template.modelFiles.clip)) missing.push(`model:clip:${template.modelFiles.clip}`);
-    if (template.id === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
-      const h3 = MINIMAX_H3_PORTRAIT_STILL_TEMPLATE;
-      if (!vaes.includes(h3.modelFiles.videoVae)) missing.push(`model:vae:${h3.modelFiles.videoVae}`);
-      if (!vaes.includes(h3.modelFiles.audioVae)) missing.push(`model:vae:${h3.modelFiles.audioVae}`);
-      const h3Samplers = optionList(info.get('KSamplerSelect'), 'KSamplerSelect', 'sampler_name');
-      const h3Schedulers = optionList(info.get('BasicScheduler'), 'BasicScheduler', 'scheduler');
-      if (!h3Samplers.includes(h3.sampler)) missing.push(`sampler:${h3.sampler}`);
-      if (!h3Schedulers.includes(h3.scheduler)) missing.push(`scheduler:${h3.scheduler}`);
-      const referenceInfo = info.get('MiniMaxH3ReferenceToVideo');
-      if (!optionList(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'ref_image_size').includes(h3.referenceImageSize)) {
-        missing.push(`node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${h3.referenceImageSize}`);
-      }
-      if (!exactH3ReferenceAutogrow(referenceInfo)) {
-        missing.push('node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9');
-      }
-      if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 0, 'CONDITIONING')) {
-        missing.push('node-output:MiniMaxH3ReferenceToVideo:0:CONDITIONING');
-      }
-      if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 1, 'LATENT')) {
-        missing.push('node-output:MiniMaxH3ReferenceToVideo:1:LATENT');
-      }
-      if (!numericInputAccepts(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'length', h3.frames, 'INT')) {
-        missing.push(`node-input:MiniMaxH3ReferenceToVideo.length:${h3.frames}`);
-      }
-      const sigmaShiftInfo = info.get('MiniMaxH3SigmaShift');
-      if (!numericInputAccepts(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 'shift_video', h3.shiftVideo, 'FLOAT')) {
-        missing.push(`node-input:MiniMaxH3SigmaShift.shift_video:${h3.shiftVideo}`);
-      }
-      if (!numericInputAccepts(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 'shift_audio', h3.shiftAudio, 'FLOAT')) {
-        missing.push(`node-input:MiniMaxH3SigmaShift.shift_audio:${h3.shiftAudio}`);
-      }
-      if (!nodeOutputHasType(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 0, 'MODEL')) {
-        missing.push('node-output:MiniMaxH3SigmaShift:0:MODEL');
-      }
-      const imageFromBatchInfo = info.get('ImageFromBatch');
-      if (!numericInputAccepts(imageFromBatchInfo, 'ImageFromBatch', 'batch_index', h3.outputFrameIndex, 'INT')) {
-        missing.push(`node-input:ImageFromBatch.batch_index:${h3.outputFrameIndex}`);
-      }
-      if (!numericInputAccepts(imageFromBatchInfo, 'ImageFromBatch', 'length', h3.outputFrameCount, 'INT')) {
-        missing.push(`node-input:ImageFromBatch.length:${h3.outputFrameCount}`);
-      }
-      if (!nodeOutputHasType(imageFromBatchInfo, 'ImageFromBatch', 0, 'IMAGE')) {
-        missing.push('node-output:ImageFromBatch:0:IMAGE');
-      }
-    } else if (!vaes.includes(template.modelFiles.vae)) {
-      missing.push(`model:vae:${template.modelFiles.vae}`);
-    }
-    const requiredClipType = clipType.get(template.id);
+      const requiredClipType = clipType.get(template.id);
     if (requiredClipType && !clipTypes.includes(requiredClipType)) missing.push(`clip-type:${requiredClipType}`);
     if ('lora' in template.modelFiles && !loras.includes(template.modelFiles.lora)) {
       missing.push(`model:lora:${template.modelFiles.lora}`);
@@ -246,11 +194,9 @@ function outputImage(entry: Record<string, unknown>, request: PortraitRequest): 
     throw new Error('ComfyUI portrait history must contain exactly one image');
   }
   const image = output.images[0];
-  const filenamePattern = request.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-    ? /^portrait-h3_\d+_\.png$/
-    : isPortraitReferenceTemplateId(request.modelTemplate)
-      ? /^portrait-reference_\d+_\.png$/
-      : /^portrait_\d+_\.png$/;
+  const filenamePattern = isPortraitReferenceTemplateId(request.modelTemplate)
+    ? /^portrait-reference_\d+_\.png$/
+    : /^portrait_\d+_\.png$/;
   if (typeof image.filename !== 'string' || !filenamePattern.test(image.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait filename');
   }
@@ -448,20 +394,14 @@ export async function runComfyPortrait(
   seed: number,
   signal?: AbortSignal
 ): Promise<ComfyPortraitImage> {
-  if (request.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
-    for (const slot of portraitH3ReferencePlan(request)) {
-      await assertComfyIdentityReference(fetcher, baseUrl, slot.referenceImage, signal);
-    }
-  } else if (isPortraitReferenceTemplateId(request.modelTemplate) && request.referenceImage) {
+  if (isPortraitReferenceTemplateId(request.modelTemplate) && request.referenceImage) {
     await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
   }
   const workflow = request.modelTemplate === PORTRAIT_TEMPLATE_ID
     ? buildZImageTurboWorkflow(request, seed)
     : request.modelTemplate === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
       ? buildQwenReferencePortraitWorkflow(request, seed)
-      : request.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
-        ? buildMiniMaxH3PortraitStillWorkflow(request, seed)
-        : (() => { throw new Error('unsupported portrait model template'); })();
+      : (() => { throw new Error('unsupported portrait model template'); })();
   let id = '';
   let validated = false;
   try {

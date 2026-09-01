@@ -3,7 +3,6 @@ import type { RequestHandler } from './$types';
 import {
   INLINE_SCENE_VIDEO_TIMEOUT_MS,
   isMiniMaxH3InlineSceneVideoTemplate,
-  inlineSceneH3ReferencePlan,
   inlineSceneVideoDimensions,
   inlineSceneVideoSourceRequestSha256,
   inlineSceneVideoTemplateAvailable,
@@ -137,12 +136,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   } catch (cause) {
     throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene video request');
   }
-  const isH3 = isMiniMaxH3InlineSceneVideoTemplate(videoRequest.modelTemplate);
-  const h3ReferencePlan = isH3 ? inlineSceneH3ReferencePlan(videoRequest) : [];
-  const bodyReferences = h3ReferencePlan
-    .flatMap((entry) => entry.kind === 'body_identity' ? [entry.referenceImage] : []);
-  await validateManagedReferenceAttachments(parts.references, bodyReferences);
-  const priorMaster = h3ReferencePlan.find((entry) => entry.kind === 'prior_master');
+  // The scene loop takes no identity references and no prior master.
+  await validateManagedReferenceAttachments(parts.references, []);
+  const priorMaster = null;
   if (parts.master && !priorMaster) {
     throw error(400, 'inline-scene video master is not expected for this request');
   }
@@ -163,14 +159,6 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (imageSha256 !== videoRequest.source.sceneImageSha256) {
     throw error(400, 'inline-scene video image hash does not match its static source');
   }
-  const masterBytes = parts.master ? new Uint8Array(await parts.master.arrayBuffer()) : null;
-  if (masterBytes && priorMaster) {
-    try {
-      await validateInlineSceneVideoPriorMasterBytes(masterBytes, priorMaster.master);
-    } catch (cause) {
-      throw error(400, cause instanceof Error ? cause.message : 'invalid inline-scene video prior master');
-    }
-  }
   const seed = randomSeed();
   const timeoutSignal = AbortSignal.timeout(INLINE_SCENE_VIDEO_TIMEOUT_MS);
   const signal = AbortSignal.any([request.signal, timeoutSignal]);
@@ -181,13 +169,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       const diagnostics = capability?.missing.length ? ` Missing: ${capability.missing.join(', ')}.` : '';
       throw error(503, `The selected inline-scene motion model is unavailable.${diagnostics}`);
     }
-    if (bodyReferences.length > 0) {
-      await ensureComfyManagedReferences(fetch, baseUrl, bodyReferences, parts.references, signal);
-    }
     const input = await uploadInlineSceneVideoInput(fetch, baseUrl, imageBytes, imageSha256, signal);
-    const priorMasterInput = masterBytes && priorMaster
-      ? await uploadInlineSceneVideoPriorMasterInput(fetch, baseUrl, masterBytes, priorMaster.master, signal)
-      : undefined;
+    const priorMasterInput = undefined;
     const result = await runComfyInlineSceneVideo(
       fetch,
       baseUrl,

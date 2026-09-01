@@ -3,10 +3,7 @@ import type { RequestHandler } from './$types';
 import {
   INLINE_SCENE_IMAGE_TIMEOUT_MS,
   INLINE_SCENE_QWEN_TEMPLATE_ID,
-  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
-  MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS,
   inlineSceneDimensionsForTemplate,
-  inlineSceneH3StillReferencePlan,
   inlineSceneModelTemplateAvailable,
   inlineSceneQwenReferencePlan,
   normalizeInlineSceneImageRequest
@@ -135,10 +132,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     ? inlineSceneQwenReferencePlan(sceneRequest)
         .filter((slot) => slot.kind === 'body_wardrobe')
         .map((slot) => slot.referenceImage)
-    : sceneRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-      ? inlineSceneH3StillReferencePlan(sceneRequest)
-          .flatMap((slot) => slot.kind === 'body_identity' ? [slot.referenceImage] : [])
-      : [];
+    : [];
   await validateManagedReferenceAttachments(parts.references, bodyReferences);
   if (sceneRequest.continuityMaster && !parts.master) {
     throw error(400, 'inline-scene continuity metadata requires exactly one master PNG');
@@ -163,9 +157,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
   }
   const seed = sceneRequest.seed ?? randomSeed();
-  const timeout = sceneRequest.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-    ? MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS
-    : INLINE_SCENE_IMAGE_TIMEOUT_MS;
+  const timeout = INLINE_SCENE_IMAGE_TIMEOUT_MS;
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]);
   try {
     const capabilities = await loadInlineSceneCapabilities(

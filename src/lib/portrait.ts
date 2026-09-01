@@ -88,54 +88,13 @@ export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
   shift: 3.1
 } as const);
 
-export const MINIMAX_H3_PORTRAIT_STILL_TEMPLATE = Object.freeze({
-  id: PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
-  label: 'MiniMax H3 Ref2VA · Expression keeper (5-frame, 20-step)',
-  modelFamily: 'minimax-h3-ref2va-still',
-  promptGuide: 'one static five-frame portrait packet, exact identity from the numbered references, fixed head-and-chest 9:16 framing, natural skin and coherent anatomy, no motion, no speech, no text, and no watermark; frame zero is the keeper still',
-  modelFiles: {
-    unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
-    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
-    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
-    audioVae: 'minimax_h3_audio_vae_fp32.safetensors'
-  },
-  requiredNodes: [
-    'UNETLoader',
-    'CLIPLoader',
-    'VAELoader',
-    'LoadImage',
-    'MiniMaxH3ReferenceToVideo',
-    'MiniMaxH3SigmaShift',
-    'BasicGuider',
-    'KSamplerSelect',
-    'BasicScheduler',
-    'RandomNoise',
-    'SamplerCustomAdvanced',
-    'VAEDecode',
-    'ImageFromBatch',
-    'SaveImage'
-  ],
-  multiple: 32,
-  outputNode: '28',
-  steps: 20,
-  sampler: 'res_multistep',
-  scheduler: 'simple',
-  denoise: 1,
-  frames: 5,
-  shiftVideo: 12,
-  shiftAudio: 3,
-  referenceImageSize: 'match',
-  maxReferenceImages: 2,
-  outputFrameIndex: 0,
-  outputFrameCount: 1,
-  width: PORTRAIT_H3_WIDTH,
-  height: PORTRAIT_H3_HEIGHT
-} as const);
 
+// Only distillation-accelerated stills remain: Z-Image Turbo (distilled turbo weights)
+// and Qwen Image Edit 2511 with its four-step Lightning LoRA. The 20-step H3 keeper
+// still is deleted, not demoted.
 export const PORTRAIT_TEMPLATES = Object.freeze([
   Z_IMAGE_TURBO_TEMPLATE,
-  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
-  MINIMAX_H3_PORTRAIT_STILL_TEMPLATE
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE
 ] as const);
 
 export type PortraitTemplate = (typeof PORTRAIT_TEMPLATES)[number];
@@ -569,30 +528,6 @@ export function portraitRequestKey(request: PortraitRequest): string {
   ].join('\u001f');
 }
 
-export function portraitH3ReferencePlan(request: PortraitRequest): PortraitH3ReferenceSlot[] {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('MiniMax H3 portrait reference planning requires an H3 reference request');
-  }
-  const plan: PortraitH3ReferenceSlot[] = [{
-    picture: 1,
-    kind: 'canonical_identity',
-    sha256: normalized.referenceImage.sha256,
-    referenceImage: normalized.referenceImage
-  }];
-  if (
-    normalized.bodyReferenceImage
-    && normalized.bodyReferenceImage.sha256 !== normalized.referenceImage.sha256
-  ) {
-    plan.push({
-      picture: 2,
-      kind: 'body_wardrobe',
-      sha256: normalized.bodyReferenceImage.sha256,
-      referenceImage: normalized.bodyReferenceImage
-    });
-  }
-  return plan;
-}
 
 export function buildPortraitPrompt(request: PortraitRequest): string {
   const normalized = normalizePortraitRequest(request);
@@ -603,37 +538,6 @@ export function buildPortraitPrompt(request: PortraitRequest): string {
     normalized.setting ? `in ${normalized.setting}` : '',
     portraitTemplate(normalized.modelTemplate).promptGuide
   ].filter(Boolean).join(', ');
-  if (normalized.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
-    const plan = portraitH3ReferencePlan(normalized);
-    const canonical = plan[0];
-    const body = plan.find(({ kind }) => kind === 'body_wardrobe');
-    const bodyDefinition = body
-      ? `\n<Picture ${body.picture}> is the managed body and wardrobe reference for <Subject 1>; preserve body proportions, hair silhouette, recurring attire, and invariant accessories only for <Subject 1>.`
-      : '';
-    const bodyRetention = body
-      ? ` Body proportions, hair silhouette, recurring attire, and invariant accessories from <Picture ${body.picture}> are fully_preserved.`
-      : '';
-    return [
-      'subject_definitions:',
-      `<Picture ${canonical.picture}> is the canonical face and identity reference for <Subject 1>; preserve the exact same person, face, facial structure, eyes, nose, mouth, age, skin, and hair only for <Subject 1>.${bodyDefinition}`,
-      `<Subject 1> is ${normalized.subject}; use exact identity from <Picture ${canonical.picture}>${body ? ` and body/wardrobe traits from <Picture ${body.picture}>` : ''}.`,
-      '',
-      'summary:',
-      `[reference generation] Create exactly one static head-and-chest 9:16 expression portrait of ${normalized.subject}.`,
-      '',
-      'retention_analysis:',
-      `<Subject 1>: fully_preserved - retain ${normalized.subject}'s exact canonical identity, face, age, and hair from <Picture ${canonical.picture}>.${bodyRetention}`,
-      '',
-      'detailed_description:',
-      `${directedDescription}. Fixed 576x1024 portrait frame. Show one person only. The five generated frames describe one unchanged still image: no movement, lip motion, speaking, pose progression, camera movement, scene transition, subtitles, captions, text, or watermark.`,
-      '',
-      'overall_soundscape:',
-      'Silent still image; no dialogue, speech, vocals, sound effects, ambience, or audio.',
-      '',
-      'non_diegetic_music:',
-      'None.'
-    ].join('\n');
-  }
   if (normalized.promptOverride) return normalized.promptOverride;
   const referenceConditioned = isPortraitReferenceTemplateId(normalized.modelTemplate);
   const description = directedDescription;
@@ -839,98 +743,6 @@ export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, see
   });
 }
 
-export function buildMiniMaxH3PortraitStillWorkflow(
-  request: PortraitRequest,
-  seed: number
-): Record<string, unknown> {
-  const normalized = normalizePortraitRequest(request);
-  if (normalized.modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
-    throw new Error('MiniMax H3 portrait workflow requires an H3 reference request');
-  }
-  const validatedSeed = integer(seed, 'MiniMax H3 portrait seed', 0, Number.MAX_SAFE_INTEGER);
-  const dimensions = portraitDimensionsForTemplate(
-    normalized.modelTemplate,
-    normalized.aspectRatio,
-    normalized.megapixels
-  );
-  const plan = portraitH3ReferencePlan(normalized);
-  const loadImageNodes = Object.fromEntries(plan.map((slot, index) => [
-    String(5 + index),
-    {
-      class_type: 'LoadImage',
-      inputs: { image: `${slot.referenceImage.subfolder}/${slot.referenceImage.name}` }
-    }
-  ]));
-  const referenceInputs = Object.fromEntries(plan.map((_slot, index) => [
-    `ref_images.ref_image_${index}`,
-    [String(5 + index), 0]
-  ]));
-  const template = MINIMAX_H3_PORTRAIT_STILL_TEMPLATE;
-  return {
-    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
-    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
-    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
-    ...loadImageNodes,
-    '19': {
-      class_type: 'MiniMaxH3SigmaShift',
-      inputs: {
-        model: ['1', 0],
-        shift_video: template.shiftVideo,
-        shift_audio: template.shiftAudio
-      }
-    },
-    '20': {
-      class_type: 'MiniMaxH3ReferenceToVideo',
-      inputs: {
-        clip: ['2', 0],
-        vae: ['3', 0],
-        audio_vae: ['4', 0],
-        prompt: buildPortraitPrompt(normalized),
-        width: dimensions.width,
-        height: dimensions.height,
-        length: template.frames,
-        ref_image_size: template.referenceImageSize,
-        ...referenceInputs
-      }
-    },
-    '21': {
-      class_type: 'BasicGuider',
-      inputs: { model: ['19', 0], conditioning: ['20', 0] }
-    },
-    '22': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
-    '23': {
-      class_type: 'BasicScheduler',
-      inputs: {
-        model: ['19', 0],
-        scheduler: template.scheduler,
-        steps: template.steps,
-        denoise: template.denoise
-      }
-    },
-    '24': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '25': {
-      class_type: 'SamplerCustomAdvanced',
-      inputs: {
-        noise: ['24', 0],
-        guider: ['21', 0],
-        sampler: ['22', 0],
-        sigmas: ['23', 0],
-        latent_image: ['20', 1]
-      }
-    },
-    '26': { class_type: 'VAEDecode', inputs: { samples: ['25', 0], vae: ['3', 0] } },
-    '27': {
-      class_type: 'ImageFromBatch',
-      inputs: {
-        image: ['26', 0],
-        batch_index: template.outputFrameIndex,
-        length: template.outputFrameCount
-      }
-    },
-    '28': { class_type: 'SaveImage', inputs: { images: ['27', 0], filename_prefix: 'mullet/portrait-h3' } }
-  };
-}
 
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {
   if (!isRecord(value) || value.spec !== PORTRAIT_CAPABILITIES_SPEC) throw new Error('invalid portrait capabilities');

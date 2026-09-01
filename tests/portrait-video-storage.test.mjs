@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_END_FRAME_TEMPLATE_ID,
   PORTRAIT_VIDEO_REQUEST_SPEC,
@@ -22,7 +21,7 @@ import {
 function request(overrides = {}) {
   return {
     spec: PORTRAIT_VIDEO_REQUEST_SPEC,
-    modelTemplate: LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
+    modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
     endFrameModelTemplate: null,
     mode: 'i2v',
     source: {
@@ -96,23 +95,6 @@ function stored(overrides = {}) {
   };
 }
 
-test('normalizes the default two-second silent LTX H.264 MP4', () => {
-  const result = normalizeStoredPortraitVideo(stored());
-  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v10');
-  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v10');
-  assert.equal(result.modelTemplate, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
-  assert.equal(result.video.type, 'video/mp4');
-  assert.equal(result.frames, 49);
-  assert.equal(result.fps, 24);
-  assert.equal(result.durationSeconds, 2);
-  assert.equal(result.encodedDurationSeconds, 49 / 24);
-  assert.equal(result.audioTracks, 0);
-  assert.equal(result.mode, 'i2v');
-  assert.equal(result.endFrame, null);
-  assert.equal(result.requestKey, portraitVideoRequestKey(result.request));
-  assert.equal(JSON.stringify(result).includes('assistant'), false);
-  assert.equal(JSON.stringify(result).includes('transcript'), false);
-});
 
 test('normalizes MiniMax H3 MP4 only with exact two/three/five-second timing tuples', () => {
   const twoRequest = minimaxRequest();
@@ -157,8 +139,10 @@ test('rejects unmatched request keys, conversations, hashes, timing, dimensions,
   assert.throws(() => normalizeStoredPortraitVideo(stored({ audioTracks: 1 })), /audio-track count is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ width: 512 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
+  // There is only one portrait-video template now, so a "wrong template" case no longer
+  // exists; an unknown id is still rejected.
   assert.throws(() => normalizeStoredPortraitVideo(stored({
-    modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+    modelTemplate: 'not-a-template'
   })), /template is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({
     video: new Blob([Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' })

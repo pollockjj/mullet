@@ -21,7 +21,6 @@ export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_reques
 export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v4' as const;
 export const INLINE_SCENE_TEMPLATE_ID = 'z-image-turbo-scene-v1' as const;
 export const INLINE_SCENE_QWEN_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
-export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID = 'minimax-h3-ref2va-still-v2' as const;
 export const INLINE_SCENE_TIMEOUT_MS = 30_000 as const;
 export const INLINE_SCENE_IMAGE_TIMEOUT_MS = 120_000 as const;
 export const MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS = 300_000 as const;
@@ -72,52 +71,12 @@ export const Z_IMAGE_TURBO_SCENE_TEMPLATE = Object.freeze({
   shift: Z_IMAGE_TURBO_TEMPLATE.shift
 } as const);
 
-export const MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE = Object.freeze({
-  id: MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID,
-  label: 'MiniMax H3 Ref2VA · Keeper still (5-frame, 20-step)',
-  modelFamily: 'minimax-h3-ref2va-still',
-  promptGuide: 'one static five-frame cinematic landscape packet, exact identity from the numbered references, coherent anatomy and spatial relationships, natural lighting, no motion description, no text, and no watermark; frame zero is the keeper still',
-  modelFiles: {
-    unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
-    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
-    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
-    audioVae: 'minimax_h3_audio_vae_fp32.safetensors'
-  },
-  requiredNodes: [
-    'UNETLoader',
-    'CLIPLoader',
-    'VAELoader',
-    'LoadImage',
-    'MiniMaxH3ReferenceToVideo',
-    'MiniMaxH3SigmaShift',
-    'BasicGuider',
-    'KSamplerSelect',
-    'BasicScheduler',
-    'RandomNoise',
-    'SamplerCustomAdvanced',
-    'VAEDecode',
-    'ImageFromBatch',
-    'SaveImage'
-  ],
-  multiple: 32,
-  outputNode: '28',
-  steps: 20,
-  sampler: 'res_multistep',
-  scheduler: 'simple',
-  denoise: 1,
-  frames: 5,
-  shiftVideo: 12,
-  shiftAudio: 3,
-  referenceImageSize: 'match',
-  maxReferenceImages: 9,
-  outputFrameIndex: 0,
-  outputFrameCount: 1
-} as const);
 
+// Only distillation-accelerated scene stills: Z-Image Turbo and Qwen Image Edit 2511
+// with its four-step Lightning LoRA. The 20-step H3 keeper still is deleted.
 export const INLINE_SCENE_TEMPLATES = Object.freeze([
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
-  QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
-  MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE
+  QWEN_IMAGE_EDIT_SCENE_TEMPLATE
 ] as const);
 
 export type InlineSceneAspectRatio = (typeof INLINE_SCENE_ASPECT_RATIOS)[number]['id'];
@@ -794,9 +753,7 @@ export function inlineSceneDimensionsForTemplate(
   megapixels: InlineSceneMegapixels
 ): { width: number; height: number; pixels: number } {
   const template = inlineSceneTemplate(modelTemplate);
-  return modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID
-    ? aspectFaithfulInlineSceneDimensions(aspectRatio, megapixels, template.multiple)
-    : inlineSceneDimensions(aspectRatio, megapixels, template.multiple);
+  return inlineSceneDimensions(aspectRatio, megapixels, template.multiple);
 }
 
 export function buildInlineSceneImageRequest(
@@ -1062,9 +1019,6 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
   if (modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID && lora !== null) {
     throw new Error('Qwen inline scenes require one to three identity references and no selectable LoRA');
   }
-  if (modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID && lora !== null) {
-    throw new Error('MiniMax H3 inline-scene stills require one to three identity references and no LoRA');
-  }
   if (
     modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
     && continuityMaster
@@ -1131,51 +1085,6 @@ export function inlineSceneQwenReferencePlan(request: InlineSceneImageRequest): 
   return slots;
 }
 
-export function inlineSceneH3StillReferencePlan(
-  request: InlineSceneImageRequest
-): InlineSceneH3StillReferenceSlot[] {
-  const normalized = normalizeInlineSceneImageRequest(request);
-  if (normalized.modelTemplate !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
-    throw new Error('H3 still reference planning requires a MiniMax H3 inline-scene still request');
-  }
-  const plan: InlineSceneH3StillReferenceSlot[] = [];
-  const selectedHashes = new Set<string>();
-  const append = (entry: InlineSceneH3StillReferenceCandidate): void => {
-    if (
-      plan.length >= MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.maxReferenceImages
-      || selectedHashes.has(entry.sha256)
-    ) return;
-    selectedHashes.add(entry.sha256);
-    plan.push({ ...entry, picture: plan.length + 1 } as InlineSceneH3StillReferenceSlot);
-  };
-  if (normalized.continuityMaster) {
-    append({
-      kind: 'prior_master',
-      sha256: normalized.continuityMaster.imageSha256,
-      master: normalized.continuityMaster
-    });
-  }
-  normalized.cast.identities.forEach((identity, identityIndex) => {
-    append({
-      kind: 'canonical_identity',
-      sha256: identity.referenceImage.sha256,
-      identityIndex,
-      identity,
-      referenceImage: identity.referenceImage
-    });
-  });
-  normalized.cast.identities.forEach((identity, identityIndex) => {
-    if (!identity.bodyReferenceImage) return;
-    append({
-      kind: 'body_identity',
-      sha256: identity.bodyReferenceImage.sha256,
-      identityIndex,
-      identity,
-      referenceImage: identity.bodyReferenceImage
-    });
-  });
-  return plan;
-}
 
 export function inlineSceneImageRequestKey(request: InlineSceneImageRequest): string {
   const normalized = normalizeInlineSceneImageRequest(request);
@@ -1271,100 +1180,6 @@ export function inlineSceneContinuityMasterEligible(
   }
 }
 
-export function buildInlineScenePrompt(request: InlineSceneImageRequest): string {
-  const normalized = normalizeInlineSceneImageRequest(request);
-  if (normalized.modelTemplate === INLINE_SCENE_TEMPLATE_ID && normalized.lora) {
-    const [identity] = normalized.cast.identities;
-    return [
-      `The loaded identity LoRA token ${normalized.lora.trigger} represents ${identity.subject}.`,
-      `Apply ${normalized.lora.trigger} only when ${identity.displayName} is visible; do not insert that person when absent from the directed scene.`,
-      normalized.prompt,
-      Z_IMAGE_TURBO_SCENE_TEMPLATE.promptGuide
-    ].join(' ');
-  }
-  if (normalized.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
-    const plan = inlineSceneH3StillReferencePlan(normalized);
-    const pictureForHash = (sha256: string): number => {
-      const reference = plan.find((entry) => entry.sha256 === sha256);
-      if (!reference) throw new Error('H3 still reference plan omitted a required reference');
-      return reference.picture;
-    };
-    const referenceDirections = plan.map((slot) => {
-      if (slot.kind === 'prior_master') {
-        return `<Picture ${slot.picture}> is the verified prior scene master; preserve compatible setting, camera, lighting, attire, objects, and spatial continuity, but remove every prior person outside the exact current cast.`;
-      }
-      if (slot.kind === 'canonical_identity') {
-        return `<Picture ${slot.picture}> is the exact canonical identity reference for ${slot.identity.displayName}; preserve that face and hair only for ${slot.identity.displayName}.`;
-      }
-      return `<Picture ${slot.picture}> is the body and wardrobe reference for ${slot.identity.displayName}; preserve that person's body proportions, hair silhouette, recurring attire, and invariant accessories only for ${slot.identity.displayName}.`;
-    });
-    const subjectDirections = normalized.cast.identities.map((identity, index) => {
-      const canonicalPicture = pictureForHash(identity.referenceImage.sha256);
-      const bodyPicture = identity.bodyReferenceImage
-        ? pictureForHash(identity.bodyReferenceImage.sha256)
-        : null;
-      const bodyDirection = bodyPicture && bodyPicture !== canonicalPicture
-        ? ` and body/wardrobe traits from <Picture ${bodyPicture}>`
-        : '';
-      return `<Subject ${index + 1}> is ${identity.displayName}; use exact identity from <Picture ${canonicalPicture}>${bodyDirection}.`;
-    });
-    const exactCast = normalized.cast.identities.map(({ displayName }) => displayName).join(', ');
-    const priorMaster = plan.find((slot) => slot.kind === 'prior_master');
-    const retention = [
-      ...(priorMaster
-        ? [`<Picture ${priorMaster.picture}> (prior scene continuity): partially_preserved - retain compatible setting, camera, lighting, attire, objects, and spatial continuity while removing every prior person outside the exact current cast.`]
-        : []),
-      ...normalized.cast.identities.map((identity, index) => {
-        const canonicalPicture = pictureForHash(identity.referenceImage.sha256);
-        const bodyPicture = identity.bodyReferenceImage
-          ? pictureForHash(identity.bodyReferenceImage.sha256)
-          : null;
-        const bodyRetention = bodyPicture && bodyPicture !== canonicalPicture
-          ? `, with body proportions, hair silhouette, recurring attire, and invariant accessories from <Picture ${bodyPicture}>`
-          : '';
-        return `<Subject ${index + 1}>: fully_preserved - retain ${identity.displayName}'s exact identity, face, and hair from <Picture ${canonicalPicture}>${bodyRetention}.`;
-      })
-    ];
-    return [
-      'subject_definitions:',
-      [...referenceDirections, ...subjectDirections].join('\n'),
-      '',
-      'summary:',
-      `[reference generation] Create exactly one static ${normalized.cast.kind} landscape scene containing only these ${normalized.cast.identities.length} visible subject${normalized.cast.identities.length === 1 ? '' : 's'}: ${exactCast}.`,
-      '',
-      'retention_analysis:',
-      retention.join('\n'),
-      '',
-      'detailed_description:',
-      `${normalized.prompt} ${MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE.promptGuide} This is one instantaneous still image: no motion, animation, before-or-after action, temporal sequence, shot progression, cuts, or camera movement.`,
-      '',
-      'overall_soundscape:',
-      'N/A. Static image only; no dialogue, voices, narration, ambience, sound effects, or other audio.',
-      '',
-      'non_diegetic_music:',
-      'N/A. Static image only; no music.'
-    ].join('\n');
-  }
-  const referenceDirections = inlineSceneQwenReferencePlan(normalized).map((slot) => {
-    if (slot.kind === 'continuity_master') {
-      return 'Picture 1 is the prior accepted scene master; preserve its setting, camera continuity, attire, and every still-current identity.';
-    }
-    if (slot.kind === 'identity') {
-      return `Picture ${slot.picture} is the exact identity reference for ${slot.identity.displayName}; preserve that face only for ${slot.identity.displayName} and do not transfer attributes between people.`;
-    }
-    return `Picture ${slot.picture} is the body and wardrobe reference for ${slot.identity.displayName}; preserve that person's body proportions, hair, recurring attire, and distinguishing accessories only for ${slot.identity.displayName}, without transferring attributes between people.`;
-  });
-  const exactCast = normalized.cast.identities.map(({ displayName }) => displayName).join(', ');
-  return [
-    ...referenceDirections,
-    `Build one ${normalized.cast.kind} scene containing exactly these ${normalized.cast.identities.length} visible subject${normalized.cast.identities.length === 1 ? '' : 's'}: ${exactCast}.`,
-    normalized.continuityMaster
-      ? 'Continue from Picture 1 while removing any prior subject not in the exact current cast.'
-      : 'Recompose and outpaint Picture 1 into the requested wide scene; do not retain portrait framing or blank padding.',
-    normalized.prompt,
-    QWEN_IMAGE_EDIT_SCENE_TEMPLATE.promptGuide
-  ].join(' ');
-}
 
 export function buildQwenImageEditSceneWorkflow(
   request: InlineSceneImageRequest,
@@ -1440,118 +1255,6 @@ export function buildZImageTurboSceneWorkflow(
   });
 }
 
-export function buildMiniMaxH3InlineSceneStillWorkflow(
-  request: InlineSceneImageRequest,
-  seed: number,
-  continuityMasterInput?: InlineSceneUploadedMasterInput
-): Record<string, unknown> {
-  const normalized = normalizeInlineSceneImageRequest(request);
-  if (normalized.modelTemplate !== MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID) {
-    throw new Error('MiniMax H3 still workflow requires an H3 still request');
-  }
-  const plan = inlineSceneH3StillReferencePlan(normalized);
-  const masterSlot = plan.find((slot) => slot.kind === 'prior_master');
-  if (Boolean(masterSlot) !== Boolean(continuityMasterInput)) {
-    throw new Error(masterSlot
-      ? 'MiniMax H3 still continuity requires one uploaded master input'
-      : 'MiniMax H3 still request cannot use an unbound uploaded master input');
-  }
-  const normalizedMasterInput = continuityMasterInput
-    ? normalizeInlineSceneUploadedMasterInput(continuityMasterInput)
-    : null;
-  if (
-    masterSlot
-    && normalizedMasterInput
-    && (
-      normalizedMasterInput.imageSha256 !== masterSlot.master.imageSha256
-      || normalizedMasterInput.width !== masterSlot.master.width
-      || normalizedMasterInput.height !== masterSlot.master.height
-    )
-  ) throw new Error('MiniMax H3 still uploaded master input does not match continuity provenance');
-  const validatedSeed = integer(seed, 'inline-scene seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height } = inlineSceneDimensionsForTemplate(
-    normalized.modelTemplate,
-    normalized.aspectRatio,
-    normalized.megapixels
-  );
-  const loadImageNodes = Object.fromEntries(plan.map((slot, index) => {
-    const nodeId = String(5 + index);
-    if (slot.kind === 'prior_master') {
-      if (!normalizedMasterInput) throw new Error('MiniMax H3 still request is missing its uploaded master input');
-      return [nodeId, {
-        class_type: 'LoadImage',
-        inputs: { image: `${normalizedMasterInput.subfolder}/${normalizedMasterInput.name}` }
-      }];
-    }
-    return [nodeId, {
-      class_type: 'LoadImage',
-      inputs: { image: `${slot.referenceImage.subfolder}/${slot.referenceImage.name}` }
-    }];
-  }));
-  const referenceInputs = Object.fromEntries(plan.map((_slot, index) => [
-    `ref_images.ref_image_${index}`,
-    [String(5 + index), 0]
-  ]));
-  const template = MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE;
-  return {
-    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
-    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
-    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
-    ...loadImageNodes,
-    '19': {
-      class_type: 'MiniMaxH3SigmaShift',
-      inputs: {
-        model: ['1', 0],
-        shift_video: template.shiftVideo,
-        shift_audio: template.shiftAudio
-      }
-    },
-    '20': {
-      class_type: 'MiniMaxH3ReferenceToVideo',
-      inputs: {
-        clip: ['2', 0],
-        vae: ['3', 0],
-        audio_vae: ['4', 0],
-        prompt: buildInlineScenePrompt(normalized),
-        width,
-        height,
-        length: template.frames,
-        ref_image_size: template.referenceImageSize,
-        ...referenceInputs
-      }
-    },
-    '21': {
-      class_type: 'BasicGuider',
-      inputs: {
-        model: ['19', 0],
-        conditioning: ['20', 0]
-      }
-    },
-    '22': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
-    '23': {
-      class_type: 'BasicScheduler',
-      inputs: { model: ['19', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise }
-    },
-    '24': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
-    '25': {
-      class_type: 'SamplerCustomAdvanced',
-      inputs: {
-        noise: ['24', 0],
-        guider: ['21', 0],
-        sampler: ['22', 0],
-        sigmas: ['23', 0],
-        latent_image: ['20', 1]
-      }
-    },
-    '26': { class_type: 'VAEDecode', inputs: { samples: ['25', 0], vae: ['3', 0] } },
-    '27': {
-      class_type: 'ImageFromBatch',
-      inputs: { image: ['26', 0], batch_index: template.outputFrameIndex, length: template.outputFrameCount }
-    },
-    '28': { class_type: 'SaveImage', inputs: { images: ['27', 0], filename_prefix: 'mullet/scene' } }
-  };
-}
 
 export function inlineSceneTemplate(modelTemplate: InlineSceneModelTemplate): InlineSceneTemplate {
   const template = INLINE_SCENE_TEMPLATES.find((candidate) => candidate.id === modelTemplate);
@@ -1608,3 +1311,35 @@ export function normalizeInlineSceneCapabilities(value: unknown): InlineSceneCap
     loras: [...new Set(value.loras)].sort()
   };
 }
+export function buildInlineScenePrompt(request: InlineSceneImageRequest): string {
+  const normalized = normalizeInlineSceneImageRequest(request);
+  if (normalized.modelTemplate === INLINE_SCENE_TEMPLATE_ID && normalized.lora) {
+    const [identity] = normalized.cast.identities;
+    return [
+      `The loaded identity LoRA token ${normalized.lora.trigger} represents ${identity.subject}.`,
+      `Apply ${normalized.lora.trigger} only when ${identity.displayName} is visible; do not insert that person when absent from the directed scene.`,
+      normalized.prompt,
+      Z_IMAGE_TURBO_SCENE_TEMPLATE.promptGuide
+    ].join(' ');
+  }
+  const referenceDirections = inlineSceneQwenReferencePlan(normalized).map((slot) => {
+    if (slot.kind === 'continuity_master') {
+      return 'Picture 1 is the prior accepted scene master; preserve its setting, camera continuity, attire, and every still-current identity.';
+    }
+    if (slot.kind === 'identity') {
+      return `Picture ${slot.picture} is the exact identity reference for ${slot.identity.displayName}; preserve that face only for ${slot.identity.displayName} and do not transfer attributes between people.`;
+    }
+    return `Picture ${slot.picture} is the body and wardrobe reference for ${slot.identity.displayName}; preserve that person's body proportions, hair, recurring attire, and distinguishing accessories only for ${slot.identity.displayName}, without transferring attributes between people.`;
+  });
+  const exactCast = normalized.cast.identities.map(({ displayName }) => displayName).join(', ');
+  return [
+    ...referenceDirections,
+    `Build one ${normalized.cast.kind} scene containing exactly these ${normalized.cast.identities.length} visible subject${normalized.cast.identities.length === 1 ? '' : 's'}: ${exactCast}.`,
+    normalized.continuityMaster
+      ? 'Continue from Picture 1 while removing any prior subject not in the exact current cast.'
+      : 'Recompose and outpaint Picture 1 into the requested wide scene; do not retain portrait framing or blank padding.',
+    normalized.prompt,
+    QWEN_IMAGE_EDIT_SCENE_TEMPLATE.promptGuide
+  ].join(' ');
+}
+

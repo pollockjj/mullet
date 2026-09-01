@@ -13,14 +13,12 @@ import {
   inlineSceneSourceForScenarioOpening
 } from '../src/lib/inline-scene.ts';
 import {
-  LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID,
-  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID,
   buildInlineSceneVideoRequest,
   inlineSceneVideoDecodeFailureTransition,
   inlineSceneVideoDimensions,
   inlineSceneVideoReconciliationAllowed,
-  inlineSceneVideoRequestKey
+  inlineSceneVideoRequestKey,
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
 } from '../src/lib/inline-scene-video.ts';
 import {
   STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC,
@@ -34,14 +32,12 @@ import {
 } from '../src/lib/inline-scene-video-storage.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 
+const loopMp4Bytes = buildH264AacMp4Fixture({ width: 1024, height: 576, frames: 73, includeAudio: false });
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const epoch = '11111111-1111-4111-8111-111111111111';
 const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const motionPromptId = '33333333-3333-4333-8333-333333333333';
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
-const minimaxMp4Bytes = buildH264AacMp4Fixture();
-const previewMp4Bytes = buildH264AacMp4Fixture({ width: 960, height: 544 });
-const ltxMp4Bytes = buildH264AacMp4Fixture({ width: 1344, height: 768, frames: 121, includeAudio: false });
 const sceneLora = Object.freeze({
   path: 'zimage/jenna6.safetensors',
   trigger: 'jennastannis',
@@ -72,7 +68,7 @@ const soloCast = Object.freeze({
   }]
 });
 
-function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+function request(sourceKind = 'completed_turn', modelTemplate = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
   const messages = sourceKind === 'scenario_opening'
     ? [{
         role: 'assistant',
@@ -129,9 +125,7 @@ function request(sourceKind = 'completed_turn', modelTemplate = LTX25_INLINE_SCE
 
 function stored(overrides = {}, motionRequest = request()) {
   const dimensions = inlineSceneVideoDimensions(motionRequest.aspectRatio, motionRequest.modelTemplate);
-  const isLtx = motionRequest.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID;
-  const isPreview = motionRequest.modelTemplate === MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID;
-  const bytes = isLtx ? ltxMp4Bytes : isPreview ? previewMp4Bytes : minimaxMp4Bytes;
+  const bytes = loopMp4Bytes;
   return {
     spec: STORED_INLINE_SCENE_VIDEO_SPEC,
     conversationId,
@@ -146,8 +140,8 @@ function stored(overrides = {}, motionRequest = request()) {
     height: dimensions.height,
     frames: dimensions.frames,
     fps: dimensions.fps,
-    durationSeconds: isLtx ? 121 / 24 : 124 / 24,
-    audioTracks: isLtx ? 0 : 1,
+    durationSeconds: 73 / 24,
+    audioTracks: 0,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
     videoSha256: createHash('sha256').update(bytes).digest('hex'),
@@ -166,25 +160,6 @@ test('normalizes and byte-verifies the default static-scene-bound silent H.264 M
   assert.equal(normalized.request.source.scenePromptId, staticPromptId);
 });
 
-test('retains byte-verified MiniMax H.264/AAC persistence as an additive selection', async () => {
-  const minimax = normalizeStoredInlineSceneVideo(stored(
-    {},
-    request('completed_turn', MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE_ID)
-  ));
-  assert.equal(minimax.video.type, 'video/mp4');
-  assert.equal(minimax.frames, 124);
-  assert.equal(minimax.audioTracks, 1);
-  await verifyStoredInlineSceneVideo(minimax);
-  const preview = normalizeStoredInlineSceneVideo(stored(
-    {},
-    request('completed_turn', MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_TEMPLATE_ID)
-  ));
-  assert.equal(preview.width, 960);
-  assert.equal(preview.height, 544);
-  assert.equal(preview.frames, 124);
-  assert.equal(preview.audioTracks, 1);
-  await verifyStoredInlineSceneVideo(preview);
-});
 
 test('preserves scenario-opening identity through motion persistence', async () => {
   const completed = stored();
@@ -419,5 +394,5 @@ test('verified persisted motion remains restorable across a playback fallback an
   assert.equal(discarded, 0);
   assert.equal(replacementPosts, 0);
   assert.equal(persisted.video.promptId, motionPromptId);
-  assert.equal(persisted.video.videoSha256, createHash('sha256').update(ltxMp4Bytes).digest('hex'));
+  assert.equal(persisted.video.videoSha256, createHash('sha256').update(loopMp4Bytes).digest('hex'));
 });

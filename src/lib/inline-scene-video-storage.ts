@@ -1,6 +1,6 @@
 import {
   INLINE_SCENE_VIDEO_FPS,
-  LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
   inlineSceneVideoDimensions,
   inlineSceneVideoRequestKey,
   normalizeInlineSceneVideoRequest,
@@ -162,7 +162,8 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     expectedDurationSeconds,
     expectedDurationSeconds
   );
-  const expectedAudioTracks = request.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID ? 0 : 1;
+  // The FL2VA loop is silent (its node has no audio path); Ref2VA carries native audio.
+  const expectedAudioTracks = request.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID ? 0 : 1;
   const audioTracks = safeInteger(
     value.audioTracks,
     'stored inline-scene video audio-track count',
@@ -236,7 +237,7 @@ export async function verifyStoredInlineSceneVideo(value: unknown): Promise<Stor
     fps: dimensions.fps
   };
   let encodedDurationSeconds: number;
-  if (video.modelTemplate === LTX25_INLINE_SCENE_VIDEO_TEMPLATE_ID) {
+  if (video.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
     encodedDurationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
   } else {
     if (
