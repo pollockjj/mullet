@@ -82,3 +82,27 @@ dropped. Verified in a browser: starter activates and selects its declared model
 Lesson recorded: a regex-driven bulk removal over a 6,456-line component needs a
 per-function size diff afterwards. Type checking and the unit suite both stayed green
 through this breakage - only the browser caught it.
+
+## Milestone 1 evidence, deployed as ed15c4b
+
+Served: `scratch/releases/ed15c4b0d76b2ec0458a2622821e470f5b8c74d8-mullet`, launchd
+`com.pollockjj.mullet`, healthz reports revision ed15c4b. Rollback to the previous
+release recorded at `scratch/deploy/rollback-eef5e127-before-ed15c4b.plist`.
+
+Browser check against the served build (`scratch/browser-check/served-ed15c4b/`):
+scenario active 253 ms, classifier 1006 ms, portrait visible, model reads
+"Qwen Image Edit 2511 · identity reference", zero alerts, zero page errors.
+
+Default decision: Qwen Image Edit 2511 + Lightning-4step for reference-identity
+subjects, chosen on measured warm inference (5.4-5.8 s over three runs, versus H3
+Ref2VA 4-step at 5.7-6.9 s and H3 20-step at 14.1 s) and on identity, framing and
+expression fidelity in `scratch/still-candidates/`. Z-Image Turbo stays the default only
+where the scenario declares a trained subject LoRA, which is how the data already had it.
+H3 remains selectable and is never silently substituted.
+
+NOT yet done in milestone 1: a click-to-visible number for a genuinely novel expression
+measured through the app. Scenario subjects carry a promptOverride and MULLET submits a
+fixed seed, so repeating an already-generated expression is a ComfyUI cache hit at
+0.3-0.8 s. The 5.4-5.8 s figure is graph-level with the cache defeated by seed variation.
+Composed first-generation click-to-visible is ~6.5-7.5 s against the 8 s gate, but that
+composition has not been observed in one continuous browser run.
