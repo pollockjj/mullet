@@ -24,8 +24,8 @@ function hasFlag(name) {
 // UI in that window silently does nothing. Gate on a control that only exists after
 // hydration AND after capabilities land.
 const INTERACTIVE = `Boolean(
-  document.querySelector('select[aria-label="Portrait image model"]')
-  && document.querySelector('select[aria-label="Portrait video model"]')
+  document.querySelector('[aria-label="Media"]')
+  && document.querySelector('button.scenario-starter')
   && !/Connecting…/.test(document.body.textContent)
 )`;
 
@@ -77,22 +77,11 @@ const READ_PANELS = `(() => {
     title: document.title,
     heading: text(document.querySelector('h1')),
     panels: {
-      expressionSidecar: text(panel('Expression sidecar')),
-      expressionPortrait: text(panel('Generated expression portrait')),
-      portraitMotion: text(panel('Generated portrait motion')),
-      inlineScene: text(panel('Inline landscape scene'))
+      media: text(panel('Media'))
     },
     selectors: {
-      portraitImageModel: selectState('Portrait image model'),
-      portraitMegapixels: selectState('Portrait megapixels'),
-      portraitVideoModel: selectState('Portrait video model'),
-      portraitVideoMode: selectState('Portrait video mode'),
-      portraitVideoDuration: selectState('Portrait video duration'),
-      inlineSceneStillModel: selectState('Inline scene still model'),
-      inlineSceneVideoModel: selectState('Inline scene video model'),
-      inlineSceneAspectRatio: selectState('Inline scene aspect ratio'),
       bundledScenario: selectState('Bundled scenario'),
-      startingScenario: selectState('Starting scenario')
+      inlineSceneAspectRatio: selectState('Inline scene aspect ratio')
     },
     media: {
       expressionPortrait: media('Generated expression portrait'),
@@ -157,9 +146,10 @@ async function main() {
     if (record.timings.interactiveMs !== null) {
       // Enable expressions BEFORE the scenario loads. The classifier fires on the
       // finalized-response transition; switching it on afterwards leaves it idle.
-      if (argValue('generate') === 'portrait' || argValue('generate') === 'scene') {
-        record.drove.expressionsToggle = await enablePanelToggle(page, 'Expression sidecar');
-      }
+      // Media is always on; there are no per-feature toggles left to click.
+      record.drove.mediaState = await page.evaluate(
+        `document.querySelector('[aria-label="Media"] strong')?.textContent.trim() ?? null`
+      );
       if (scenario) {
         record.drove.scenario = await page.selectByText('Bundled scenario', scenario);
         await page.waitFor('true', { timeoutMs: 1_000, pollMs: 250 }).catch(() => {});
@@ -260,20 +250,8 @@ async function main() {
       const SCENE = '[aria-label="Inline landscape scene"]';
       record.scene = {};
       const sceneStart = Date.now();
-      record.scene.toggle = await enablePanelToggle(page, 'Inline landscape scene');
-      record.scene.stillModel = await page.evaluate(
-        `(() => { const s = document.querySelector('select[aria-label="Inline scene still model"]');
-                  return s ? s.options[s.selectedIndex].textContent.trim() : null; })()`
-      );
-      const sceneModel = argValue('scene-model');
-      if (sceneModel) {
-        record.scene.selectedVideoModel = await page.selectByText('Inline scene video model', sceneModel);
-        await page.waitFor('true', { timeoutMs: 1200, pollMs: 300 }).catch(() => {});
-      }
-      record.scene.videoModel = await page.evaluate(
-        `(() => { const s = document.querySelector('select[aria-label="Inline scene video model"]');
-                  return s ? s.options[s.selectedIndex].textContent.trim() : null; })()`
-      );
+
+
 
       record.timings.sceneStillMs = await page
         .waitFor(
@@ -284,17 +262,8 @@ async function main() {
         .catch((error) => { record.scene.stillError = error.message; return null; });
       record.scene.stillElapsedMs = Date.now() - sceneStart;
 
-      record.timings.motionButtonReadyMs = await page
-        .waitFor(
-          `(() => [...document.querySelectorAll('${SCENE} button')]
-              .some((b) => /generate motion/i.test(b.textContent) && !b.disabled))()`,
-          { timeoutMs: 120_000, pollMs: 1_000, label: 'generate motion enabled' }
-        )
-        .catch((error) => { record.scene.motionNotReady = error.message; return null; });
-
       const motionStart = Date.now();
-      record.scene.clickedMotion = await page.clickText(`${SCENE} button`, 'generate motion');
-      if (record.scene.clickedMotion) {
+      {
         record.timings.sceneMotionMs = await page
           .waitFor(
             `(() => { const v = document.querySelector('.scene-card video');
@@ -304,8 +273,8 @@ async function main() {
           .catch((error) => { record.scene.motionError = error.message; return null; });
       }
       record.scene.motionElapsedMs = Date.now() - motionStart;
-      record.scene.panelText = await page.evaluate(
-        `document.querySelector('${SCENE}')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`
+      record.scene.mediaPanel = await page.evaluate(
+        `document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`
       );
       record.scene.video = await page.evaluate(
         `(() => { const v = document.querySelector('.scene-card video');

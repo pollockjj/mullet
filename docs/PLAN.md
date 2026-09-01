@@ -125,14 +125,32 @@ finalized response
                     └─> [4] SCENE MOTION  Ref2VA, accepted scene still = Picture 1, + cast refs
 ```
 
-Consistency is a reference chain, not a per-stage prompt. Each accepted output becomes an
-input reference downstream and is frozen on acceptance:
+Consistency is a **sequential caption chain**, not a shared reference photo. The failure
+it replaces: expression and scene were independent edits of the same canonical photo,
+with their own seeds and prompts, and the generated portrait never reached the scene.
 
-- identity: the per-character reference image is immutable and always Picture 1 of the still.
-- expression: the accepted still is the sole source frame for the loop (already how FL2VA works).
-- cast: the accepted still enters the scene still's reference list, ordered, stable across turns.
-- setting: the first accepted scene still for a location is retained and re-fed as a reference
-  for every later scene in that location. Ref2VA takes up to 9 references; ordering is fixed.
+1. **Scenario declares** `subject`, `attire`, `setting` per character (already in the
+   lorebook, e.g. Jenna's burgundy/silver leather tunic, the Liberator flight deck).
+2. **Expression prompt uses those details.** Where the scenario supplies a hand-written
+   `expression_prompts[label]` that override wins; otherwise the generic path composes
+   subject + expression + attire + setting.
+3. **The produced still is captioned** by the local model - concrete visible facts only:
+   hair, garments, accessories, background. Read off the pixels, not restated from the
+   scenario, because what matters downstream is what the model actually made.
+4. **That caption is the subject's live descriptor** and is appended verbatim to the
+   scene still prompt and to the scene loop prompt, named per subject so a multi-person
+   scene binds each description to the right person.
+
+The descriptor is bound to the exact portrait SHA it was read from, so a stale caption
+can never be applied to a portrait it does not describe. It is part of the inline-scene
+request key, so a changed appearance forces a new scene instead of reusing a stale one.
+
+Caption text is untrusted model output concatenated into a ComfyUI prompt: collapsed to
+one bounded line, and refused outright if it contains `<Picture>`/`<Subject>` reference
+tokens that could hijack the graph.
+
+Motion inherits by construction: both loops take their own accepted still as the
+identical first and last frame, and the scene loop prompt carries the same caption.
 
 ## Speed
 
