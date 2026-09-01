@@ -10,7 +10,6 @@ import {
   portraitVideoRequestKey
 } from '../src/lib/portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
-import { buildVp9WebmFixture } from './webm-fixture.mjs';
 import {
   STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC,
   STORED_PORTRAIT_VIDEO_SPEC,
@@ -162,12 +161,12 @@ test('rejects unmatched request keys, conversations, hashes, timing, dimensions,
     modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   })), /template is invalid/);
   assert.throws(() => normalizeStoredPortraitVideo(stored({
-    video: new Blob([buildVp9WebmFixture({ width: 576, height: 1024, frames: 49 })], { type: 'video/webm' })
+    video: new Blob([Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' })
   })), /video is invalid/);
   const minimax = minimaxRequest();
   assert.throws(() => normalizeStoredPortraitVideo(stored({
     request: minimax,
-    video: new Blob([buildVp9WebmFixture({ width: 576, height: 1024, frames: 73 })], { type: 'video/webm' })
+    video: new Blob([Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' })
   })), /video is invalid/);
 });
 
