@@ -157,7 +157,11 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       signal,
       endFrameInput
     );
-    const dimensions = portraitVideoDimensions(portraitVideoRequest.aspectRatio, portraitVideoRequest.durationSeconds);
+    const dimensions = portraitVideoDimensions(
+      portraitVideoRequest.aspectRatio,
+      portraitVideoRequest.durationSeconds,
+      portraitVideoRequest.modelTemplate
+    );
     const headers: Record<string, string> = {
       'content-type': result.contentType,
       'cache-control': 'no-store',

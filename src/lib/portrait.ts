@@ -5,12 +5,16 @@ import {
   type ExpressionSidecarResult
 } from './sidecar.ts';
 
-export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v5' as const;
-export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v5' as const;
+export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v6' as const;
+export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v6' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
 export const PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
-export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
+export const PORTRAIT_H3_REFERENCE_TEMPLATE_ID = 'minimax-h3-ref2va-portrait-still-v1' as const;
+export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
 export const PORTRAIT_TIMEOUT_MS = 120_000 as const;
+export const PORTRAIT_H3_TIMEOUT_MS = 300_000 as const;
+export const PORTRAIT_H3_WIDTH = 576 as const;
+export const PORTRAIT_H3_HEIGHT = 1024 as const;
 
 export const PORTRAIT_ASPECT_RATIOS = Object.freeze([
   { id: '9:16', width: 9, height: 16, label: '9:16 fixed expression' }
@@ -20,7 +24,9 @@ export const PORTRAIT_MEGAPIXELS = Object.freeze([0.5, 0.75, 0.9, 1, 1.5, 2] as 
 
 export type PortraitAspectRatio = (typeof PORTRAIT_ASPECT_RATIOS)[number]['id'];
 export type PortraitMegapixels = (typeof PORTRAIT_MEGAPIXELS)[number];
-export type PortraitReferenceModelTemplate = typeof PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
+export type PortraitReferenceModelTemplate =
+  | typeof PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+  | typeof PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
 export type PortraitModelTemplate = typeof PORTRAIT_TEMPLATE_ID | PortraitReferenceModelTemplate;
 
 export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
@@ -82,9 +88,54 @@ export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
   shift: 3.1
 } as const);
 
+export const MINIMAX_H3_PORTRAIT_STILL_TEMPLATE = Object.freeze({
+  id: PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
+  label: 'MiniMax H3 Ref2VA · Expression keeper (5-frame, 20-step)',
+  modelFamily: 'minimax-h3-ref2va-still',
+  promptGuide: 'one static five-frame portrait packet, exact identity from the numbered references, fixed head-and-chest 9:16 framing, natural skin and coherent anatomy, no motion, no speech, no text, and no watermark; frame zero is the keeper still',
+  modelFiles: {
+    unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
+    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
+    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
+    audioVae: 'minimax_h3_audio_vae_fp32.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'MiniMaxH3ReferenceToVideo',
+    'MiniMaxH3SigmaShift',
+    'BasicGuider',
+    'KSamplerSelect',
+    'BasicScheduler',
+    'RandomNoise',
+    'SamplerCustomAdvanced',
+    'VAEDecode',
+    'ImageFromBatch',
+    'SaveImage'
+  ],
+  multiple: 32,
+  outputNode: '28',
+  steps: 20,
+  sampler: 'res_multistep',
+  scheduler: 'simple',
+  denoise: 1,
+  frames: 5,
+  shiftVideo: 12,
+  shiftAudio: 3,
+  referenceImageSize: 'match',
+  maxReferenceImages: 2,
+  outputFrameIndex: 0,
+  outputFrameCount: 1,
+  width: PORTRAIT_H3_WIDTH,
+  height: PORTRAIT_H3_HEIGHT
+} as const);
+
 export const PORTRAIT_TEMPLATES = Object.freeze([
   Z_IMAGE_TURBO_TEMPLATE,
-  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE
+  QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
+  MINIMAX_H3_PORTRAIT_STILL_TEMPLATE
 ] as const);
 
 export type PortraitTemplate = (typeof PORTRAIT_TEMPLATES)[number];
@@ -103,7 +154,11 @@ export function migratePortraitModelTemplateSelection(
 }
 
 export function isPortraitReferenceTemplateId(value: unknown): value is PortraitReferenceModelTemplate {
-  return value === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID;
+  return value === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID || value === PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
+}
+
+export function isPortraitH3ReferenceTemplateId(value: unknown): value is typeof PORTRAIT_H3_REFERENCE_TEMPLATE_ID {
+  return value === PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
 }
 
 export function portraitTemplate(modelTemplate: PortraitModelTemplate): PortraitTemplate {
@@ -159,10 +214,18 @@ export type PortraitRequest = {
   attire: string;
   lora: string | null;
   referenceImage: PortraitReferenceImage | null;
+  bodyReferenceImage: PortraitReferenceImage | null;
   promptOverride: string | null;
   aspectRatio: PortraitAspectRatio;
   megapixels: PortraitMegapixels;
   seed?: number;
+};
+
+export type PortraitH3ReferenceSlot = {
+  picture: number;
+  kind: 'canonical_identity' | 'body_wardrobe';
+  sha256: string;
+  referenceImage: PortraitReferenceImage;
 };
 
 export type PortraitCapabilities = {
@@ -201,6 +264,7 @@ const PROFILE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PROFILE_FINGERPRINT_PATTERN = /^[0-9a-f]{8}$/;
 const LORA_PATTERN = /^zimage\/[A-Za-z0-9][A-Za-z0-9._ -]*\.safetensors$/;
 const REFERENCE_IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i;
+const MANAGED_BODY_REFERENCE_PATTERN = /^body-[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{8}-[0-9a-f]{64}\.png$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const REFERENCE_ASPECT_RATIO_PATTERN = /^[1-9]\d{0,3}:[1-9]\d{0,3}$/;
 const aspectMap = new Map(PORTRAIT_ASPECT_RATIOS.map((ratio) => [ratio.id, ratio]));
@@ -248,7 +312,7 @@ export function referenceAspectRatio(width: number, height: number): string {
 export function portraitDimensions(
   aspectRatio: PortraitAspectRatio,
   megapixels: PortraitMegapixels,
-  multiple = Z_IMAGE_TURBO_TEMPLATE.multiple
+  multiple: number = Z_IMAGE_TURBO_TEMPLATE.multiple
 ): { width: number; height: number; pixels: number } {
   const ratio = aspectMap.get(aspectRatio);
   if (!ratio) throw new Error('unsupported portrait aspect ratio');
@@ -259,6 +323,25 @@ export function portraitDimensions(
   const width = ratio.width * scale;
   const height = ratio.height * scale;
   return { width, height, pixels: width * height };
+}
+
+export function portraitDimensionsForTemplate(
+  modelTemplate: PortraitModelTemplate,
+  aspectRatio: PortraitAspectRatio,
+  megapixels: PortraitMegapixels
+): { width: number; height: number; pixels: number } {
+  if (!isPortraitModelTemplate(modelTemplate)) throw new Error('unsupported portrait model template');
+  if (modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
+    if (aspectRatio !== '9:16' || megapixels !== 0.5) {
+      throw new Error('MiniMax H3 expression portraits require exact 576x1024 (9:16 at 0.5 MP)');
+    }
+    return {
+      width: PORTRAIT_H3_WIDTH,
+      height: PORTRAIT_H3_HEIGHT,
+      pixels: PORTRAIT_H3_WIDTH * PORTRAIT_H3_HEIGHT
+    };
+  }
+  return portraitDimensions(aspectRatio, megapixels, portraitTemplate(modelTemplate).multiple);
 }
 
 export function validatePortraitPngDimensions(
@@ -291,9 +374,10 @@ export function validatePortraitPngDimensions(
 
 export function buildPortraitRequest(
   expression: ExpressionSidecarResult,
-  settings: Omit<PortraitRequest, 'spec' | 'modelTemplate' | 'source' | 'referenceImage' | 'promptOverride'> & {
+  settings: Omit<PortraitRequest, 'spec' | 'modelTemplate' | 'source' | 'referenceImage' | 'bodyReferenceImage' | 'promptOverride'> & {
     modelTemplate?: PortraitModelTemplate;
     referenceImage?: PortraitReferenceImage | null;
+    bodyReferenceImage?: PortraitReferenceImage | null;
     promptOverride?: string | null;
     characterId?: string;
     profileFingerprint?: string;
@@ -316,6 +400,7 @@ export function buildPortraitRequest(
     attire: settings.attire,
     lora: settings.lora,
     referenceImage: settings.referenceImage ?? null,
+    bodyReferenceImage: settings.bodyReferenceImage ?? null,
     promptOverride: settings.promptOverride ?? null,
     aspectRatio: settings.aspectRatio,
     megapixels: settings.megapixels,
@@ -364,43 +449,60 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
     if (!isPortraitLoraName(value.lora)) throw new Error('portrait LoRA is invalid');
     lora = value.lora;
   }
-  let referenceImage: PortraitReferenceImage | null = null;
-  if (value.referenceImage !== null && value.referenceImage !== undefined) {
-    if (!isRecord(value.referenceImage)
-      || typeof value.referenceImage.name !== 'string'
-      || !REFERENCE_IMAGE_PATTERN.test(value.referenceImage.name)
-      || value.referenceImage.subfolder !== 'mullet/identity'
-      || value.referenceImage.type !== 'input'
-      || typeof value.referenceImage.sha256 !== 'string'
-      || !SHA256_PATTERN.test(value.referenceImage.sha256)
-      || typeof value.referenceImage.aspectRatio !== 'string'
-      || !REFERENCE_ASPECT_RATIO_PATTERN.test(value.referenceImage.aspectRatio)) {
-      throw new Error('portrait identity reference is invalid');
+  const normalizeReference = (candidate: unknown, label: string): PortraitReferenceImage | null => {
+    if (candidate === null || candidate === undefined) return null;
+    if (!isRecord(candidate)
+      || typeof candidate.name !== 'string'
+      || !REFERENCE_IMAGE_PATTERN.test(candidate.name)
+      || candidate.subfolder !== 'mullet/identity'
+      || candidate.type !== 'input'
+      || typeof candidate.sha256 !== 'string'
+      || !SHA256_PATTERN.test(candidate.sha256)
+      || typeof candidate.aspectRatio !== 'string'
+      || !REFERENCE_ASPECT_RATIO_PATTERN.test(candidate.aspectRatio)) {
+      throw new Error(`${label} is invalid`);
     }
-    const width = integer(value.referenceImage.width, 'portrait identity reference width', 1, 8192);
-    const height = integer(value.referenceImage.height, 'portrait identity reference height', 1, 8192);
-    const aspectRatio = referenceAspectRatio(width, height);
-    if (value.referenceImage.aspectRatio !== aspectRatio) {
-      throw new Error(`portrait identity reference aspect ratio must be ${aspectRatio}`);
+    const width = integer(candidate.width, `${label} width`, 1, 8192);
+    const height = integer(candidate.height, `${label} height`, 1, 8192);
+    const expectedAspectRatio = referenceAspectRatio(width, height);
+    if (candidate.aspectRatio !== expectedAspectRatio) {
+      throw new Error(`${label} aspect ratio must be ${expectedAspectRatio}`);
     }
-    referenceImage = {
-      name: value.referenceImage.name,
+    return {
+      name: candidate.name,
       subfolder: 'mullet/identity',
       type: 'input',
-      sha256: value.referenceImage.sha256,
+      sha256: candidate.sha256,
       width,
       height,
-      aspectRatio
+      aspectRatio: expectedAspectRatio
     };
-  }
+  };
+  const referenceImage = normalizeReference(value.referenceImage, 'portrait identity reference');
+  const bodyReferenceImage = normalizeReference(value.bodyReferenceImage, 'portrait body reference');
   if (isPortraitReferenceTemplateId(modelTemplate) && referenceImage === null) {
     throw new Error('reference-conditioned portrait requires an identity reference');
   }
   if (isPortraitReferenceTemplateId(modelTemplate) && lora !== null) {
     throw new Error('reference-conditioned portrait does not accept a Z-Image LoRA');
   }
-  if (modelTemplate === PORTRAIT_TEMPLATE_ID && referenceImage !== null) {
-    throw new Error('Z-Image portrait does not accept an identity reference');
+  if (modelTemplate === PORTRAIT_TEMPLATE_ID && (referenceImage !== null || bodyReferenceImage !== null)) {
+    throw new Error('Z-Image portrait does not accept identity references');
+  }
+  if (modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID && bodyReferenceImage !== null) {
+    throw new Error('only MiniMax H3 expression portraits accept a body reference');
+  }
+  if (bodyReferenceImage !== null && (
+    !MANAGED_BODY_REFERENCE_PATTERN.test(bodyReferenceImage.name)
+    || bodyReferenceImage.width !== PORTRAIT_H3_WIDTH
+    || bodyReferenceImage.height !== PORTRAIT_H3_HEIGHT
+    || bodyReferenceImage.aspectRatio !== '9:16'
+    || !bodyReferenceImage.name.endsWith(`-${bodyReferenceImage.sha256}.png`)
+  )) {
+    throw new Error('portrait body reference must be a content-addressed managed 576x1024 PNG');
+  }
+  if (modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID && megapixels !== 0.5) {
+    throw new Error('MiniMax H3 expression portraits require exact 576x1024 (9:16 at 0.5 MP)');
   }
   const promptOverride = value.promptOverride === null || value.promptOverride === undefined
     ? null
@@ -427,6 +529,7 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
     attire: textField(value.attire ?? '', 'portrait attire', 0, 500),
     lora,
     referenceImage,
+    bodyReferenceImage,
     promptOverride,
     aspectRatio: aspectRatio as PortraitAspectRatio,
     megapixels: megapixels as PortraitMegapixels,
@@ -454,6 +557,11 @@ export function portraitRequestKey(request: PortraitRequest): string {
     normalized.referenceImage?.width ?? '',
     normalized.referenceImage?.height ?? '',
     normalized.referenceImage?.aspectRatio ?? '',
+    normalized.bodyReferenceImage?.name ?? '',
+    normalized.bodyReferenceImage?.sha256 ?? '',
+    normalized.bodyReferenceImage?.width ?? '',
+    normalized.bodyReferenceImage?.height ?? '',
+    normalized.bodyReferenceImage?.aspectRatio ?? '',
     normalized.promptOverride ?? '',
     normalized.aspectRatio,
     normalized.megapixels,
@@ -461,18 +569,74 @@ export function portraitRequestKey(request: PortraitRequest): string {
   ].join('\u001f');
 }
 
+export function portraitH3ReferencePlan(request: PortraitRequest): PortraitH3ReferenceSlot[] {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('MiniMax H3 portrait reference planning requires an H3 reference request');
+  }
+  const plan: PortraitH3ReferenceSlot[] = [{
+    picture: 1,
+    kind: 'canonical_identity',
+    sha256: normalized.referenceImage.sha256,
+    referenceImage: normalized.referenceImage
+  }];
+  if (
+    normalized.bodyReferenceImage
+    && normalized.bodyReferenceImage.sha256 !== normalized.referenceImage.sha256
+  ) {
+    plan.push({
+      picture: 2,
+      kind: 'body_wardrobe',
+      sha256: normalized.bodyReferenceImage.sha256,
+      referenceImage: normalized.bodyReferenceImage
+    });
+  }
+  return plan;
+}
+
 export function buildPortraitPrompt(request: PortraitRequest): string {
   const normalized = normalizePortraitRequest(request);
-  if (normalized.promptOverride) return normalized.promptOverride;
-  const referenceConditioned = isPortraitReferenceTemplateId(normalized.modelTemplate);
-  const clauses = [
+  const directedDescription = normalized.promptOverride ?? [
     `head-and-chest portrait of ${normalized.subject}`,
     `${normalized.source.expression} facial expression`,
     normalized.attire ? `wearing ${normalized.attire}` : '',
     normalized.setting ? `in ${normalized.setting}` : '',
     portraitTemplate(normalized.modelTemplate).promptGuide
-  ];
-  const description = clauses.filter(Boolean).join(', ');
+  ].filter(Boolean).join(', ');
+  if (normalized.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
+    const plan = portraitH3ReferencePlan(normalized);
+    const canonical = plan[0];
+    const body = plan.find(({ kind }) => kind === 'body_wardrobe');
+    const bodyDefinition = body
+      ? `\n<Picture ${body.picture}> is the managed body and wardrobe reference for <Subject 1>; preserve body proportions, hair silhouette, recurring attire, and invariant accessories only for <Subject 1>.`
+      : '';
+    const bodyRetention = body
+      ? ` Body proportions, hair silhouette, recurring attire, and invariant accessories from <Picture ${body.picture}> are fully_preserved.`
+      : '';
+    return [
+      'subject_definitions:',
+      `<Picture ${canonical.picture}> is the canonical face and identity reference for <Subject 1>; preserve the exact same person, face, facial structure, eyes, nose, mouth, age, skin, and hair only for <Subject 1>.${bodyDefinition}`,
+      `<Subject 1> is ${normalized.subject}; use exact identity from <Picture ${canonical.picture}>${body ? ` and body/wardrobe traits from <Picture ${body.picture}>` : ''}.`,
+      '',
+      'summary:',
+      `[reference generation] Create exactly one static head-and-chest 9:16 expression portrait of ${normalized.subject}.`,
+      '',
+      'retention_analysis:',
+      `<Subject 1>: fully_preserved - retain ${normalized.subject}'s exact canonical identity, face, age, and hair from <Picture ${canonical.picture}>.${bodyRetention}`,
+      '',
+      'detailed_description:',
+      `${directedDescription}. Fixed 576x1024 portrait frame. Show one person only. The five generated frames describe one unchanged still image: no movement, lip motion, speaking, pose progression, camera movement, scene transition, subtitles, captions, text, or watermark.`,
+      '',
+      'overall_soundscape:',
+      'Silent still image; no dialogue, speech, vocals, sound effects, ambience, or audio.',
+      '',
+      'non_diegetic_music:',
+      'None.'
+    ].join('\n');
+  }
+  if (normalized.promptOverride) return normalized.promptOverride;
+  const referenceConditioned = isPortraitReferenceTemplateId(normalized.modelTemplate);
+  const description = directedDescription;
   return referenceConditioned
     ? normalized.modelTemplate === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
       ? `Use the supplied canonical reference as the identity source. Preserve the exact same person, facial structure, eyes, nose, mouth, age, and hairstyle. Create a ${description}. Preserve identity; do not substitute another person. Do not add modern clothing details.`
@@ -673,6 +837,99 @@ export function buildQwenReferencePortraitWorkflow(request: PortraitRequest, see
     seed,
     filenamePrefix: 'mullet/portrait-reference'
   });
+}
+
+export function buildMiniMaxH3PortraitStillWorkflow(
+  request: PortraitRequest,
+  seed: number
+): Record<string, unknown> {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID || !normalized.referenceImage) {
+    throw new Error('MiniMax H3 portrait workflow requires an H3 reference request');
+  }
+  const validatedSeed = integer(seed, 'MiniMax H3 portrait seed', 0, Number.MAX_SAFE_INTEGER);
+  const dimensions = portraitDimensionsForTemplate(
+    normalized.modelTemplate,
+    normalized.aspectRatio,
+    normalized.megapixels
+  );
+  const plan = portraitH3ReferencePlan(normalized);
+  const loadImageNodes = Object.fromEntries(plan.map((slot, index) => [
+    String(5 + index),
+    {
+      class_type: 'LoadImage',
+      inputs: { image: `${slot.referenceImage.subfolder}/${slot.referenceImage.name}` }
+    }
+  ]));
+  const referenceInputs = Object.fromEntries(plan.map((_slot, index) => [
+    `ref_images.ref_image_${index}`,
+    [String(5 + index), 0]
+  ]));
+  const template = MINIMAX_H3_PORTRAIT_STILL_TEMPLATE;
+  return {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
+    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
+    ...loadImageNodes,
+    '19': {
+      class_type: 'MiniMaxH3SigmaShift',
+      inputs: {
+        model: ['1', 0],
+        shift_video: template.shiftVideo,
+        shift_audio: template.shiftAudio
+      }
+    },
+    '20': {
+      class_type: 'MiniMaxH3ReferenceToVideo',
+      inputs: {
+        clip: ['2', 0],
+        vae: ['3', 0],
+        audio_vae: ['4', 0],
+        prompt: buildPortraitPrompt(normalized),
+        width: dimensions.width,
+        height: dimensions.height,
+        length: template.frames,
+        ref_image_size: template.referenceImageSize,
+        ...referenceInputs
+      }
+    },
+    '21': {
+      class_type: 'BasicGuider',
+      inputs: { model: ['19', 0], conditioning: ['20', 0] }
+    },
+    '22': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '23': {
+      class_type: 'BasicScheduler',
+      inputs: {
+        model: ['19', 0],
+        scheduler: template.scheduler,
+        steps: template.steps,
+        denoise: template.denoise
+      }
+    },
+    '24': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
+    '25': {
+      class_type: 'SamplerCustomAdvanced',
+      inputs: {
+        noise: ['24', 0],
+        guider: ['21', 0],
+        sampler: ['22', 0],
+        sigmas: ['23', 0],
+        latent_image: ['20', 1]
+      }
+    },
+    '26': { class_type: 'VAEDecode', inputs: { samples: ['25', 0], vae: ['3', 0] } },
+    '27': {
+      class_type: 'ImageFromBatch',
+      inputs: {
+        image: ['26', 0],
+        batch_index: template.outputFrameIndex,
+        length: template.outputFrameCount
+      }
+    },
+    '28': { class_type: 'SaveImage', inputs: { images: ['27', 0], filename_prefix: 'mullet/portrait-h3' } }
+  };
 }
 
 export function normalizePortraitCapabilities(value: unknown): PortraitCapabilities {

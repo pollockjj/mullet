@@ -483,6 +483,7 @@ test('builds one deterministic deduped H3 Ref2VA reference plan for one, two, an
     assert.equal(graph['22'].inputs.sampler_name, 'res_multistep');
     assert.deepEqual(graph['23'].inputs, { model: ['1', 0], scheduler: 'beta', steps: 20, denoise: 1 });
     assert.deepEqual(graph['28'].inputs.audio, ['27', 0]);
+    assert.equal(Object.hasOwn(graph['28'].inputs, 'bit_depth'), false);
     assert.equal(graph['29'].inputs.filename_prefix, 'mullet/scene-motion');
     assert.equal(graph['29'].inputs.format, 'auto');
     assert.equal(Object.values(graph).some((node) => node.class_type === 'LoraLoaderModelOnly'), false);
@@ -660,11 +661,13 @@ test('builds the exact additive LightX Ref2VA four-step preview without changing
   });
   assert.deepEqual(graph['31'].inputs, { model: ['30', 0], shift_video: 12, shift_audio: 3 });
   assert.deepEqual(graph['21'].inputs.model, ['31', 0]);
+  assert.equal(Object.hasOwn(graph['28'].inputs, 'bit_depth'), false);
   const qualityGraph = buildInlineSceneVideoWorkflow(qualityRequest, input, 42);
   assert.equal('30' in qualityGraph, false);
   assert.equal('31' in qualityGraph, false);
   assert.equal(qualityGraph['22'].inputs.sampler_name, 'res_multistep');
   assert.deepEqual(qualityGraph['23'].inputs, { model: ['1', 0], scheduler: 'beta', steps: 20, denoise: 1 });
+  assert.equal(Object.hasOwn(qualityGraph['28'].inputs, 'bit_depth'), false);
 });
 
 test('builds the pinned two-pass LTX FLF graph with identical supplied first and last frames and no output audio', () => {

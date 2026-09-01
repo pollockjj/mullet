@@ -25,13 +25,19 @@ test('generated expression stage is fixed 9:16 at the 0.5 MP default with no asp
   assert.doesNotMatch(pageSource, /portraitDisplayAspectRatio/);
   assert.doesNotMatch(pageSource, /style:--portrait-aspect-ratio/);
   assert.doesNotMatch(pageSource, /mullet\.portrait-aspect/);
+  assert.match(portraitImagePanel, /576×1024 · fixed 9:16 · H3 Ref2VA five-frame keeper · frame 0 · 20-step res_multistep\/simple · shifts 12\/3 · no LoRA/);
+  assert.doesNotMatch(portraitImagePanel, /aria-label="Portrait output dimensions"/);
   assert.match(pageSource, /aria-label="Inline scene aspect ratio"/);
 });
 
-test('portrait image models are one additive persisted inventory, not a replacement slot', () => {
-  assert.match(pageSource, /portraitModelTemplateStorageKey = 'mullet\.portrait-model-template\.v3'/);
-  assert.match(pageSource, /previousPortraitModelTemplateStorageKey = 'mullet\.portrait-model-template\.v2'/);
+test('H3 is the versioned expression-image default while alternatives remain additive selections', () => {
+  assert.match(pageSource, /let portraitModelTemplate: PortraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;/);
+  assert.match(pageSource, /portraitModelTemplateStorageKey = 'mullet\.portrait-model-template\.v4'/);
+  assert.match(pageSource, /previousPortraitModelTemplateStorageKey = 'mullet\.portrait-model-template\.v3'/);
   assert.match(pageSource, /localStorage\.removeItem\(previousPortraitModelTemplateStorageKey\)/);
+  assert.match(pageSource, /migratePortraitModelTemplateSelection\(\s*currentSavedModelTemplate,\s*null\s*\)/);
+  assert.match(pageSource, /portraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;/);
+  assert.doesNotMatch(pageSource, /portraitModelTemplate = starterProfile\.modelTemplate/);
   assert.match(pageSource, /bind:value=\{portraitModelTemplate\}/);
   assert.match(pageSource, /aria-label="Portrait image model"/);
   assert.match(pageSource, /\{#each portraitCapabilities\.templates as capability\}/);
@@ -43,20 +49,18 @@ test('portrait image models are one additive persisted inventory, not a replacem
   assert.doesNotMatch(pageSource, /portraitCapabilities\.referenceTemplate/);
 });
 
-test('portrait motion defaults to the bound LTX template and persists a real additive video-model selection', () => {
-  assert.match(portraitVideoSource, /export const PORTRAIT_VIDEO_TEMPLATE_ID = LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;/);
+test('portrait motion defaults visibly to H3 with an invalidating versioned selection', () => {
+  assert.match(portraitVideoSource, /export const PORTRAIT_VIDEO_TEMPLATE_ID = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID;/);
   assert.match(portraitVideoSource, /export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;/);
   assert.match(pageSource, /let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;/);
   assert.match(pageSource, /let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;/);
-  assert.match(pageSource, /portraitVideoModelTemplateStorageKey = 'mullet\.portrait-video-model-template\.v3'/);
-  assert.match(pageSource, /portraitVideoModeStorageKey = 'mullet\.portrait-video-mode\.v6'/);
-  assert.match(pageSource, /portraitVideoDurationStorageKey = 'mullet\.portrait-video-duration\.v6'/);
-  assert.doesNotMatch(pageSource, /mullet\.portrait-video-model-template\.v2/);
-  assert.doesNotMatch(pageSource, /mullet\.portrait-video-mode\.v5/);
-  assert.doesNotMatch(pageSource, /mullet\.portrait-video-duration\.v5/);
-  assert.doesNotMatch(pageSource, /mullet\.portrait-video-model-template\.v1/);
-  assert.doesNotMatch(pageSource, /mullet\.portrait-video-mode\.v4/);
-  assert.doesNotMatch(pageSource, /mullet\.portrait-video-duration\.v4/);
+  assert.match(pageSource, /portraitVideoModelTemplateStorageKey = 'mullet\.portrait-video-model-template\.v4'/);
+  assert.match(pageSource, /portraitVideoModeStorageKey = 'mullet\.portrait-video-mode\.v7'/);
+  assert.match(pageSource, /portraitVideoDurationStorageKey = 'mullet\.portrait-video-duration\.v7'/);
+  assert.match(pageSource, /portraitVideoDimensions\('9:16', PORTRAIT_VIDEO_DURATION_SECONDS, portraitVideoModelTemplate\)/);
+  assert.match(pageSource, /portraitVideoDimensions\(\s*portraitAspectRatio,\s*portraitVideoDurationSeconds,\s*portraitVideoModelTemplate\s*\)/);
+  assert.match(portraitMotionPanel, /silent, no speech or talking/);
+  assert.match(portraitMotionPanel, /portraitVideoTiming\.frames\} frames @ \{portraitVideoTiming\.fps\} FPS/);
   assert.match(portraitMotionPanel, /bind:value=\{portraitVideoModelTemplate\}/);
   assert.match(portraitMotionPanel, /on:change=\{persistPortraitVideoModelTemplate\}/);
   assert.match(portraitMotionPanel, /aria-label="Portrait video model"/);
@@ -131,6 +135,9 @@ test('managed body references stay collapsed, exact, accessible, and planner-bou
   assert.match(inlineScenePanel, /`Remove corrupt saved body and wardrobe reference for \$\{profile\.displayName\}`/);
   assert.match(inlineScenePanel, /`Remove \$\{profile\.displayName\} managed body and wardrobe reference`/);
   assert.match(pageSource, /request\.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID/);
+  assert.match(pageSource, /portraitH3ReferencePlan\(request\)/);
+  assert.match(pageSource, /entry\.kind === 'body_wardrobe' \? \[entry\.referenceImage\.sha256\] : \[\]/);
+  assert.match(pageSource, /appendManagedBodyReferenceParts\(\s*h3ReferenceForm,\s*portraitManagedBodyReferenceHashes\(selectedRequest\)\s*\)/);
   assert.match(pageSource, /entry\.kind === 'body_wardrobe' \? \[entry\.referenceImage\.sha256\] : \[\]/);
   assert.match(pageSource, /request\.modelTemplate === MINIMAX_H3_INLINE_SCENE_STILL_TEMPLATE_ID/);
   assert.match(pageSource, /entry\.kind === 'body_identity' \? \[entry\.referenceImage\.sha256\] : \[\]/);
@@ -162,7 +169,7 @@ test('managed body-reference restore is race-safe, preserves valid profiles, and
   assert.match(restore, /corruptProfileIds\.push\(profiles\[index\]\.id\);/);
   assert.match(restore, /bodyReferenceOverlays = restored;/);
   assert.match(restore, /bodyReferenceOverlayCorruptProfileIds = corruptProfileIds;/);
-  assert.match(restore, /Scene image and motion generation are blocked until Remove corrupt saved ref/);
+  assert.match(restore, /Portrait, scene-image, and scene-motion generation are blocked until Remove corrupt saved ref/);
   assert.doesNotMatch(restore, /removeBodyReferenceOverlay/);
 
   assert.match(inlineScenePanel, /body corrupt saved reference/);
@@ -170,14 +177,16 @@ test('managed body-reference restore is race-safe, preserves valid profiles, and
   assert.match(inlineScenePanel, /Remove corrupt saved ref/);
   assert.match(inlineScenePanel, /\(!bodyReferenceOverlayReady && !corruptBody\)/);
   assert.match(inlineScenePanel, /inlineSceneBusy \|\| inlineSceneVideoBusy/);
+  assert.match(portraitImagePanel, /Portrait generation is blocked by a corrupt saved body reference/);
+  assert.match(portraitImagePanel, /!bodyReferenceOverlayReady && bodyReferenceOverlayCorruptProfileIds\.length === 0/);
   assert.match(
     inlineScenePanel,
     /bodyReferenceOverlayError[\s\S]*?<details class="h3-reference-pack"[\s\S]*?\{#if inlineSceneCapabilities\}/
   );
-  assert.match(importReference, /\|\| inlineSceneBusy\s+\|\| inlineSceneVideoBusy/);
+  assert.match(importReference, /\|\| portraitBusy\s+\|\| inlineSceneBusy\s+\|\| inlineSceneVideoBusy/);
   assert.match(importReference, /await saveBodyReferenceOverlay\(overlay\);[\s\S]*?await restoreBodyReferenceOverlays\(operationProfileSetKey, operationProfiles\);/);
   assert.doesNotMatch(importReference, /bodyReferenceOverlays = \[/);
-  assert.match(removeReference, /\|\| inlineSceneBusy\s+\|\| inlineSceneVideoBusy/);
+  assert.match(removeReference, /\|\| portraitBusy\s+\|\| inlineSceneBusy\s+\|\| inlineSceneVideoBusy/);
   assert.match(removeReference, /\(!bodyReferenceOverlayReady && !corruptReference\)/);
   assert.match(removeReference, /await removeBodyReferenceOverlay\(profile\.id, profile\.fingerprint\);[\s\S]*?await restoreBodyReferenceOverlays\(operationProfileSetKey, operationProfiles\);/);
 });
@@ -196,26 +205,28 @@ test('selected portrait-video template controls modes and durations without hidi
   assert.match(pageSource, /!portraitVideoSelectedModeAvailable \|\| !portraitMotionEnabled/);
 });
 
-test('a scenario binds its selected starter to Z-Image LoRA or the additive Qwen reference path', () => {
+test('a scenario defaults every starter to H3 while retaining explicit Qwen and Z-Image alternatives', () => {
   assert.match(pageSource, /let scenarioCatalogSettled = false;/);
   assert.match(pageSource, /scenarioPortraitGenerationReady\(activeCard, scenarioCatalogSettled\)/);
   assert.match(
     pageSource,
     /async function loadScenarioCatalog\(\)[\s\S]*?finally \{\s*scenarioCatalogSettled = true;\s*restoreInlineSceneFinalizedSource\(\);\s*restoreScenarioOpeningInlineSceneSourceIfNeeded\(\);/
   );
-  assert.match(pageSource, /if \(!result \|\| !current \|\| !modelAvailable\) return null;/);
+  assert.match(pageSource, /if \(!result \|\| !current \|\| !modelAvailable \|\| \(isScenarioCard\(card\) && !bodyReferencesReady\)\) return null;/);
   assert.match(pageSource, /portraitModelTemplateAvailable\(portraitCapabilities, portraitModelTemplate\)/);
   assert.match(pageSource, /portraitCapabilities\?\.loras\.includes\(scenarioPortraitProfile\.subjectLora\.name\)/);
   assert.match(pageSource, /portraitSelectedModelAvailable && portraitSelectedSubjectLoraAvailable/);
   assert.match(pageSource, /lora: modelUsesReference \? null : profile\.subjectLora\?\.name \?\? null/);
   assert.match(pageSource, /`\$\{profile\.subjectLora\.trigger\}, \$\{profile\.subject\}`/);
   assert.match(pageSource, /referenceImage: modelUsesReference \? profile\.referenceImage : null/);
+  assert.match(pageSource, /bodyReferenceImage: isPortraitH3ReferenceTemplateId\(modelTemplate\)[\s\S]*?profile\.bodyReferenceImage[\s\S]*?: null/);
   assert.match(pageSource, /promptOverride: modelUsesReference\s+\? profile\.expressionPrompts\[result\.output\.expression\] \?\? null\s+: null/);
   assert.match(pageSource, /if \(modelUsesReference\) return null;/);
-  assert.match(pageSource, /Canonical reference · \$\{scenarioPortraitProfile\.referenceImage\.width\}×\$\{scenarioPortraitProfile\.referenceImage\.height\} · \$\{scenarioPortraitProfile\.referenceImage\.aspectRatio\}/);
-  assert.match(pageSource, /Z-Image LoRA · \$\{scenarioPortraitProfile\.subjectLora\.name\.replace/);
-  assert.match(pageSource, /trigger \$\{scenarioPortraitProfile\.subjectLora\.trigger\}/);
-  assert.match(pageSource, /portraitModelTemplate = starterProfile\.modelTemplate;/);
+  assert.match(pageSource, /Canonical reference · \$\{portraitDisplayProfile\.referenceImage\.width\}×\$\{portraitDisplayProfile\.referenceImage\.height\} · \$\{portraitDisplayProfile\.referenceImage\.aspectRatio\}/);
+  assert.match(pageSource, /Z-Image LoRA · \$\{portraitDisplayProfile\.subjectLora\.name\.replace/);
+  assert.match(pageSource, /trigger \$\{portraitDisplayProfile\.subjectLora\.trigger\}/);
+  assert.match(pageSource, /portraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;/);
+  assert.match(pageSource, /effectiveScenarioPortraitProfile = scenarioPortraitProfile[\s\S]*?scenarioSceneProfiles\.find\(\(profile\) => profile\.id === scenarioPortraitProfile\?\.id\)/);
   assert.match(pageSource, /localStorage\.setItem\(portraitModelTemplateStorageKey, portraitModelTemplate\);/);
   assert.doesNotMatch(pageSource, /referenceTemplateAvailable/);
   assert.doesNotMatch(pageSource, /No scenario expression portrait will be generated/);

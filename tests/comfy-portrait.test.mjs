@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
+  MINIMAX_H3_PORTRAIT_STILL_TEMPLATE,
+  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
@@ -93,28 +95,32 @@ function referenceRequest(modelTemplate, referenceBytes, overrides = {}) {
   });
 }
 
-test('exposes exactly the Z-Image and Qwen image models', async () => {
+test('exposes additive Z-Image, Qwen, and native five-frame H3 image models', async () => {
   const objectInfo = async (input) => {
     const node = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1));
     if (node === 'UNETLoader') {
       return Response.json(nodeInfo(node, 'unet_name', [
         Z_IMAGE_TURBO_TEMPLATE.modelFiles.unet,
-        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet
+        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.unet,
+        MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.unet
       ]));
     }
     if (node === 'CLIPLoader') {
       return Response.json({ CLIPLoader: { input: { required: {
         clip_name: [[
           Z_IMAGE_TURBO_TEMPLATE.modelFiles.clip,
-          QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip
+          QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.clip,
+          MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.clip
         ]],
-        type: [['lumina2', 'qwen_image']]
+        type: [['lumina2', 'qwen_image', 'minimax']]
       } } } });
     }
     if (node === 'VAELoader') {
       return Response.json(nodeInfo(node, 'vae_name', [
         Z_IMAGE_TURBO_TEMPLATE.modelFiles.vae,
-        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae
+        QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.vae,
+        MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.videoVae,
+        MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.audioVae
       ]));
     }
     if (node === 'LoraLoader') {
@@ -123,6 +129,51 @@ test('exposes exactly the Z-Image and Qwen image models', async () => {
         'zimage/kristi6.safetensors',
         QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.modelFiles.lora
       ]));
+    }
+    if (node === 'KSamplerSelect') {
+      return Response.json({ [node]: { input: { required: {
+        sampler_name: [['res_multistep']]
+      } } } });
+    }
+    if (node === 'BasicScheduler') {
+      return Response.json({ [node]: { input: { required: {
+        scheduler: [['simple']]
+      } } } });
+    }
+    if (node === 'MiniMaxH3ReferenceToVideo') {
+      return Response.json({ [node]: {
+        input: {
+          required: {
+            ref_image_size: [['match', 'max']],
+            length: ['INT', { min: 5, max: 1000 }]
+          },
+          optional: {
+            ref_images: ['COMFY_AUTOGROW_V3', { template: {
+              prefix: 'ref_image_', min: 0, max: 9,
+              input: { required: { ref_image: ['IMAGE'] } }
+            } }]
+          }
+        },
+        output: ['CONDITIONING', 'LATENT']
+      } });
+    }
+    if (node === 'MiniMaxH3SigmaShift') {
+      return Response.json({ [node]: {
+        input: { required: {
+          shift_video: ['FLOAT', { min: 0, max: 100 }],
+          shift_audio: ['FLOAT', { min: 0, max: 100 }]
+        } },
+        output: ['MODEL']
+      } });
+    }
+    if (node === 'ImageFromBatch') {
+      return Response.json({ [node]: {
+        input: { required: {
+          batch_index: ['INT', { min: 0, max: 100 }],
+          length: ['INT', { min: 1, max: 100 }]
+        } },
+        output: ['IMAGE']
+      } });
     }
     return Response.json(nodePresent(node));
   };
@@ -133,13 +184,55 @@ test('exposes exactly the Z-Image and Qwen image models', async () => {
   assert.equal(capabilities.megapixels[0], 0.5);
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_H3_REFERENCE_TEMPLATE_ID
   ]);
   assert.equal(capabilities.templates[0].available, true);
   assert.equal(capabilities.templates[1].available, true);
+  assert.equal(capabilities.templates[2].available, true);
+
+  const wrongIntegerSchemas = await loadPortraitCapabilities(async (input) => {
+    const node = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1));
+    if (node === 'MiniMaxH3ReferenceToVideo') {
+      const response = await objectInfo(input);
+      const body = await response.json();
+      body[node].input.required.length[0] = 'FLOAT';
+      return Response.json(body);
+    }
+    if (node === 'ImageFromBatch') {
+      return Response.json({ [node]: {
+        input: { required: {
+          batch_index: ['FLOAT', { min: 0, max: 100 }],
+          length: ['FLOAT', { min: 1, max: 100 }]
+        } },
+        output: ['IMAGE']
+      } });
+    }
+    return objectInfo(input);
+  }, 'http://comfy');
+  assert.equal(wrongIntegerSchemas.templates[2].available, false);
+  assert.deepEqual(wrongIntegerSchemas.templates[2].missing.filter((diagnostic) => (
+    diagnostic.includes('MiniMaxH3ReferenceToVideo.length')
+    || diagnostic.includes('ImageFromBatch.batch_index')
+    || diagnostic.includes('ImageFromBatch.length')
+  )), [
+    'node-input:MiniMaxH3ReferenceToVideo.length:5',
+    'node-input:ImageFromBatch.batch_index:0',
+    'node-input:ImageFromBatch.length:1'
+  ]);
+
+  const isolatedH3Failure = await loadPortraitCapabilities(async (input) => {
+    const node = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1));
+    if (node === 'MiniMaxH3SigmaShift') throw new Error('H3 capability transport failed');
+    return objectInfo(input);
+  }, 'http://comfy');
+  assert.equal(isolatedH3Failure.templates[0].available, true);
+  assert.equal(isolatedH3Failure.templates[1].available, true);
+  assert.equal(isolatedH3Failure.templates[2].available, false);
+  assert.ok(isolatedH3Failure.templates[2].missing.includes('node:MiniMaxH3SigmaShift'));
 });
 
-test('dispatches Z-Image and Qwen through distinct workflows', async () => {
+test('dispatches Z-Image, Qwen, and H3 through distinct workflows', async () => {
   const referenceBytes = jpeg();
   const cases = [
     {
@@ -166,6 +259,24 @@ test('dispatches Z-Image and Qwen through distinct workflows', async () => {
         assert.deepEqual(graph['11'].inputs.pixels, ['5', 0]);
         assert.deepEqual(graph['14'].inputs.images, ['13', 0]);
         assert.equal(graph['15'], undefined);
+      }
+    },
+    {
+      id: PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
+      request: referenceRequest(PORTRAIT_H3_REFERENCE_TEMPLATE_ID, referenceBytes),
+      outputNode: '28',
+      filename: 'portrait-h3_00001_.png',
+      inspect: (graph) => {
+        assert.equal(graph['1'].inputs.unet_name, MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.unet);
+        assert.equal(graph['20'].inputs.width, 576);
+        assert.equal(graph['20'].inputs.height, 1024);
+        assert.equal(graph['20'].inputs.length, 5);
+        assert.equal(graph['20'].inputs.ref_image_size, 'match');
+        assert.equal(graph['22'].inputs.sampler_name, 'res_multistep');
+        assert.equal(graph['23'].inputs.scheduler, 'simple');
+        assert.equal(graph['23'].inputs.steps, 20);
+        assert.deepEqual(graph['27'].inputs, { image: ['26', 0], batch_index: 0, length: 1 });
+        assert.deepEqual(graph['28'].inputs.images, ['27', 0]);
       }
     }
   ];

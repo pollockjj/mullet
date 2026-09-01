@@ -125,6 +125,31 @@ function requireIntegerInput(
   ) throw new Error(`ComfyUI ${nodeName}.${inputName} cannot represent ${requiredValue}`);
 }
 
+function requireNumericInput(
+  info: Record<string, unknown>,
+  nodeName: string,
+  inputName: string,
+  requiredValue: number,
+  expectedType: 'INT' | 'FLOAT'
+): void {
+  const input = requiredInput(info, nodeName, inputName);
+  const metadata = input[1];
+  if (
+    input[0] !== expectedType
+    || !isRecord(metadata)
+    || typeof metadata.min !== 'number'
+    || typeof metadata.max !== 'number'
+    || requiredValue < metadata.min
+    || requiredValue > metadata.max
+  ) throw new Error(`ComfyUI ${nodeName}.${inputName} cannot represent ${requiredValue}`);
+  if (typeof metadata.step === 'number') {
+    const offset = (requiredValue - metadata.min) / metadata.step;
+    if (Math.abs(offset - Math.round(offset)) > 1e-6) {
+      throw new Error(`ComfyUI ${nodeName}.${inputName} cannot represent ${requiredValue}`);
+    }
+  }
+}
+
 export async function loadPortraitVideoCapabilities(
   fetcher: Fetcher,
   videoBaseUrl: string,
@@ -238,6 +263,54 @@ export async function loadPortraitVideoCapabilities(
   modelOption(minimaxCommonMissing, 'LoraLoaderModelOnly', 'lora_name', minimaxTemplate.modelFiles.turboLora, `model:lora:${minimaxTemplate.modelFiles.turboLora}`);
   modelOption(minimaxCommonMissing, 'KSamplerSelect', 'sampler_name', minimaxTemplate.sampler, `sampler:${minimaxTemplate.sampler}`);
   modelOption(minimaxCommonMissing, 'BasicScheduler', 'scheduler', minimaxTemplate.scheduler, `scheduler:${minimaxTemplate.scheduler}`);
+  if (videoNodeAvailable('BasicScheduler')) {
+    diagnostic(minimaxCommonMissing, `node-input:BasicScheduler.steps:${minimaxTemplate.steps}`, () => {
+      requireNumericInput(
+        videoInfo.BasicScheduler,
+        'BasicScheduler',
+        'steps',
+        minimaxTemplate.steps,
+        'INT'
+      );
+    });
+    diagnostic(minimaxCommonMissing, `node-input:BasicScheduler.denoise:${minimaxTemplate.denoise}`, () => {
+      requireNumericInput(
+        videoInfo.BasicScheduler,
+        'BasicScheduler',
+        'denoise',
+        minimaxTemplate.denoise,
+        'FLOAT'
+      );
+    });
+  }
+  if (videoNodeAvailable('MiniMaxH3SigmaShift')) {
+    diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3SigmaShift.shift_video:${minimaxTemplate.shiftVideo}`, () => {
+      requireNumericInput(
+        videoInfo.MiniMaxH3SigmaShift,
+        'MiniMaxH3SigmaShift',
+        'shift_video',
+        minimaxTemplate.shiftVideo,
+        'FLOAT'
+      );
+    });
+    diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3SigmaShift.shift_audio:${minimaxTemplate.shiftAudio}`, () => {
+      requireNumericInput(
+        videoInfo.MiniMaxH3SigmaShift,
+        'MiniMaxH3SigmaShift',
+        'shift_audio',
+        minimaxTemplate.shiftAudio,
+        'FLOAT'
+      );
+    });
+  }
+  if (videoNodeAvailable('CreateVideo')) {
+    for (const durationSeconds of minimaxTemplate.durations) {
+      const fps = portraitVideoDimensions('9:16', durationSeconds, minimaxTemplate.id).fps;
+      diagnostic(minimaxCommonMissing, `node-input:CreateVideo.fps:${fps}`, () => {
+        requireNumericInput(videoInfo.CreateVideo, 'CreateVideo', 'fps', fps, 'FLOAT');
+      });
+    }
+  }
   if (videoNodeAvailable('SaveVideo')) {
     diagnostic(ltxCommonMissing, `video-format:${ltxTemplate.format}`, () => requireOption(
       dynamicOptionKeys(requiredInput(videoInfo.SaveVideo, 'SaveVideo', 'format'), 'SaveVideo', 'format'),
@@ -280,7 +353,7 @@ export async function loadPortraitVideoCapabilities(
       requireIntegerInput(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'height', maximumHeight, minimaxTemplate.multiple);
     });
     for (const durationSeconds of minimaxTemplate.durations) {
-      const frames = portraitVideoDimensions('9:16', durationSeconds).frames;
+      const frames = portraitVideoDimensions('9:16', durationSeconds, minimaxTemplate.id).frames;
       diagnostic(minimaxCommonMissing, `node-input:MiniMaxH3ImageToVideo.length:${frames}`, () => {
         requireIntegerInput(videoInfo.MiniMaxH3ImageToVideo, 'MiniMaxH3ImageToVideo', 'length', frames, 17);
       });
@@ -668,7 +741,11 @@ export async function runComfyPortraitVideo(
     if (!outputResponse.ok) throw new Error(`ComfyUI portrait-video fetch failed (${outputResponse.status})`);
     const contentType = outputResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
     const bytes = await readBoundedVideo(outputResponse);
-    const dimensions = portraitVideoDimensions(request.aspectRatio, request.durationSeconds);
+    const dimensions = portraitVideoDimensions(
+      request.aspectRatio,
+      request.durationSeconds,
+      request.modelTemplate
+    );
     const expected = {
       width: dimensions.width,
       height: dimensions.height,

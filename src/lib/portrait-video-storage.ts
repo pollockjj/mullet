@@ -1,5 +1,4 @@
 import {
-  PORTRAIT_VIDEO_FPS,
   PORTRAIT_END_FRAME_TEMPLATE_ID,
   PORTRAIT_VIDEO_MODE_GENERATED_FLF,
   normalizePortraitVideoRequest,
@@ -12,8 +11,8 @@ import {
   type PortraitVideoTemplateId
 } from './portrait-video.ts';
 
-export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v9' as const;
-export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v9' as const;
+export const STORED_PORTRAIT_VIDEO_SPEC = 'mullet_stored_portrait_video_v10' as const;
+export const STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC = 'mullet_stored_portrait_video_envelope_v10' as const;
 
 export type PortraitVideoEndFrameProvenance = {
   modelTemplate: typeof PORTRAIT_END_FRAME_TEMPLATE_ID;
@@ -36,7 +35,7 @@ export type StoredPortraitVideo = {
   width: number;
   height: number;
   frames: number;
-  fps: typeof PORTRAIT_VIDEO_FPS;
+  fps: number;
   durationSeconds: PortraitVideoDurationSeconds;
   encodedDurationSeconds: number;
   audioTracks: 0;
@@ -154,7 +153,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     throw new Error('stored portrait-video prompt ID is invalid');
   }
   const seed = safeInteger(value.seed, 'stored portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
-  const expected = portraitVideoDimensions(request.aspectRatio, request.durationSeconds);
+  const expected = portraitVideoDimensions(request.aspectRatio, request.durationSeconds, request.modelTemplate);
   const width = safeInteger(value.width, 'stored portrait-video width', 16, 8192);
   const height = safeInteger(value.height, 'stored portrait-video height', 16, 8192);
   if (width !== expected.width || height !== expected.height) throw new Error('stored portrait-video dimensions are invalid');
@@ -195,7 +194,7 @@ export function normalizeStoredPortraitVideo(value: unknown): StoredPortraitVide
     width,
     height,
     frames: expected.frames,
-    fps: PORTRAIT_VIDEO_FPS,
+    fps: expected.fps,
     durationSeconds: request.durationSeconds,
     encodedDurationSeconds,
     audioTracks,
@@ -218,6 +217,7 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
     || value.spec === 'mullet_stored_portrait_video_v6'
     || value.spec === 'mullet_stored_portrait_video_v7'
     || value.spec === 'mullet_stored_portrait_video_v8'
+    || value.spec === 'mullet_stored_portrait_video_v9'
     || value.spec === 'mullet_stored_portrait_video_envelope_v1'
     || value.spec === 'mullet_stored_portrait_video_envelope_v2'
     || value.spec === 'mullet_stored_portrait_video_envelope_v3'
@@ -226,6 +226,7 @@ export function unwrapStoredPortraitVideo(value: unknown): unknown | null {
     || value.spec === 'mullet_stored_portrait_video_envelope_v6'
     || value.spec === 'mullet_stored_portrait_video_envelope_v7'
     || value.spec === 'mullet_stored_portrait_video_envelope_v8'
+    || value.spec === 'mullet_stored_portrait_video_envelope_v9'
   )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('video' in value)) {

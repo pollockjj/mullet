@@ -3,13 +3,16 @@ import test from 'node:test';
 
 import {
   PORTRAIT_CAPABILITIES_SPEC,
+  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_REFERENCE_TEMPLATE_ID,
   PORTRAIT_REQUEST_SPEC,
   PORTRAIT_TEMPLATE_ID,
   PORTRAIT_TEMPLATES,
+  MINIMAX_H3_PORTRAIT_STILL_TEMPLATE,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
+  buildMiniMaxH3PortraitStillWorkflow,
   buildPortraitPrompt,
   buildPortraitRequest,
   buildQwenReferenceEditWorkflow,
@@ -19,6 +22,8 @@ import {
   normalizePortraitCapabilities,
   normalizePortraitRequest,
   portraitDimensions,
+  portraitDimensionsForTemplate,
+  portraitH3ReferencePlan,
   portraitModelTemplateAvailable,
   portraitRequestKey
 } from '../src/lib/portrait.ts';
@@ -76,6 +81,36 @@ function referenceRequest(overrides = {}) {
   });
 }
 
+const managedBodySha256 = 'b'.repeat(64);
+const managedBodyReference = Object.freeze({
+  name: `body-jenna-stannis-1234abcd-${managedBodySha256}.png`,
+  subfolder: 'mullet/identity',
+  type: 'input',
+  sha256: managedBodySha256,
+  width: 576,
+  height: 1024,
+  aspectRatio: '9:16'
+});
+
+function h3Request(overrides = {}) {
+  const qwen = referenceRequest();
+  return buildPortraitRequest(expression, {
+    modelTemplate: PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
+    subject: qwen.subject,
+    setting: qwen.setting,
+    attire: qwen.attire,
+    lora: null,
+    referenceImage: qwen.referenceImage,
+    bodyReferenceImage: managedBodyReference,
+    characterId: 'jenna-stannis',
+    profileFingerprint: '1234abcd',
+    promptOverride: exactJennaFearPrompt,
+    aspectRatio: '9:16',
+    megapixels: 0.5,
+    ...overrides
+  });
+}
+
 test('fixes every expression portrait to exact 9:16 at the 0.5 MP default', () => {
   assert.deepEqual(portraitDimensions('9:16', 0.5), { width: 576, height: 1024, pixels: 589824 });
   const dimensions = portraitDimensions('9:16', 1);
@@ -85,7 +120,7 @@ test('fixes every expression portrait to exact 9:16 at the 0.5 MP default', () =
   assert.throws(() => portraitDimensions('2:3', 0.5), /unsupported portrait aspect ratio/);
 });
 
-test('normalizes exactly the Z-Image and Qwen model capabilities, including unavailable Qwen', () => {
+test('normalizes the additive Z-Image, Qwen, and H3 model capabilities', () => {
   const capabilities = normalizePortraitCapabilities({
     spec: PORTRAIT_CAPABILITIES_SPEC,
     templates: PORTRAIT_TEMPLATES.map((template) => ({
@@ -100,10 +135,11 @@ test('normalizes exactly the Z-Image and Qwen model capabilities, including unav
     loras: ['zimage/kristi6.safetensors']
   });
 
-  assert.equal(capabilities.spec, 'mullet_portrait_capabilities_v5');
+  assert.equal(capabilities.spec, 'mullet_portrait_capabilities_v6');
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_H3_REFERENCE_TEMPLATE_ID
   ]);
   assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_TEMPLATE_ID), true);
   assert.equal(portraitModelTemplateAvailable(capabilities, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID), false);
@@ -113,14 +149,15 @@ test('normalizes exactly the Z-Image and Qwen model capabilities, including unav
   assert.equal(capabilities.megapixels[0], 0.5);
 });
 
-test('migrates only recognized Z-Image and Qwen selections and rejects retired editors', () => {
+test('migrates only recognized Z-Image, Qwen, and H3 selections and rejects retired editors', () => {
   assert.equal(
     migratePortraitModelTemplateSelection(null, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID),
     PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   );
   for (const selection of [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_H3_REFERENCE_TEMPLATE_ID
   ]) {
     assert.equal(migratePortraitModelTemplateSelection(null, selection), selection);
   }
@@ -168,8 +205,8 @@ test('compiles the Z-Image graph at the fixed expression frame and inserts only 
   assert.deepEqual(withLora['6'].inputs.model, ['11', 0]);
 });
 
-test('defaults to revision-matched Qwen Edit 2511 Lightning at four steps without stretching the identity reference', () => {
-  assert.equal(PORTRAIT_REFERENCE_TEMPLATE_ID, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
+test('retains revision-matched Qwen Edit 2511 Lightning as an additive four-step option', () => {
+  assert.equal(PORTRAIT_REFERENCE_TEMPLATE_ID, PORTRAIT_H3_REFERENCE_TEMPLATE_ID);
   const built = referenceRequest();
   assert.equal(built.modelTemplate, PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID);
   assert.equal(built.source.characterId, 'jenna-stannis');
@@ -218,6 +255,80 @@ test('defaults to revision-matched Qwen Edit 2511 Lightning at four steps withou
   assert.equal(graph['15'], undefined);
   assert.equal(JSON.stringify(graph).includes('"crop":"disabled"'), false);
   assert.throws(() => buildZImageTurboWorkflow(built, 1), /requires the Z-Image template/);
+});
+
+test('builds the default native five-frame H3 expression keeper with deterministic references and six prompt sections', () => {
+  const built = h3Request();
+  assert.deepEqual(
+    portraitDimensionsForTemplate(built.modelTemplate, built.aspectRatio, built.megapixels),
+    { width: 576, height: 1024, pixels: 589824 }
+  );
+  assert.deepEqual(
+    portraitH3ReferencePlan(built).map(({ picture, kind, sha256 }) => ({ picture, kind, sha256 })),
+    [
+      { picture: 1, kind: 'canonical_identity', sha256: built.referenceImage.sha256 },
+      { picture: 2, kind: 'body_wardrobe', sha256: managedBodySha256 }
+    ]
+  );
+  const prompt = buildPortraitPrompt(built);
+  for (const section of [
+    'subject_definitions:',
+    'summary:',
+    'retention_analysis:',
+    'detailed_description:',
+    'overall_soundscape:',
+    'non_diegetic_music:'
+  ]) assert.equal(prompt.split(section).length, 2, section);
+  assert.match(prompt, /<Picture 1>/);
+  assert.match(prompt, /<Picture 2>/);
+  assert.match(prompt, /no movement, lip motion, speaking/);
+
+  const graph = buildMiniMaxH3PortraitStillWorkflow(built, 19790213);
+  assert.equal(graph['1'].inputs.unet_name, MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['2'].inputs.type, 'minimax');
+  assert.equal(graph['3'].inputs.vae_name, MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.videoVae);
+  assert.equal(graph['4'].inputs.vae_name, MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.modelFiles.audioVae);
+  assert.equal(graph['5'].inputs.image, `mullet/identity/${built.referenceImage.name}`);
+  assert.equal(graph['6'].inputs.image, `mullet/identity/${managedBodyReference.name}`);
+  assert.deepEqual(graph['19'].inputs, { model: ['1', 0], shift_video: 12, shift_audio: 3 });
+  assert.equal(graph['20'].inputs.width, 576);
+  assert.equal(graph['20'].inputs.height, 1024);
+  assert.equal(graph['20'].inputs.length, 5);
+  assert.equal(graph['20'].inputs.ref_image_size, 'match');
+  assert.deepEqual(graph['20'].inputs['ref_images.ref_image_0'], ['5', 0]);
+  assert.deepEqual(graph['20'].inputs['ref_images.ref_image_1'], ['6', 0]);
+  assert.equal(graph['22'].inputs.sampler_name, 'res_multistep');
+  assert.deepEqual(graph['23'].inputs, { model: ['19', 0], scheduler: 'simple', steps: 20, denoise: 1 });
+  assert.deepEqual(graph['25'].inputs.latent_image, ['20', 1]);
+  assert.deepEqual(graph['27'].inputs, { image: ['26', 0], batch_index: 0, length: 1 });
+  assert.deepEqual(graph['28'].inputs, { images: ['27', 0], filename_prefix: 'mullet/portrait-h3' });
+  const classes = Object.values(graph).map(({ class_type }) => class_type);
+  assert.equal(classes.includes('LoraLoader'), false);
+  assert.equal(classes.includes('VHS_VideoCombine'), false);
+  assert.equal(classes.includes('SaveAudio'), false);
+});
+
+test('deduplicates an H3 body reference by SHA and rejects non-managed or non-fixed portrait inputs', () => {
+  const canonical = referenceRequest().referenceImage;
+  const duplicate = {
+    ...managedBodyReference,
+    name: `body-jenna-stannis-1234abcd-${canonical.sha256}.png`,
+    sha256: canonical.sha256
+  };
+  assert.equal(portraitH3ReferencePlan(h3Request({ bodyReferenceImage: duplicate })).length, 1);
+  assert.throws(() => h3Request({ megapixels: 0.75 }), /exact 576x1024/);
+  assert.throws(
+    () => h3Request({ bodyReferenceImage: { ...managedBodyReference, name: 'body.png' } }),
+    /content-addressed managed 576x1024 PNG/
+  );
+  assert.throws(
+    () => referenceRequest({ bodyReferenceImage: managedBodyReference }),
+    /only MiniMax H3 expression portraits/
+  );
+  assert.notEqual(
+    portraitRequestKey(h3Request()),
+    portraitRequestKey(h3Request({ bodyReferenceImage: null }))
+  );
 });
 
 test('rejects arbitrary templates, portrait geometry, malformed reference metadata, LoRAs, and stale sources', () => {

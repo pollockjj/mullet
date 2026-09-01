@@ -1,16 +1,20 @@
 import {
   PORTRAIT_ASPECT_RATIOS,
   PORTRAIT_CAPABILITIES_SPEC,
+  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
   PORTRAIT_TEMPLATES,
+  MINIMAX_H3_PORTRAIT_STILL_TEMPLATE,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
+  buildMiniMaxH3PortraitStillWorkflow,
   buildQwenReferencePortraitWorkflow,
   buildZImageTurboWorkflow,
   isPortraitReferenceTemplateId,
-  portraitDimensions,
+  portraitDimensionsForTemplate,
+  portraitH3ReferencePlan,
   portraitTemplate,
   validatePortraitPngDimensions,
   type PortraitCapabilities,
@@ -46,14 +50,62 @@ function optionList(value: unknown, nodeName: string, inputName: string): string
   const node = value[nodeName];
   if (!isRecord(node.input) || !isRecord(node.input.required)) return [];
   const input = node.input.required[inputName];
-  if (!Array.isArray(input) || !Array.isArray(input[0]) || input[0].some((item) => typeof item !== 'string')) {
-    return [];
-  }
-  return input[0] as string[];
+  if (!Array.isArray(input)) return [];
+  if (Array.isArray(input[0]) && input[0].every((item) => typeof item === 'string')) return input[0] as string[];
+  if (input[0] === 'COMBO' && isRecord(input[1]) && Array.isArray(input[1].options)
+    && input[1].options.every((item) => typeof item === 'string')) return input[1].options as string[];
+  return [];
 }
 
 function nodeAvailable(value: unknown, nodeName: string): boolean {
   return isRecord(value) && isRecord(value[nodeName]);
+}
+
+function inputDefinition(
+  value: unknown,
+  nodeName: string,
+  section: 'required' | 'optional',
+  inputName: string
+): unknown[] | null {
+  if (!isRecord(value) || !isRecord(value[nodeName])) return null;
+  const node = value[nodeName];
+  if (!isRecord(node.input) || !isRecord(node.input[section])) return null;
+  const input = node.input[section][inputName];
+  return Array.isArray(input) ? input : null;
+}
+
+function exactH3ReferenceAutogrow(value: unknown): boolean {
+  const input = inputDefinition(value, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images');
+  if (!input || input[0] !== 'COMFY_AUTOGROW_V3' || !isRecord(input[1])) return false;
+  const template = input[1].template;
+  if (!isRecord(template) || !isRecord(template.input) || !isRecord(template.input.required)) return false;
+  const reference = template.input.required.ref_image;
+  return template.prefix === 'ref_image_'
+    && template.min === 0
+    && template.max === 9
+    && Array.isArray(reference)
+    && reference[0] === 'IMAGE';
+}
+
+function nodeOutputHasType(value: unknown, nodeName: string, index: number, outputType: string): boolean {
+  if (!isRecord(value) || !isRecord(value[nodeName])) return false;
+  const output = value[nodeName].output;
+  return Array.isArray(output) && output[index] === outputType;
+}
+
+function numericInputAccepts(
+  value: unknown,
+  nodeName: string,
+  inputName: string,
+  expected: number,
+  expectedType: 'INT' | 'FLOAT'
+): boolean {
+  const input = inputDefinition(value, nodeName, 'required', inputName);
+  if (!input || input[0] !== expectedType) return false;
+  if (!isRecord(input[1])) return true;
+  const minimum = typeof input[1].min === 'number' ? input[1].min : Number.NEGATIVE_INFINITY;
+  const maximum = typeof input[1].max === 'number' ? input[1].max : Number.POSITIVE_INFINITY;
+  return expected >= minimum && expected <= maximum;
 }
 
 export async function loadPortraitCapabilities(
@@ -66,9 +118,14 @@ export async function loadPortraitCapabilities(
     ...PORTRAIT_TEMPLATES.flatMap((template) => [...template.requiredNodes])
   ])];
   const infoEntries = await Promise.all(nodeNames.map(async (nodeName): Promise<[string, unknown | null]> => {
-    const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
-    if (!response.ok) return [nodeName, null];
-    return [nodeName, await response.json()];
+    try {
+      const response = await fetcher(endpoint(baseUrl, `/object_info/${encodeURIComponent(nodeName)}`), { signal });
+      if (!response.ok) return [nodeName, null];
+      return [nodeName, await response.json()];
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return [nodeName, null];
+    }
   }));
   const info = new Map(infoEntries);
   const unetInfo = info.get('UNETLoader');
@@ -82,13 +139,60 @@ export async function loadPortraitCapabilities(
   const loras = optionList(loraInfo, 'LoraLoader', 'lora_name');
   const clipType = new Map<PortraitTemplate['id'], string>([
     [Z_IMAGE_TURBO_TEMPLATE.id, 'lumina2'],
-    [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image']
+    [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image'],
+    [MINIMAX_H3_PORTRAIT_STILL_TEMPLATE.id, 'minimax']
   ]);
   const templates = PORTRAIT_TEMPLATES.map((template) => {
     const missing: string[] = [];
     if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);
     if (!clips.includes(template.modelFiles.clip)) missing.push(`model:clip:${template.modelFiles.clip}`);
-    if (!vaes.includes(template.modelFiles.vae)) missing.push(`model:vae:${template.modelFiles.vae}`);
+    if (template.id === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
+      const h3 = MINIMAX_H3_PORTRAIT_STILL_TEMPLATE;
+      if (!vaes.includes(h3.modelFiles.videoVae)) missing.push(`model:vae:${h3.modelFiles.videoVae}`);
+      if (!vaes.includes(h3.modelFiles.audioVae)) missing.push(`model:vae:${h3.modelFiles.audioVae}`);
+      const h3Samplers = optionList(info.get('KSamplerSelect'), 'KSamplerSelect', 'sampler_name');
+      const h3Schedulers = optionList(info.get('BasicScheduler'), 'BasicScheduler', 'scheduler');
+      if (!h3Samplers.includes(h3.sampler)) missing.push(`sampler:${h3.sampler}`);
+      if (!h3Schedulers.includes(h3.scheduler)) missing.push(`scheduler:${h3.scheduler}`);
+      const referenceInfo = info.get('MiniMaxH3ReferenceToVideo');
+      if (!optionList(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'ref_image_size').includes(h3.referenceImageSize)) {
+        missing.push(`node-option:MiniMaxH3ReferenceToVideo.ref_image_size:${h3.referenceImageSize}`);
+      }
+      if (!exactH3ReferenceAutogrow(referenceInfo)) {
+        missing.push('node-autogrow:MiniMaxH3ReferenceToVideo.ref_images:ref_image_:IMAGE:max=9');
+      }
+      if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 0, 'CONDITIONING')) {
+        missing.push('node-output:MiniMaxH3ReferenceToVideo:0:CONDITIONING');
+      }
+      if (!nodeOutputHasType(referenceInfo, 'MiniMaxH3ReferenceToVideo', 1, 'LATENT')) {
+        missing.push('node-output:MiniMaxH3ReferenceToVideo:1:LATENT');
+      }
+      if (!numericInputAccepts(referenceInfo, 'MiniMaxH3ReferenceToVideo', 'length', h3.frames, 'INT')) {
+        missing.push(`node-input:MiniMaxH3ReferenceToVideo.length:${h3.frames}`);
+      }
+      const sigmaShiftInfo = info.get('MiniMaxH3SigmaShift');
+      if (!numericInputAccepts(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 'shift_video', h3.shiftVideo, 'FLOAT')) {
+        missing.push(`node-input:MiniMaxH3SigmaShift.shift_video:${h3.shiftVideo}`);
+      }
+      if (!numericInputAccepts(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 'shift_audio', h3.shiftAudio, 'FLOAT')) {
+        missing.push(`node-input:MiniMaxH3SigmaShift.shift_audio:${h3.shiftAudio}`);
+      }
+      if (!nodeOutputHasType(sigmaShiftInfo, 'MiniMaxH3SigmaShift', 0, 'MODEL')) {
+        missing.push('node-output:MiniMaxH3SigmaShift:0:MODEL');
+      }
+      const imageFromBatchInfo = info.get('ImageFromBatch');
+      if (!numericInputAccepts(imageFromBatchInfo, 'ImageFromBatch', 'batch_index', h3.outputFrameIndex, 'INT')) {
+        missing.push(`node-input:ImageFromBatch.batch_index:${h3.outputFrameIndex}`);
+      }
+      if (!numericInputAccepts(imageFromBatchInfo, 'ImageFromBatch', 'length', h3.outputFrameCount, 'INT')) {
+        missing.push(`node-input:ImageFromBatch.length:${h3.outputFrameCount}`);
+      }
+      if (!nodeOutputHasType(imageFromBatchInfo, 'ImageFromBatch', 0, 'IMAGE')) {
+        missing.push('node-output:ImageFromBatch:0:IMAGE');
+      }
+    } else if (!vaes.includes(template.modelFiles.vae)) {
+      missing.push(`model:vae:${template.modelFiles.vae}`);
+    }
     const requiredClipType = clipType.get(template.id);
     if (requiredClipType && !clipTypes.includes(requiredClipType)) missing.push(`clip-type:${requiredClipType}`);
     if ('lora' in template.modelFiles && !loras.includes(template.modelFiles.lora)) {
@@ -132,18 +236,21 @@ function historyFailure(entry: Record<string, unknown>): string | null {
 
 function outputImage(entry: Record<string, unknown>, request: PortraitRequest): { filename: string; subfolder: string; type: 'output' } | null {
   if (!isRecord(entry.status) || entry.status.completed !== true || entry.status.status_str !== 'success') return null;
-  const referenceConditioned = isPortraitReferenceTemplateId(request.modelTemplate);
   const outputNode = portraitTemplate(request.modelTemplate).outputNode;
   if (!isRecord(entry.outputs) || !isRecord(entry.outputs[outputNode])) {
     throw new Error('ComfyUI portrait history omitted the output node');
   }
   const output = entry.outputs[outputNode];
   if (!isRecord(output)) throw new Error('ComfyUI portrait history omitted the output node');
-  if (!Array.isArray(output.images) || !isRecord(output.images[0])) throw new Error('ComfyUI portrait history omitted the image');
+  if (!Array.isArray(output.images) || output.images.length !== 1 || !isRecord(output.images[0])) {
+    throw new Error('ComfyUI portrait history must contain exactly one image');
+  }
   const image = output.images[0];
-  const filenamePattern = referenceConditioned
-    ? /^portrait-reference_\d+_\.png$/
-    : /^portrait_\d+_\.png$/;
+  const filenamePattern = request.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
+    ? /^portrait-h3_\d+_\.png$/
+    : isPortraitReferenceTemplateId(request.modelTemplate)
+      ? /^portrait-reference_\d+_\.png$/
+      : /^portrait_\d+_\.png$/;
   if (typeof image.filename !== 'string' || !filenamePattern.test(image.filename)) {
     throw new Error('ComfyUI returned an unexpected portrait filename');
   }
@@ -341,14 +448,20 @@ export async function runComfyPortrait(
   seed: number,
   signal?: AbortSignal
 ): Promise<ComfyPortraitImage> {
-  if (isPortraitReferenceTemplateId(request.modelTemplate) && request.referenceImage) {
+  if (request.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID) {
+    for (const slot of portraitH3ReferencePlan(request)) {
+      await assertComfyIdentityReference(fetcher, baseUrl, slot.referenceImage, signal);
+    }
+  } else if (isPortraitReferenceTemplateId(request.modelTemplate) && request.referenceImage) {
     await assertComfyIdentityReference(fetcher, baseUrl, request.referenceImage, signal);
   }
   const workflow = request.modelTemplate === PORTRAIT_TEMPLATE_ID
     ? buildZImageTurboWorkflow(request, seed)
     : request.modelTemplate === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
       ? buildQwenReferencePortraitWorkflow(request, seed)
-      : (() => { throw new Error('unsupported portrait model template'); })();
+      : request.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
+        ? buildMiniMaxH3PortraitStillWorkflow(request, seed)
+        : (() => { throw new Error('unsupported portrait model template'); })();
   let id = '';
   let validated = false;
   try {
@@ -367,7 +480,11 @@ export async function runComfyPortrait(
     if (contentType !== 'image/png') throw new Error('ComfyUI portrait output is not a PNG');
     const bytes = new Uint8Array(await imageResponse.arrayBuffer());
     if (bytes.byteLength < 33 || bytes.byteLength > 20 * 1024 * 1024) throw new Error('ComfyUI portrait output has an invalid size');
-    const dimensions = portraitDimensions(request.aspectRatio, request.megapixels);
+    const dimensions = portraitDimensionsForTemplate(
+      request.modelTemplate,
+      request.aspectRatio,
+      request.megapixels
+    );
     validatePortraitPngDimensions(bytes, dimensions.width, dimensions.height);
     validated = true;
     return { bytes, contentType, promptId: id, filename: image.filename };

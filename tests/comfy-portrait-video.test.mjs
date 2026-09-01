@@ -53,16 +53,16 @@ const requests = {
     portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF, 2, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID
   ),
   i2v: buildPortraitVideoRequest(
-    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_I2V, 3, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_I2V, 2, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   ),
   loop: buildPortraitVideoRequest(
-    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 3, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 2, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   ),
   loopFive: buildPortraitVideoRequest(
     portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_LOOP_FLF, 5, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   ),
   generated: buildPortraitVideoRequest(
-    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF, 3, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
+    portrait, '9:16', imageSha256, PORTRAIT_VIDEO_MODE_GENERATED_FLF, 2, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
   )
 };
 const input = {
@@ -80,7 +80,9 @@ const endInput = {
 const mp4 = buildH264AacMp4Fixture({
   width: 576,
   height: 1024,
-  frames: 73,
+  frames: 56,
+  fps: 28,
+  videoTimescale: 14_336,
   includeAudio: false
 });
 const mp4Five = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 124, includeAudio: false });
@@ -115,7 +117,20 @@ function capabilityResponse(node, includeLastFrame = true, lengthStep = 17, leng
     sampler_name: [['euler']],
     scheduler: [['simple']]
   } } } };
-  if (node === 'BasicScheduler') return standardInfo(node, 'scheduler', ['simple']);
+  if (node === 'BasicScheduler') return { [node]: { input: { required: {
+    scheduler: [['simple']],
+    steps: ['INT', { min: 1, max: 10000, step: 1 }],
+    denoise: ['FLOAT', { min: 0, max: 1, step: 0.01 }]
+  } } } };
+  if (node === 'MiniMaxH3SigmaShift') return { [node]: { input: { required: {
+    model: ['MODEL', {}],
+    shift_video: ['FLOAT', { min: 0.01, max: 100, step: 0.01 }],
+    shift_audio: ['FLOAT', { min: 0.01, max: 100, step: 0.01 }]
+  } } } };
+  if (node === 'CreateVideo') return { [node]: { input: { required: {
+    images: ['IMAGE', {}],
+    fps: ['FLOAT', { min: 1, max: 120, step: 1 }]
+  } } } };
   if (node === 'SaveVideo') return { [node]: { input: {
     required: { format: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'mp4' }] }] },
     optional: { codec: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'auto' }, { key: 'h264' }] }] }
@@ -147,7 +162,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     return Response.json(capabilityResponse(node));
   };
   const capabilities = await loadPortraitVideoCapabilities(fetcher, 'http://video-comfy', 'http://image-comfy');
-  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v9');
+  assert.equal(capabilities.spec, 'mullet_portrait_video_capabilities_v10');
   assert.deepEqual(capabilities.templates.map(({ template }) => template.id), [
     LTX25_PORTRAIT_VIDEO_TEMPLATE_ID,
     MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID
@@ -161,7 +176,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
   assert.deepEqual(ltx.modes.map(({ missing }) => missing), [[], [], []]);
   assert.deepEqual(minimax.modes.map(({ missing }) => missing), [[], [], []]);
   assert.deepEqual(ltx.durations, [2]);
-  assert.deepEqual(minimax.durations, [3, 5]);
+  assert.deepEqual(minimax.durations, [2, 3, 5]);
 
   const withoutLtxUnet = await loadPortraitVideoCapabilities(async (url) => {
     const node = decodeURIComponent(String(url).split('/').at(-1));
@@ -236,6 +251,7 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     return Response.json(capabilityResponse(node, true, 16));
   }, 'http://video-comfy', 'http://image-comfy');
   assert.deepEqual(templateCapability(wrongLengthGrid, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID).modes[0].missing, [
+    'node-input:MiniMaxH3ImageToVideo.length:56',
     'node-input:MiniMaxH3ImageToVideo.length:73',
     'node-input:MiniMaxH3ImageToVideo.length:124'
   ]);
@@ -282,6 +298,46 @@ test('reports additive LTX and MiniMax capabilities with exact per-template diag
     assert.deepEqual(capability.modes[2].missing, [
       `model:unet:${QWEN_IMAGE_EDIT_PORTRAIT_END_FRAME_TEMPLATE.modelFiles.unet}`
     ], capability.template.id);
+  }
+});
+
+test('rejects H3 numeric graph schemas that cannot represent its submitted scheduler values', async () => {
+  const rejectedInputs = [
+    {
+      node: 'BasicScheduler',
+      inputName: 'steps',
+      schema: ['INT', { min: 5, max: 10000, step: 1 }],
+      diagnostic: 'node-input:BasicScheduler.steps:4'
+    },
+    {
+      node: 'BasicScheduler',
+      inputName: 'denoise',
+      schema: ['FLOAT', { min: 0, max: 0.99, step: 0.01 }],
+      diagnostic: 'node-input:BasicScheduler.denoise:1'
+    }
+  ];
+
+  for (const rejected of rejectedInputs) {
+    const capabilities = await loadPortraitVideoCapabilities(async (url) => {
+      const node = decodeURIComponent(String(url).split('/').at(-1));
+      const response = capabilityResponse(node);
+      if (node === rejected.node) {
+        response[node].input.required[rejected.inputName] = rejected.schema;
+      }
+      return Response.json(response);
+    }, 'http://video-comfy', 'http://image-comfy');
+    const h3 = templateCapability(capabilities, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
+    const ltx = templateCapability(capabilities, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
+
+    assert.equal(h3.available, false, rejected.diagnostic);
+    assert.deepEqual(h3.missing, [rejected.diagnostic]);
+    assert.deepEqual(h3.modes.map(({ missing }) => missing), [
+      [rejected.diagnostic],
+      [rejected.diagnostic],
+      [rejected.diagnostic]
+    ]);
+    assert.equal(ltx.available, true, rejected.diagnostic);
+    assert.deepEqual(ltx.modes.map(({ missing }) => missing), [[], [], []]);
   }
 });
 
@@ -395,35 +451,48 @@ test('rejects audio-bearing or wrong-contract LTX H.264 MP4 output', async () =>
   );
 });
 
-test('queues and validates MiniMax H3 I2V as H.264 video-only MP4', async () => {
+test('queues and validates exact two-second MiniMax H3 I2V as H.264 video-only MP4', async () => {
   const { result, observed, queued } = await runMode(requests.i2v, 'portrait-motion_00001_.mp4');
   assert.equal(queued.client_id, 'mullet-portrait-video');
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.equal(Object.hasOwn(queued.prompt['6'].inputs, 'last_frame'), false);
-  assert.equal(queued.prompt['6'].inputs.length, 73);
+  assert.equal(queued.prompt['6'].inputs.length, 56);
   assert.equal(Object.hasOwn(queued.prompt, '4'), false);
   assert.equal(Object.hasOwn(queued.prompt, '13'), false);
   assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'audio'), false);
+  assert.equal(Object.hasOwn(queued.prompt['14'].inputs, 'bit_depth'), false);
+  assert.equal(queued.prompt['14'].inputs.fps, 28);
+  assert.deepEqual(queued.prompt['7'].inputs.model, ['18', 0]);
+  assert.deepEqual(queued.prompt['9'].inputs.model, ['18', 0]);
+  assert.deepEqual(queued.prompt['18'].inputs, { model: ['16', 0], shift_video: 6, shift_audio: 3 });
   assert.equal(queued.prompt['15'].class_type, 'SaveVideo');
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion_00001_.mp4&subfolder=mullet&type=output');
   assert.equal(result.contentType, 'video/mp4');
-  assert.equal(result.durationSeconds, 73 / 24);
+  assert.equal(result.durationSeconds, 2);
   assert.equal(result.audioTracks, 0);
   assert.deepEqual(result.bytes, mp4);
 });
 
 test('rejects every audio-bearing portrait MP4', async () => {
-  const audioMp4 = buildH264AacMp4Fixture({ width: 576, height: 1024, frames: 73 });
+  const audioMp4 = buildH264AacMp4Fixture({
+    width: 576,
+    height: 1024,
+    frames: 56,
+    fps: 28,
+    videoTimescale: 14_336
+  });
   await assert.rejects(
     runMode(requests.i2v, 'portrait-motion_00002_.mp4', undefined, audioMp4),
     /must not contain an audio track/
   );
 });
 
-test('queues the default three-second natural loop with the identical first and last H3 frame', async () => {
+test('queues the default exact two-second natural loop with the identical first and last H3 frame', async () => {
   const { queued, observed } = await runMode(requests.loop, 'portrait-motion-loop-flf_00001_.mp4');
   assert.deepEqual(queued.prompt['6'].inputs.first_frame, ['5', 0]);
   assert.deepEqual(queued.prompt['6'].inputs.last_frame, ['5', 0]);
+  assert.equal(queued.prompt['6'].inputs.length, 56);
+  assert.equal(queued.prompt['14'].inputs.fps, 28);
   assert.equal(observed[2].url, 'http://comfy/view?filename=portrait-motion-loop-flf_00001_.mp4&subfolder=mullet&type=output');
 });
 

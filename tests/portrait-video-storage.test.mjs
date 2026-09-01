@@ -6,6 +6,7 @@ import {
   MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
   PORTRAIT_END_FRAME_TEMPLATE_ID,
   PORTRAIT_VIDEO_REQUEST_SPEC,
+  portraitVideoDimensions,
   portraitVideoRequestKey
 } from '../src/lib/portrait-video.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
@@ -51,15 +52,26 @@ function request(overrides = {}) {
 function minimaxRequest(overrides = {}) {
   return request({
     modelTemplate: MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
-    durationSeconds: 3,
+    durationSeconds: 2,
     ...overrides
   });
 }
 
 function stored(overrides = {}) {
   const motionRequest = overrides.request ?? request();
-  const frames = motionRequest.durationSeconds === 2 ? 49 : motionRequest.durationSeconds === 5 ? 124 : 73;
-  const bytes = buildH264AacMp4Fixture({ width: 576, height: 1024, frames, includeAudio: false });
+  const { frames, fps } = portraitVideoDimensions(
+    motionRequest.aspectRatio,
+    motionRequest.durationSeconds,
+    motionRequest.modelTemplate
+  );
+  const bytes = buildH264AacMp4Fixture({
+    width: 576,
+    height: 1024,
+    frames,
+    fps,
+    videoTimescale: fps === 28 ? 14_336 : 12_288,
+    includeAudio: false
+  });
   return {
     spec: STORED_PORTRAIT_VIDEO_SPEC,
     conversationId: motionRequest.source.conversationId,
@@ -72,9 +84,9 @@ function stored(overrides = {}) {
     width: 576,
     height: 1024,
     frames,
-    fps: 24,
+    fps,
     durationSeconds: motionRequest.durationSeconds,
-    encodedDurationSeconds: frames / 24,
+    encodedDurationSeconds: frames / fps,
     audioTracks: 0,
     generatedAt: 18,
     inputImageSha256: 'a'.repeat(64),
@@ -87,8 +99,8 @@ function stored(overrides = {}) {
 
 test('normalizes the default two-second silent LTX H.264 MP4', () => {
   const result = normalizeStoredPortraitVideo(stored());
-  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v9');
-  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v9');
+  assert.equal(STORED_PORTRAIT_VIDEO_SPEC, 'mullet_stored_portrait_video_v10');
+  assert.equal(STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, 'mullet_stored_portrait_video_envelope_v10');
   assert.equal(result.modelTemplate, LTX25_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(result.video.type, 'video/mp4');
   assert.equal(result.frames, 49);
@@ -103,8 +115,17 @@ test('normalizes the default two-second silent LTX H.264 MP4', () => {
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('normalizes MiniMax H3 MP4 alternatives only with their exact three/five-second timing tuples', () => {
-  const threeRequest = minimaxRequest();
+test('normalizes MiniMax H3 MP4 only with exact two/three/five-second timing tuples', () => {
+  const twoRequest = minimaxRequest();
+  const two = normalizeStoredPortraitVideo(stored({ request: twoRequest }));
+  assert.equal(two.modelTemplate, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
+  assert.equal(two.video.type, 'video/mp4');
+  assert.equal(two.durationSeconds, 2);
+  assert.equal(two.frames, 56);
+  assert.equal(two.fps, 28);
+  assert.equal(two.encodedDurationSeconds, 2);
+
+  const threeRequest = minimaxRequest({ durationSeconds: 3 });
   const three = normalizeStoredPortraitVideo(stored({ request: threeRequest }));
   assert.equal(three.modelTemplate, MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID);
   assert.equal(three.video.type, 'video/mp4');
@@ -161,8 +182,8 @@ test('unwraps writer-owned envelopes and rejects malformed envelopes', () => {
   assert.throws(() => unwrapStoredPortraitVideo({ spec: STORED_PORTRAIT_VIDEO_ENVELOPE_SPEC, writeId: '' }), /envelope is invalid/);
 });
 
-test('discards obsolete v1-v8 direct values and envelopes for automatic regeneration', () => {
-  for (let version = 1; version <= 8; version += 1) {
+test('discards obsolete v1-v9 direct values and envelopes for automatic regeneration', () => {
+  for (let version = 1; version <= 9; version += 1) {
     assert.equal(unwrapStoredPortraitVideo({ spec: `mullet_stored_portrait_video_v${version}` }), null);
     assert.equal(unwrapStoredPortraitVideo({
       spec: `mullet_stored_portrait_video_envelope_v${version}`,

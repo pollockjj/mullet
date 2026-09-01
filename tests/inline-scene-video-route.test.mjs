@@ -531,6 +531,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
     assert.deepEqual(queued.prompt['20'].inputs['ref_images.ref_image_1'], ['6', 0]);
     assert.deepEqual(queued.prompt['20'].inputs['ref_images.ref_image_2'], ['7', 0]);
     assert.deepEqual(queued.prompt['28'].inputs.audio, ['27', 0]);
+    assert.equal(Object.hasOwn(queued.prompt['28'].inputs, 'bit_depth'), false);
     assert.equal(queued.prompt['29'].inputs.filename_prefix, 'mullet/scene-motion');
     assert.equal(JSON.stringify(queued).includes('fl2va'), false);
     assert.equal(JSON.stringify(queued).includes('i2v'), false);
@@ -616,6 +617,7 @@ test('compiled inline-scene-video route enforces the additive LTX-default and Mi
       shift_audio: 3
     });
     assert.deepEqual(queued.prompt['21'].inputs.model, ['31', 0]);
+    assert.equal(Object.hasOwn(queued.prompt['28'].inputs, 'bit_depth'), false);
   });
 
   await context.test('POST binds a byte-verified prior master between the current scene and canonical identity', async () => {

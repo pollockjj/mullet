@@ -1,5 +1,6 @@
 import {
   PORTRAIT_MEGAPIXELS,
+  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   isPortraitModelTemplate,
   isPortraitSource,
   portraitDimensions,
@@ -8,8 +9,8 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v5' as const;
-export const STORED_PORTRAIT_ENVELOPE_SPEC = 'mullet_stored_portrait_envelope_v5' as const;
+export const STORED_PORTRAIT_SPEC = 'mullet_stored_portrait_v6' as const;
+export const STORED_PORTRAIT_ENVELOPE_SPEC = 'mullet_stored_portrait_envelope_v6' as const;
 
 export type StoredPortrait = {
   spec: typeof STORED_PORTRAIT_SPEC;
@@ -86,10 +87,12 @@ export function normalizeStoredPortrait(value: unknown): StoredPortrait {
   }
   const width = safeInteger(value.width, 'stored portrait width', 16, 8192);
   const height = safeInteger(value.height, 'stored portrait height', 16, 8192);
-  const supportedDimensions = PORTRAIT_MEGAPIXELS.some((megapixels) => {
-    const dimensions = portraitDimensions('9:16', megapixels);
-    return dimensions.width === width && dimensions.height === height;
-  });
+  const supportedDimensions = value.modelTemplate === PORTRAIT_H3_REFERENCE_TEMPLATE_ID
+    ? width === 576 && height === 1024
+    : PORTRAIT_MEGAPIXELS.some((megapixels) => {
+        const dimensions = portraitDimensions('9:16', megapixels);
+        return dimensions.width === width && dimensions.height === height;
+      });
   if (!supportedDimensions) throw new Error('stored portrait dimensions are not a supported 9:16 expression size');
   return {
     spec: STORED_PORTRAIT_SPEC,
@@ -123,6 +126,14 @@ export function unwrapStoredPortrait(value: unknown): unknown | null {
     || value.spec === 'mullet_stored_portrait_v2'
     || value.spec === 'mullet_stored_portrait_v3'
     || value.spec === 'mullet_stored_portrait_v4'
+    || value.spec === 'mullet_stored_portrait_v5'
+  )) return null;
+  if (isRecord(value) && (
+    value.spec === 'mullet_stored_portrait_envelope_v1'
+    || value.spec === 'mullet_stored_portrait_envelope_v2'
+    || value.spec === 'mullet_stored_portrait_envelope_v3'
+    || value.spec === 'mullet_stored_portrait_envelope_v4'
+    || value.spec === 'mullet_stored_portrait_envelope_v5'
   )) return null;
   if (!isRecord(value) || value.spec !== STORED_PORTRAIT_ENVELOPE_SPEC) return value;
   if (typeof value.writeId !== 'string' || value.writeId.length < 1 || value.writeId.length > 200 || !('portrait' in value)) {

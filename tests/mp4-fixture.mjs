@@ -154,6 +154,7 @@ export function buildH264AacMp4Fixture({
   height = 768,
   frames = 124,
   fps = 24,
+  videoTimescale = 12_288,
   videoCodec = 'avc1',
   includeAudio = true,
   includeAudioSamples = true,
@@ -166,7 +167,7 @@ export function buildH264AacMp4Fixture({
   videoChunkOffsetDelta = 0,
   audioChunkOffsetDelta = 0
 } = {}) {
-  const timescale = 12_288;
+  const timescale = videoTimescale;
   const delta = Math.round(timescale / fps);
   const duration = frames * delta;
   const movieTimescale = 1_000;

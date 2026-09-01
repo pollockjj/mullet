@@ -164,12 +164,15 @@
     , LivingHistoryConflictError
   } from '$lib/living-history-storage';
   import {
+    PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_H3_TIMEOUT_MS,
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_REFERENCE_TEMPLATE_ID,
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
+    isPortraitH3ReferenceTemplateId,
     migratePortraitModelTemplateSelection,
     normalizePortraitCapabilities,
+    portraitH3ReferencePlan,
     portraitModelTemplateAvailable,
     portraitRequestKey,
     type PortraitAspectRatio,
@@ -195,7 +198,6 @@
     MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID,
     PORTRAIT_VIDEO_DURATION_SECONDS,
     PORTRAIT_VIDEO_DURATIONS,
-    PORTRAIT_VIDEO_FPS,
     PORTRAIT_VIDEO_MODE_GENERATED_FLF,
     PORTRAIT_VIDEO_MODE_LOOP_FLF,
     PORTRAIT_VIDEO_MODES,
@@ -353,9 +355,10 @@
   let portraitLora = '';
   const portraitAspectRatio: PortraitAspectRatio = '9:16';
   let portraitMegapixels: PortraitMegapixels = 0.5;
-  let portraitModelTemplate: PortraitModelTemplate = PORTRAIT_REFERENCE_TEMPLATE_ID;
+  let portraitModelTemplate: PortraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
   let portraitModelSelectionPersisted = false;
   let portraitRequest: PortraitRequest | null = null;
+  let portraitH3ReferenceSummary = '';
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
   let portraitRetriedKey = '';
@@ -365,7 +368,7 @@
   let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;
   let portraitVideoMode: PortraitVideoMode = PORTRAIT_VIDEO_MODE_LOOP_FLF;
   let portraitVideoDurationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS;
-  let portraitVideoTiming = portraitVideoDimensions('9:16', PORTRAIT_VIDEO_DURATION_SECONDS);
+  let portraitVideoTiming = portraitVideoDimensions('9:16', PORTRAIT_VIDEO_DURATION_SECONDS, portraitVideoModelTemplate);
   let generatedPortraitVideoUrl = '';
   let generatedPortraitVideo: StoredPortraitVideo | null = null;
   let portraitVideoElement: HTMLVideoElement | null = null;
@@ -479,6 +482,8 @@
   let selectedScenario: ScenarioCatalogEntry | null = null;
   let activeScenarioStarterId = '';
   let scenarioPortraitProfile: ScenarioPortraitProfile | null = null;
+  let effectiveScenarioPortraitProfile: ScenarioPortraitProfile | null = null;
+  let portraitDisplayProfile: ScenarioPortraitProfile | null = null;
   let scenarioBaseSceneProfiles: ScenarioPortraitProfile[] = [];
   let scenarioSceneProfiles: ScenarioPortraitProfile[] = [];
   let bodyReferenceOverlays: StoredBodyReferenceOverlay[] = [];
@@ -549,12 +554,12 @@
   const portraitAttireStorageKey = 'mullet.portrait-attire';
   const portraitLoraStorageKey = 'mullet.portrait-lora';
   const portraitMegapixelsStorageKey = 'mullet.portrait-megapixels.v4';
-  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v3';
-  const previousPortraitModelTemplateStorageKey = 'mullet.portrait-model-template.v2';
+  const portraitModelTemplateStorageKey = 'mullet.portrait-model-template.v4';
+  const previousPortraitModelTemplateStorageKey = 'mullet.portrait-model-template.v3';
   const portraitMotionEnabledStorageKey = 'mullet.portrait-motion-enabled';
-  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v3';
-  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v6';
-  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v6';
+  const portraitVideoModelTemplateStorageKey = 'mullet.portrait-video-model-template.v4';
+  const portraitVideoModeStorageKey = 'mullet.portrait-video-mode.v7';
+  const portraitVideoDurationStorageKey = 'mullet.portrait-video-duration.v7';
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
@@ -623,6 +628,10 @@
     ));
     return overlay ? applyBodyReferenceOverlay(profile, overlay) : profile;
   });
+  $: effectiveScenarioPortraitProfile = scenarioPortraitProfile
+    ? scenarioSceneProfiles.find((profile) => profile.id === scenarioPortraitProfile?.id) ?? null
+    : null;
+  $: portraitDisplayProfile = effectiveScenarioPortraitProfile ?? scenarioPortraitProfile;
   $: inlineSceneSelectedModelAvailable = inlineScenePotentialDriverAvailable(
     inlineSceneCapabilities,
     scenarioSceneProfiles,
@@ -671,7 +680,12 @@
     expressionResult,
     expressionCurrent,
     activeCard,
-    scenarioPortraitProfile,
+    effectiveScenarioPortraitProfile,
+    !isScenarioCard(activeCard) || (
+      bodyReferenceOverlayReady
+      && bodyReferenceOverlayCorruptProfileIds.length === 0
+      && !bodyReferenceOverlayBusyProfileId
+    ),
     portraitModelTemplate,
     portraitSelectedModelAvailable && portraitSelectedSubjectLoraAvailable,
     portraitSelectedModelUsesReference,
@@ -683,6 +697,11 @@
     portraitMegapixels
   );
   $: portraitCurrent = Boolean(generatedPortrait && portraitRequest && generatedPortrait.requestKey === portraitRequestKey(portraitRequest));
+  $: portraitH3ReferenceSummary = portraitRequest && isPortraitH3ReferenceTemplateId(portraitRequest.modelTemplate)
+    ? portraitH3ReferencePlan(portraitRequest)
+        .map((entry) => `P${entry.picture} ${entry.kind === 'canonical_identity' ? 'canonical identity' : 'body/wardrobe'}`)
+        .join(' · ')
+    : '';
   $: portraitVideoRequest = currentPortraitVideoRequest(
     generatedPortrait,
     portraitCurrent,
@@ -693,7 +712,11 @@
     portraitVideoDurationSeconds,
     portraitVideoModelTemplate
   );
-  $: portraitVideoTiming = portraitVideoDimensions(portraitAspectRatio, portraitVideoDurationSeconds);
+  $: portraitVideoTiming = portraitVideoDimensions(
+    portraitAspectRatio,
+    portraitVideoDurationSeconds,
+    portraitVideoModelTemplate
+  );
   $: selectedInlineSceneVideoTemplateCapability = inlineSceneVideoTemplateCapability(
     inlineSceneVideoCapabilities,
     inlineSceneVideoModelTemplate
@@ -778,7 +801,12 @@
       && expressionsEnabled
       && scenarioPortraitGenerationReady(activeCard, scenarioCatalogSettled),
     portraitCapabilities,
-    portraitPersistenceReady,
+    portraitPersistenceReady && (
+      !isScenarioCard(activeCard)
+      || (bodyReferenceOverlayReady
+        && bodyReferenceOverlayCorruptProfileIds.length === 0
+        && !bodyReferenceOverlayBusyProfileId)
+    ),
     portraitPersistenceAvailable,
     portraitBusy,
     portraitRequest,
@@ -1051,10 +1079,9 @@
     portraitAttire = localStorage.getItem(portraitAttireStorageKey) ?? '';
     portraitLora = localStorage.getItem(portraitLoraStorageKey) ?? '';
     const currentSavedModelTemplate = localStorage.getItem(portraitModelTemplateStorageKey);
-    const previousSavedModelTemplate = localStorage.getItem(previousPortraitModelTemplateStorageKey);
     const savedModelTemplate = migratePortraitModelTemplateSelection(
       currentSavedModelTemplate,
-      previousSavedModelTemplate
+      null
     );
     if (savedModelTemplate) localStorage.setItem(portraitModelTemplateStorageKey, savedModelTemplate);
     else localStorage.removeItem(portraitModelTemplateStorageKey);
@@ -1063,13 +1090,13 @@
     portraitModelTemplate = savedModelTemplate
       ? savedModelTemplate
       : isScenarioCard(activeCard)
-        ? scenarioStarterPortraitProfile(activeCard, activeScenarioStarterId)?.modelTemplate
-          ?? PORTRAIT_REFERENCE_TEMPLATE_ID
+        ? PORTRAIT_H3_REFERENCE_TEMPLATE_ID
         : PORTRAIT_TEMPLATE_ID;
     const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       portraitMegapixels = savedMegapixels;
     }
+    if (isPortraitH3ReferenceTemplateId(portraitModelTemplate)) portraitMegapixels = 0.5;
   }
 
   function persistPortraitSettings() {
@@ -1088,9 +1115,10 @@
   function persistPortraitModelTemplate() {
     if (!portraitCapabilities?.templates.some(({ template }) => template.id === portraitModelTemplate)) {
       portraitModelTemplate = isScenarioCard(activeCard)
-        ? scenarioPortraitProfile?.modelTemplate ?? PORTRAIT_REFERENCE_TEMPLATE_ID
+        ? PORTRAIT_H3_REFERENCE_TEMPLATE_ID
         : PORTRAIT_TEMPLATE_ID;
     }
+    if (isPortraitH3ReferenceTemplateId(portraitModelTemplate)) portraitMegapixels = 0.5;
     portraitModelSelectionPersisted = true;
     localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
     portraitController?.abort();
@@ -1204,7 +1232,7 @@
     bodyReferenceOverlayCorruptProfileIds = corruptProfileIds;
     if (corruptProfileIds.length > 0) {
       bodyReferenceOverlayReady = false;
-      bodyReferenceOverlayError = `Saved body and wardrobe references failed verification for profile IDs: ${corruptProfileIds.join(', ')}. Scene image and motion generation are blocked until Remove corrupt saved ref is used for each listed profile.`;
+      bodyReferenceOverlayError = `Saved body and wardrobe references failed verification for profile IDs: ${corruptProfileIds.join(', ')}. Portrait, scene-image, and scene-motion generation are blocked until Remove corrupt saved ref is used for each listed profile.`;
       return;
     }
     bodyReferenceOverlayReady = true;
@@ -1279,6 +1307,7 @@
       || !bodyReferenceOverlayReady
       || bodyReferenceOverlayCorruptProfileIds.length > 0
       || bodyReferenceOverlayBusyProfileId
+      || portraitBusy
       || inlineSceneBusy
       || inlineSceneVideoBusy
     ) return;
@@ -1308,6 +1337,7 @@
     const corruptReference = corruptBodyReferenceForProfile(profile);
     if (
       bodyReferenceOverlayBusyProfileId
+      || portraitBusy
       || inlineSceneBusy
       || inlineSceneVideoBusy
       || (!bodyReferenceOverlayReady && !corruptReference)
@@ -1343,6 +1373,13 @@
       form.append('reference', overlay.image, overlay.referenceImage.name);
       appendedHashes.add(overlay.referenceImage.sha256);
     }
+  }
+
+  function portraitManagedBodyReferenceHashes(request: PortraitRequest): string[] {
+    if (!isPortraitH3ReferenceTemplateId(request.modelTemplate)) return [];
+    return portraitH3ReferencePlan(request).flatMap((entry) => (
+      entry.kind === 'body_wardrobe' ? [entry.referenceImage.sha256] : []
+    ));
   }
 
   function inlineSceneManagedBodyReferenceHashes(request: InlineSceneImageRequest): string[] {
@@ -2739,7 +2776,7 @@
         localStorage.removeItem(portraitModelTemplateStorageKey);
         portraitModelSelectionPersisted = false;
         portraitModelTemplate = isScenarioCard(activeCard)
-          ? scenarioPortraitProfile?.modelTemplate ?? PORTRAIT_REFERENCE_TEMPLATE_ID
+          ? PORTRAIT_H3_REFERENCE_TEMPLATE_ID
           : PORTRAIT_TEMPLATE_ID;
       }
       if (portraitLora && !portraitCapabilities.loras.includes(portraitLora)) {
@@ -3428,6 +3465,7 @@
     current: boolean,
     card: ImportedCharacterCard | null,
     profile: ScenarioPortraitProfile | null,
+    bodyReferencesReady: boolean,
     modelTemplate: PortraitModelTemplate,
     modelAvailable: boolean,
     modelUsesReference: boolean,
@@ -3438,7 +3476,7 @@
     aspectRatio: PortraitAspectRatio,
     megapixels: PortraitMegapixels
   ): PortraitRequest | null {
-    if (!result || !current || !modelAvailable) return null;
+    if (!result || !current || !modelAvailable || (isScenarioCard(card) && !bodyReferencesReady)) return null;
     try {
       if (isScenarioCard(card)) {
         if (!profile) return null;
@@ -3451,6 +3489,9 @@
           attire: profile.attire,
           lora: modelUsesReference ? null : profile.subjectLora?.name ?? null,
           referenceImage: modelUsesReference ? profile.referenceImage : null,
+          bodyReferenceImage: isPortraitH3ReferenceTemplateId(modelTemplate)
+            ? profile.bodyReferenceImage
+            : null,
           characterId: profile.id,
           profileFingerprint: profile.fingerprint,
           promptOverride: modelUsesReference
@@ -3538,6 +3579,12 @@
 
   async function generatePortrait(selectedRequest: PortraitRequest | null = portraitRequest) {
     if (!selectedRequest || !portraitCapabilities || portraitBusy || !portraitPersistenceReady || !portraitPersistenceAvailable) return;
+    if (
+      isScenarioCard(activeCard)
+      && (!bodyReferenceOverlayReady
+        || bodyReferenceOverlayCorruptProfileIds.length > 0
+        || Boolean(bodyReferenceOverlayBusyProfileId))
+    ) return;
     if (!portraitModelTemplateAvailable(portraitCapabilities, selectedRequest.modelTemplate)) return;
     suspendPortraitVideoForStaticGeneration();
     const key = portraitRequestKey(selectedRequest);
@@ -3547,15 +3594,28 @@
     const activeController = new AbortController();
     portraitController = activeController;
     let timedOut = false;
+    const timeoutMs = isPortraitH3ReferenceTemplateId(selectedRequest.modelTemplate)
+      ? PORTRAIT_H3_TIMEOUT_MS
+      : PORTRAIT_TIMEOUT_MS;
     const timeoutId = window.setTimeout(() => {
       timedOut = true;
       activeController.abort();
-    }, PORTRAIT_TIMEOUT_MS + 5_000);
+    }, timeoutMs + 5_000);
     try {
+      const h3ReferenceForm = isPortraitH3ReferenceTemplateId(selectedRequest.modelTemplate)
+        ? new FormData()
+        : null;
+      if (h3ReferenceForm) {
+        h3ReferenceForm.append('request', JSON.stringify(selectedRequest));
+        appendManagedBodyReferenceParts(
+          h3ReferenceForm,
+          portraitManagedBodyReferenceHashes(selectedRequest)
+        );
+      }
       const response = await fetch(`${base}/api/portrait`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(selectedRequest),
+        ...(h3ReferenceForm ? {} : { headers: { 'content-type': 'application/json' } }),
+        body: h3ReferenceForm ?? JSON.stringify(selectedRequest),
         signal: activeController.signal
       });
       if (!response.ok) {
@@ -3584,7 +3644,12 @@
           expressionResult,
           expressionCurrent,
           activeCard,
-          scenarioPortraitProfile,
+          effectiveScenarioPortraitProfile,
+          !isScenarioCard(activeCard) || (
+            bodyReferenceOverlayReady
+            && bodyReferenceOverlayCorruptProfileIds.length === 0
+            && !bodyReferenceOverlayBusyProfileId
+          ),
           portraitModelTemplate,
           portraitSelectedModelAvailable,
           portraitSelectedModelUsesReference,
@@ -3609,7 +3674,7 @@
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
         if (timedOut) {
-          portraitError = `Portrait generation timed out after ${(PORTRAIT_TIMEOUT_MS + 5_000) / 1000} seconds.`;
+          portraitError = `Portrait generation timed out after ${(timeoutMs + 5_000) / 1000} seconds.`;
           queuePortraitAutomaticRetry(key);
         }
       } else {
@@ -4478,7 +4543,8 @@
         localStorage.setItem(selectedScenarioStorageKey, selectedScenarioId);
         activeScenarioStarterId = starterId;
         localStorage.setItem(activeScenarioStarterStorageKey, activeScenarioStarterId);
-        portraitModelTemplate = starterProfile.modelTemplate;
+        portraitModelTemplate = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
+        portraitMegapixels = 0.5;
         portraitModelSelectionPersisted = true;
         localStorage.setItem(portraitModelTemplateStorageKey, portraitModelTemplate);
         cardSourceIdentifier = characterSourceIdentifier(scenario.card);
@@ -5453,18 +5519,20 @@
               {/each}
             </select>
           </label>
-          {#if scenarioPortraitProfile}
+          {#if portraitDisplayProfile}
             <label>
               <span>Character</span>
-              <input value={scenarioPortraitProfile.displayName} disabled aria-label="Portrait character" />
+              <input value={portraitDisplayProfile.displayName} disabled aria-label="Portrait character" />
             </label>
             <label>
               <span>Identity</span>
               <input
-                value={portraitSelectedModelUsesReference
-                  ? `Canonical reference · ${scenarioPortraitProfile.referenceImage.width}×${scenarioPortraitProfile.referenceImage.height} · ${scenarioPortraitProfile.referenceImage.aspectRatio}`
-                  : scenarioPortraitProfile.subjectLora
-                    ? `Z-Image LoRA · ${scenarioPortraitProfile.subjectLora.name.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · trigger ${scenarioPortraitProfile.subjectLora.trigger}`
+                value={isPortraitH3ReferenceTemplateId(portraitModelTemplate)
+                  ? portraitH3ReferenceSummary || 'H3 references · restoring verified body library'
+                  : portraitSelectedModelUsesReference
+                    ? `Canonical reference · ${portraitDisplayProfile.referenceImage.width}×${portraitDisplayProfile.referenceImage.height} · ${portraitDisplayProfile.referenceImage.aspectRatio}`
+                  : portraitDisplayProfile.subjectLora
+                    ? `Z-Image LoRA · ${portraitDisplayProfile.subjectLora.name.replace(/^zimage\//, '').replace(/\.safetensors$/, '')} · trigger ${portraitDisplayProfile.subjectLora.trigger}`
                     : 'Text prompt · no reference or LoRA'}
                 disabled
                 aria-label="Portrait identity source"
@@ -5472,11 +5540,11 @@
             </label>
             <label>
               <span>Attire</span>
-              <input value={scenarioPortraitProfile.attire} disabled aria-label="Portrait attire" />
+              <input value={portraitDisplayProfile.attire} disabled aria-label="Portrait attire" />
             </label>
             <label>
               <span>Setting</span>
-              <input value={scenarioPortraitProfile.setting} disabled aria-label="Portrait setting" />
+              <input value={portraitDisplayProfile.setting} disabled aria-label="Portrait setting" />
             </label>
           {:else}
             <label>
@@ -5501,12 +5569,16 @@
               <input bind:value={portraitSetting} on:change={persistPortraitSettings} maxlength="500" placeholder="Optional" disabled={portraitBusy} aria-label="Portrait setting" />
             </label>
           {/if}
-          <label>
-            <span>Megapixels</span>
-            <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
-              {#each portraitCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
-            </select>
-          </label>
+          {#if isPortraitH3ReferenceTemplateId(portraitModelTemplate)}
+            <small class="prompt-guide">576×1024 · fixed 9:16 · H3 Ref2VA five-frame keeper · frame 0 · 20-step res_multistep/simple · shifts 12/3 · no LoRA</small>
+          {:else}
+            <label>
+              <span>Megapixels</span>
+              <select bind:value={portraitMegapixels} on:change={persistPortraitSettings} disabled={portraitBusy} aria-label="Portrait megapixels">
+                {#each portraitCapabilities.megapixels as megapixels}<option value={megapixels}>{megapixels} MP</option>{/each}
+              </select>
+            </label>
+          {/if}
           {#if selectedPortraitCapability && !portraitSelectedModelAvailable}
             <div class="sidecar-error capability-error" role="alert">
               <span>{selectedPortraitCapability.template.label} is unavailable{selectedPortraitCapability.missing.length
@@ -5516,20 +5588,25 @@
                 {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
               </button>
             </div>
-          {:else if scenarioPortraitProfile?.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable}
+          {:else if portraitDisplayProfile?.subjectLora && !portraitSelectedModelUsesReference && !portraitSelectedSubjectLoraAvailable}
             <div class="sidecar-error capability-error" role="alert">
-              <span>Linked identity LoRA is unavailable · {scenarioPortraitProfile.subjectLora.name}</span>
+              <span>Linked identity LoRA is unavailable · {portraitDisplayProfile.subjectLora.name}</span>
               <button class="error-retry" on:click={() => void loadPortraitGenerator()} disabled={portraitCapabilitiesLoading}>
                 {portraitCapabilitiesLoading ? 'Checking…' : 'Refresh models'}
               </button>
             </div>
-          {:else if !scenarioPortraitProfile && portraitSelectedModelUsesReference}
+          {:else if !portraitDisplayProfile && portraitSelectedModelUsesReference}
             <div class="sidecar-error" role="alert">This reference-edit model requires a scenario identity reference.</div>
-          {:else if selectedPortraitCapability}
+          {:else if selectedPortraitCapability && !isPortraitH3ReferenceTemplateId(portraitModelTemplate)}
             <small class="prompt-guide">{selectedPortraitCapability.template.promptGuide}</small>
           {/if}
-          {#if isScenarioCard(activeCard) && !scenarioPortraitProfile}
+          {#if isScenarioCard(activeCard) && !portraitDisplayProfile}
             <div class="sidecar-error" role="alert">This scenario has no validated portrait identity. No portrait will be generated.</div>
+          {/if}
+          {#if isScenarioCard(activeCard) && ((!bodyReferenceOverlayReady && bodyReferenceOverlayCorruptProfileIds.length === 0) || bodyReferenceOverlayBusyProfileId)}
+            <small>Restoring the verified identity/body reference library before portrait generation.</small>
+          {:else if isScenarioCard(activeCard) && bodyReferenceOverlayCorruptProfileIds.length > 0}
+            <div class="sidecar-error" role="alert">Portrait generation is blocked by a corrupt saved body reference. Remove it under Scene cast references.</div>
           {/if}
           {#if portraitError}<div class="sidecar-error" role="alert">{portraitError}</div>{/if}
           <button on:click={() => void generatePortrait()} disabled={portraitBusy || !portraitRequest || !expressionsEnabled || !portraitPersistenceAvailable}>
@@ -5609,7 +5686,7 @@
               </select>
             </label>
           {/if}
-          <small>{selectedPortraitVideoModeCapability?.label} · {selectedPortraitVideoTemplateCapability?.template.label} · silent · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {PORTRAIT_VIDEO_FPS} FPS · {((portraitVideoTiming.frames - 1) / PORTRAIT_VIDEO_FPS).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / PORTRAIT_VIDEO_FPS).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
+          <small>{selectedPortraitVideoModeCapability?.label} · {selectedPortraitVideoTemplateCapability?.template.label} · silent, no speech or talking · {portraitVideoDurationSeconds} s selected · {portraitVideoTiming.frames} frames @ {portraitVideoTiming.fps} FPS · {((portraitVideoTiming.frames - 1) / portraitVideoTiming.fps).toFixed(3)} s first-to-last · {(portraitVideoTiming.frames / portraitVideoTiming.fps).toFixed(3)} s nominal encoded · H.264 video-only MP4</small>
           {#if selectedPortraitVideoModeCapability && !portraitVideoSelectedModeAvailable}
             <div class="sidecar-error" role="alert">
               {selectedPortraitVideoModeCapability.label} is unavailable{selectedPortraitVideoModeCapability.missing.length
@@ -5690,7 +5767,7 @@
                         type="file"
                         accept="image/png"
                         aria-label={`Add or replace ${profile.displayName} body and wardrobe reference`}
-                        disabled={!bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId) || inlineSceneBusy || inlineSceneVideoBusy}
+                        disabled={!bodyReferenceOverlayReady || Boolean(bodyReferenceOverlayBusyProfileId) || portraitBusy || inlineSceneBusy || inlineSceneVideoBusy}
                         on:change={(event) => void importBodyReference(profile, event)}
                       />
                       <span>{bodyReferenceOverlayBusyProfileId === profile.id ? 'Saving…' : effectiveProfile?.bodyReferenceImage ? 'Replace' : 'Add body'}</span>
@@ -5701,7 +5778,7 @@
                         aria-label={corruptBody
                           ? `Remove corrupt saved body and wardrobe reference for ${profile.displayName}`
                           : `Remove ${profile.displayName} managed body and wardrobe reference`}
-                        disabled={Boolean(bodyReferenceOverlayBusyProfileId) || inlineSceneBusy || inlineSceneVideoBusy || (!bodyReferenceOverlayReady && !corruptBody)}
+                        disabled={Boolean(bodyReferenceOverlayBusyProfileId) || portraitBusy || inlineSceneBusy || inlineSceneVideoBusy || (!bodyReferenceOverlayReady && !corruptBody)}
                         on:click={() => void clearBodyReference(profile)}
                       >{corruptBody ? 'Remove corrupt saved ref' : 'Remove'}</button>
                     {/if}

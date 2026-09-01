@@ -8,19 +8,19 @@ import {
   type PortraitSource
 } from './portrait.ts';
 
-export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v8' as const;
-export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v9' as const;
+export const PORTRAIT_VIDEO_REQUEST_SPEC = 'mullet_portrait_video_request_v9' as const;
+export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilities_v10' as const;
 export const LTX25_PORTRAIT_VIDEO_TEMPLATE_ID = 'ltx-2.5-distilled-portrait-v4' as const;
-export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v1' as const;
-export const PORTRAIT_VIDEO_TEMPLATE_ID = LTX25_PORTRAIT_VIDEO_TEMPLATE_ID;
+export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v2' as const;
+export const PORTRAIT_VIDEO_TEMPLATE_ID = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID;
 export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-end-frame-v1' as const;
 export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;
 export const LTX25_PORTRAIT_VIDEO_DURATIONS = Object.freeze([2] as const);
-export const MINIMAX_H3_PORTRAIT_VIDEO_DURATIONS = Object.freeze([3, 5] as const);
+export const MINIMAX_H3_PORTRAIT_VIDEO_DURATIONS = Object.freeze([2, 3, 5] as const);
 export const PORTRAIT_VIDEO_DURATIONS = Object.freeze([2, 3, 5] as const);
-export const PORTRAIT_VIDEO_FPS = 24 as const;
-export const PORTRAIT_VIDEO_FRAMES = 49 as const;
+export const PORTRAIT_VIDEO_FPS = 28 as const;
+export const PORTRAIT_VIDEO_FRAMES = 56 as const;
 export const PORTRAIT_VIDEO_MODE_I2V = 'i2v' as const;
 export const PORTRAIT_VIDEO_MODE_LOOP_FLF = 'flf2v_loop' as const;
 export const PORTRAIT_VIDEO_MODE_GENERATED_FLF = 'flf2v_generated' as const;
@@ -123,20 +123,22 @@ export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE = Object.freeze({
     'VAEDecode',
     'CreateVideo',
     'SaveVideo',
-    'LoraLoaderModelOnly'
+    'LoraLoaderModelOnly',
+    'MiniMaxH3SigmaShift'
   ],
   outputNode: '15',
   durations: MINIMAX_H3_PORTRAIT_VIDEO_DURATIONS,
   multiple: 32,
   shortEdge: 576,
   maxPixels: 576 * 1024,
-  sampler: 'res_multistep',
+  sampler: 'euler',
   scheduler: 'simple',
   steps: 4,
   denoise: 1,
+  shiftVideo: 6,
+  shiftAudio: 3,
   format: 'auto',
   codec: 'auto',
-  bitDepth: 8,
   promptGuide: 'locked head-and-chest portrait, restrained natural motion, identical first/last-frame loop, silent video-only output, no cuts'
 } as const);
 
@@ -249,10 +251,15 @@ const INPUT_IMAGE_PATTERN = /^portrait-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const LTX_NEGATIVE_PROMPT = 'oversaturated, overexposed, static frame, blurry details, subtitles, text, watermark, cartoon, painting, gray cast, worst quality, low quality, jpeg artifacts, deformed face, deformed hands, fused fingers, extra limbs, cluttered background, camera cuts, camera shake, black frames, talking, lip movement, speech gestures';
 const dimensionMap = new Map(PORTRAIT_VIDEO_DIMENSIONS.map((entry) => [entry.aspectRatio, entry]));
-const durationFrameMap = new Map<PortraitVideoDurationSeconds, number>([
-  [2, PORTRAIT_VIDEO_FRAMES],
-  [3, 73],
-  [5, 124]
+const timingMap = new Map<PortraitVideoTemplateId, Map<PortraitVideoDurationSeconds, { frames: number; fps: number }>>([
+  [LTX25_PORTRAIT_VIDEO_TEMPLATE_ID, new Map([
+    [2, { frames: 49, fps: 24 }]
+  ])],
+  [MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID, new Map([
+    [2, { frames: PORTRAIT_VIDEO_FRAMES, fps: PORTRAIT_VIDEO_FPS }],
+    [3, { frames: 73, fps: 24 }],
+    [5, { frames: 124, fps: 24 }]
+  ])]
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -275,17 +282,18 @@ function portraitDimensionsMatch(width: number, height: number, aspectRatio: Por
 
 export function portraitVideoDimensions(
   aspectRatio: PortraitAspectRatio,
-  durationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS
+  durationSeconds: PortraitVideoDurationSeconds = PORTRAIT_VIDEO_DURATION_SECONDS,
+  modelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID
 ): { width: number; height: number; frames: number; fps: number } {
   const dimensions = dimensionMap.get(aspectRatio);
   if (!dimensions) throw new Error('unsupported portrait-video aspect ratio');
-  const frames = durationFrameMap.get(durationSeconds);
-  if (!frames) throw new Error('unsupported portrait-video duration');
+  const timing = timingMap.get(modelTemplate)?.get(durationSeconds);
+  if (!timing) throw new Error('unsupported portrait-video duration for model template');
   return {
     width: dimensions.width,
     height: dimensions.height,
-    frames,
-    fps: PORTRAIT_VIDEO_FPS
+    frames: timing.frames,
+    fps: timing.fps
   };
 }
 
@@ -360,7 +368,6 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
   const durationSeconds = value.durationSeconds;
   if (
     typeof durationSeconds !== 'number'
-    || !durationFrameMap.has(durationSeconds as PortraitVideoDurationSeconds)
     || !(template.durations as readonly number[]).includes(durationSeconds)
   ) {
     throw new Error('unsupported portrait-video duration for model template');
@@ -432,6 +439,39 @@ export function buildPortraitVideoPrompt(request: PortraitVideoRequest): string 
   ].join(' ');
 }
 
+export function buildMiniMaxH3PortraitVideoPrompt(request: PortraitVideoRequest): string {
+  const normalized = normalizePortraitVideoRequest(request);
+  if (normalized.modelTemplate !== MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID) {
+    throw new Error('portrait-video request does not select MiniMax H3');
+  }
+  const { frames, fps } = portraitVideoDimensions(
+    normalized.aspectRatio,
+    normalized.durationSeconds,
+    normalized.modelTemplate
+  );
+  const effectiveDuration = (frames / fps).toFixed(2);
+  const alignment = normalized.mode === PORTRAIT_VIDEO_MODE_I2V
+    ? 'For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.'
+    : `How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the ${effectiveDuration}-second mark of the target video.`;
+  const firstPicture = normalized.mode === PORTRAIT_VIDEO_MODE_I2V ? '<Picture 1>' : 'Picture 1';
+  const endpointPath = normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF
+    ? `The supplied endpoint images are identical; after the minimal idle motion, the subject progressively returns and settles into the exact identity, face, expression, pose, closed-mouth position, lighting, background, and composition established by Picture 2 at ${effectiveDuration} seconds.`
+    : normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF
+      ? `The subject moves continuously from Picture 1 and progressively settles into the exact identity, face, expression, pose, closed-mouth position, lighting, background, and composition established by Picture 2 at ${effectiveDuration} seconds.`
+      : 'Continue forward from <Picture 1> with only the restrained idle motion described here.';
+  return [
+    alignment,
+    '',
+    `integrated_multimodal_description: [Shot 1] Live-action, cinematic, the camera holds a Static Shot on the head-and-chest portrait. At 0.00 seconds, preserve the exact identity, face, expression, hairstyle, attire, lighting, background, framing, and pose established by ${firstPicture}.`,
+    `The subject holds a restrained ${normalized.source.portraitSource.expression} expression while breathing visually with almost imperceptible chest movement, blinking once, and allowing only subtle hair and fabric motion. ${endpointPath}`,
+    'Nobody speaks, vocalizes, or mouths words; the mouth remains closed and still, with no lip movement or speech gestures. Use one continuous shot with no cuts, camera movement, new subjects, new objects, text, subtitles, captions, or black frames.',
+    '',
+    'overall_soundscape: N/A. Complete silence; no dialogue, voices, narration, singing, breathing sounds, room tone, ambience, Foley, sound effects, or other audio.',
+    '',
+    'non_diegetic_music: N/A. No music or audience-only score.'
+  ].join('\n');
+}
+
 export function portraitVideoEndFrameSeed(videoSeed: number): number {
   const seed = integer(videoSeed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
   return seed === Number.MAX_SAFE_INTEGER ? 0 : seed + 1;
@@ -491,7 +531,11 @@ export function buildLtx25PortraitVideoWorkflow(
   }
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio, normalized.durationSeconds);
+  const { width, height, frames, fps } = portraitVideoDimensions(
+    normalized.aspectRatio,
+    normalized.durationSeconds,
+    normalized.modelTemplate
+  );
   if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF || normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF) {
     const lastInput = normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF ? endFrameInput : portraitInput;
     if (!lastInput) throw new Error('portrait-video generated end-frame input is required');
@@ -654,7 +698,11 @@ export function buildMiniMaxH3PortraitVideoWorkflow(
   }
   validatePortraitVideoInputReference(portraitInput, normalized.source.portraitImageSha256);
   const validatedSeed = integer(seed, 'portrait-video seed', 0, Number.MAX_SAFE_INTEGER);
-  const { width, height, frames, fps } = portraitVideoDimensions(normalized.aspectRatio, normalized.durationSeconds);
+  const { width, height, frames, fps } = portraitVideoDimensions(
+    normalized.aspectRatio,
+    normalized.durationSeconds,
+    normalized.modelTemplate
+  );
   let lastFrame: [string, number] | null = null;
   if (normalized.mode === PORTRAIT_VIDEO_MODE_LOOP_FLF) {
     if (endFrameInput !== undefined) throw new Error('portrait-video loop mode does not accept a separate end frame');
@@ -683,22 +731,23 @@ export function buildMiniMaxH3PortraitVideoWorkflow(
     '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
       clip: ['2', 0],
       vae: ['3', 0],
-      prompt: buildPortraitVideoPrompt(normalized),
+      prompt: buildMiniMaxH3PortraitVideoPrompt(normalized),
       width,
       height,
       length: frames,
       first_frame: ['5', 0],
       ...(lastFrame ? { last_frame: lastFrame } : {})
     } },
-    '7': { class_type: 'BasicGuider', inputs: { model: ['16', 0], conditioning: ['6', 0] } },
+    '7': { class_type: 'BasicGuider', inputs: { model: ['18', 0], conditioning: ['6', 0] } },
     '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
-    '9': { class_type: 'BasicScheduler', inputs: { model: ['16', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
+    '9': { class_type: 'BasicScheduler', inputs: { model: ['18', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
     '10': { class_type: 'RandomNoise', inputs: { noise_seed: validatedSeed } },
     '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
     '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
-    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps, bit_depth: template.bitDepth } },
+    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps } },
     '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: filenamePrefix, format: template.format, codec: template.codec } },
     '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
+    '18': { class_type: 'MiniMaxH3SigmaShift', inputs: { model: ['16', 0], shift_video: template.shiftVideo, shift_audio: template.shiftAudio } },
     ...(normalized.mode === PORTRAIT_VIDEO_MODE_GENERATED_FLF && endFrameInput
       ? { '17': { class_type: 'LoadImage', inputs: { image: `${endFrameInput.subfolder}/${endFrameInput.name}` } } }
       : {})

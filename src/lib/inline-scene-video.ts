@@ -130,7 +130,6 @@ export const MINIMAX_H3_INLINE_SCENE_VIDEO_TEMPLATE = Object.freeze({
   denoise: 1,
   format: 'auto',
   codec: 'auto',
-  bitDepth: 8,
   maxReferenceImages: 9,
   referenceImageSize: 'match',
   promptGuide: 'official six-section Ref2VA prompt, generated scene as Picture 1, canonical cast references in stable order, one restrained continuous shot, native ambience without dialogue, narration, or music'
@@ -884,7 +883,7 @@ export function buildMiniMaxH3InlineSceneVideoWorkflow(
     '25': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['24', 0], guider: ['21', 0], sampler: ['22', 0], sigmas: ['23', 0], latent_image: ['20', 1] } },
     '26': { class_type: 'VAEDecode', inputs: { samples: ['25', 0], vae: ['3', 0] } },
     '27': { class_type: 'VAEDecodeAudio', inputs: { samples: ['25', 0], vae: ['4', 0] } },
-    '28': { class_type: 'CreateVideo', inputs: { images: ['26', 0], fps, audio: ['27', 0], bit_depth: template.bitDepth } },
+    '28': { class_type: 'CreateVideo', inputs: { images: ['26', 0], fps, audio: ['27', 0] } },
     '29': { class_type: 'SaveVideo', inputs: { video: ['28', 0], filename_prefix: 'mullet/scene-motion', format: template.format, codec: template.codec } }
   };
 }

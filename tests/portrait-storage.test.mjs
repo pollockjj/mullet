@@ -12,6 +12,7 @@ import {
   verifyStoredPortrait
 } from '../src/lib/portrait-storage.ts';
 import {
+  PORTRAIT_H3_REFERENCE_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID
 } from '../src/lib/portrait.ts';
@@ -57,10 +58,11 @@ test('normalizes a generated portrait without any canonical transcript text', ()
   assert.equal(JSON.stringify(result).includes('transcript'), false);
 });
 
-test('accepts persisted results only from the Z-Image and Qwen image models', () => {
+test('accepts persisted results only from the additive Z-Image, Qwen, and H3 image models', () => {
   for (const modelTemplate of [
     PORTRAIT_TEMPLATE_ID,
-    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
+    PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
+    PORTRAIT_H3_REFERENCE_TEMPLATE_ID
   ]) {
     assert.equal(normalizeStoredPortrait(stored({ modelTemplate })).modelTemplate, modelTemplate);
   }
@@ -83,7 +85,7 @@ test('rejects a stored portrait whose PNG IHDR contradicts its fixed-portrait me
   );
 });
 
-test('unwraps raw v5 portraits and writer-owned envelopes while rejecting malformed ownership', () => {
+test('unwraps raw v6 portraits and writer-owned envelopes while rejecting malformed ownership', () => {
   const portrait = stored();
   assert.deepEqual(unwrapStoredPortrait(portrait), portrait);
   assert.deepEqual(unwrapStoredPortrait({
@@ -101,14 +103,15 @@ test('unwraps raw v5 portraits and writer-owned envelopes while rejecting malfor
   );
 });
 
-test('ignores every legacy portrait envelope, including the superseded 2:3 v4 state', async () => {
+test('ignores every legacy portrait envelope through v5', async () => {
   const originalIndexedDb = globalThis.indexedDB;
   try {
     for (const spec of [
       'mullet_stored_portrait_v1',
       'mullet_stored_portrait_v2',
       'mullet_stored_portrait_v3',
-      'mullet_stored_portrait_v4'
+      'mullet_stored_portrait_v4',
+      'mullet_stored_portrait_v5'
     ]) {
       const legacyPortrait = stored({
         spec,
@@ -116,36 +119,44 @@ test('ignores every legacy portrait envelope, including the superseded 2:3 v4 st
           modelTemplate: 'retired-reference-editor-v1'
         } : spec.endsWith('_v3') ? { width: 704, height: 704 } : { width: 768, height: 1152 })
       });
-      let closed = false;
-      globalThis.indexedDB = {
-        open: () => {
-          const openRequest = {};
-          queueMicrotask(() => {
-            openRequest.result = {
-              objectStoreNames: { contains: () => true },
-              transaction: () => {
-                const transaction = {};
-                transaction.objectStore = () => ({
-                  get: () => {
-                    const readRequest = {};
-                    queueMicrotask(() => {
-                      readRequest.result = legacyPortrait;
-                      readRequest.onsuccess();
-                    });
-                    return readRequest;
-                  }
-                });
-                return transaction;
-              },
-              close: () => { closed = true; }
-            };
-            openRequest.onsuccess();
-          });
-          return openRequest;
-        }
+      const version = spec.at(-1);
+      const legacyEnvelope = {
+        spec: `mullet_stored_portrait_envelope_v${version}`,
+        writeId: `legacy-v${version}`,
+        portrait: legacyPortrait
       };
-      assert.equal(await loadStoredPortrait(), null);
-      assert.equal(closed, true);
+      for (const persisted of [legacyPortrait, legacyEnvelope]) {
+        let closed = false;
+        globalThis.indexedDB = {
+          open: () => {
+            const openRequest = {};
+            queueMicrotask(() => {
+              openRequest.result = {
+                objectStoreNames: { contains: () => true },
+                transaction: () => {
+                  const transaction = {};
+                  transaction.objectStore = () => ({
+                    get: () => {
+                      const readRequest = {};
+                      queueMicrotask(() => {
+                        readRequest.result = persisted;
+                        readRequest.onsuccess();
+                      });
+                      return readRequest;
+                    }
+                  });
+                  return transaction;
+                },
+                close: () => { closed = true; }
+              };
+              openRequest.onsuccess();
+            });
+            return openRequest;
+          }
+        };
+        assert.equal(await loadStoredPortrait(), null);
+        assert.equal(closed, true);
+      }
       assert.throws(() => normalizeStoredPortrait(legacyPortrait), /invalid stored portrait/);
     }
   } finally {
