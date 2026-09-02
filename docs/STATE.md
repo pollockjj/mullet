@@ -1,4 +1,4 @@
-QUEUE-ITEM: 1b (expression loop restored on reload, loop keyed on still bytes) | STATE: candidate-verified, deploying | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 2 (chain ordering: caption of this turn, bounded wait, no discard) | STATE: in-progress; 1b deployed as d3c9391, served check running | SERVED-SHA: d3c939123eb10ef9fb50a2f590dd401a6ce74812 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
