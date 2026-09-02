@@ -1,4 +1,4 @@
-QUEUE-ITEM: 3 (caption hygiene) | STATE: committed, candidate check pending; 2 deployed as 2018be9, served check running | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 3 (caption hygiene) | STATE: candidate check running; 2 READY FOR OPERATOR on 2018be9 | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -324,3 +324,10 @@ categories that are not visible; the normalizer drops filler items (`none`, `n/a
 keeping the model's own sentence otherwise. Pinned by two tests named after the served
 prompts that leaked (`37c34bd5`, `afa0bfd5`, `bd6c123a`). Rollback plist for 2018be9:
 `scratch/deploy/rollback-d3c9391-before-2018be9.plist`.
+
+Served 2018be9, five-stage check through the real origin
+(`scratch/browser-check/loop-2018be9/`): ok=true. Label 1.3 s, portrait 27.3 s, caption
+2.8 s, scene POST at 40.1 s (after the caption), scene still 80.5 s, portrait loop 97.5 s,
+scene loop 157.5 s. Scene still b488559c and scene loop 85bcd04c on firestorm:8189 both
+carry this turn's caption. Reload: all four restored, zero caption and zero generation
+requests. Media panel: Continuity current. READY FOR OPERATOR for item 2.
