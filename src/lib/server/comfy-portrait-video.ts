@@ -14,6 +14,7 @@ import {
   type PortraitVideoInputReference,
   type PortraitVideoRequest
 } from '../portrait-video.ts';
+import { trackPrompt, untrackPrompt } from './inflight.ts';
 import { validateH264VideoOnlyMp4 } from '../mp4.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -637,6 +638,7 @@ export async function runComfyPortraitEndFrame(
       signal
     });
     id = promptId(await responseJson(queueResponse, 'portrait end-frame queue submission'));
+    trackPrompt(baseUrl, id);
     const image = await waitForEndFrame(fetcher, baseUrl, id, signal);
     completed = true;
     const query = new URLSearchParams(image);
@@ -656,6 +658,8 @@ export async function runComfyPortraitEndFrame(
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
     throw cause;
+  } finally {
+    untrackPrompt(id);
   }
 }
 
@@ -684,6 +688,7 @@ export async function runComfyPortraitVideo(
       signal
     });
     id = promptId(await responseJson(queueResponse, 'portrait-video queue submission'));
+    trackPrompt(baseUrl, id);
     const video = await waitForVideo(fetcher, baseUrl, id, request, signal);
     const query = new URLSearchParams(video);
     const outputResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
@@ -720,5 +725,7 @@ export async function runComfyPortraitVideo(
   } catch (cause) {
     if (id && !validated) await cancelComfyJob(fetcher, baseUrl, id);
     throw cause;
+  } finally {
+    untrackPrompt(id);
   }
 }

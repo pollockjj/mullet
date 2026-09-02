@@ -18,6 +18,7 @@ import {
   type PortraitRequest,
   type PortraitTemplate
 } from '../portrait.ts';
+import { trackPrompt, untrackPrompt } from './inflight.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -412,6 +413,7 @@ export async function runComfyPortrait(
       signal
     });
     id = promptId(await responseJson(queueResponse, 'queue submission'));
+    trackPrompt(baseUrl, id);
     const image = await waitForImage(fetcher, baseUrl, id, request, signal);
     const query = new URLSearchParams(image);
     const imageResponse = await fetcher(endpoint(baseUrl, `/view?${query}`), { signal });
@@ -431,5 +433,7 @@ export async function runComfyPortrait(
   } catch (cause) {
     if (id && !validated) await cancelComfyJob(fetcher, baseUrl, id);
     throw cause;
+  } finally {
+    untrackPrompt(id);
   }
 }

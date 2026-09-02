@@ -18,6 +18,7 @@ import {
   type InlineSceneImageRequest,
   type InlineSceneUploadedMasterInput
 } from '../inline-scene.ts';
+import { trackPrompt, untrackPrompt } from './inflight.ts';
 import { sha256Hex as sha256BytesHex } from './comfy-portrait-video.ts';
 import { assertComfyIdentityReference } from './comfy-portrait.ts';
 
@@ -399,6 +400,7 @@ export async function runComfyInlineScene(
       signal
     });
     id = queuedPromptId(await responseJson(queueResponse, 'inline-scene queue submission'));
+    trackPrompt(baseUrl, id);
     const image = await waitForImage(fetcher, baseUrl, id, request, signal);
     completed = true;
     const query = new URLSearchParams(image);
@@ -423,5 +425,7 @@ export async function runComfyInlineScene(
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
     throw cause;
+  } finally {
+    untrackPrompt(id);
   }
 }

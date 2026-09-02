@@ -20,6 +20,7 @@ import {
 } from '../inline-scene.ts';
 import { validateH264AacMp4, validateH264VideoOnlyMp4 } from '../mp4.ts';
 import { assertComfyIdentityReference } from './comfy-portrait.ts';
+import { trackPrompt, untrackPrompt } from './inflight.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -485,6 +486,7 @@ export async function runComfyInlineSceneVideo(
       signal
     });
     id = promptId(await responseJson(queueResponse, 'inline-scene video queue submission'));
+    trackPrompt(baseUrl, id);
     const video = await waitForVideo(fetcher, baseUrl, id, request, signal);
     const query = new URLSearchParams(video);
     const outputResponse = await fetcher(endpoint(baseUrl, '/view?' + query), { signal });
@@ -528,5 +530,7 @@ export async function runComfyInlineSceneVideo(
   } catch (cause) {
     if (id && !completed) await cancelComfyJob(fetcher, baseUrl, id);
     throw cause;
+  } finally {
+    untrackPrompt(id);
   }
 }

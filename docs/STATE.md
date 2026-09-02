@@ -1,4 +1,4 @@
-QUEUE-ITEM: 4 (speed levers) | STATE: decisions recorded, candidate check next; 1b, 2, 3, 5 READY FOR OPERATOR on 79409d1 | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 4 (speed levers) | STATE: candidate check waiting for idle lanes; drain committed, unexercised; 1b, 2, 3, 5 READY FOR OPERATOR on 79409d1 | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -390,3 +390,11 @@ Timeouts: the two 900 s loop timeouts become 300 s. Measured loops are 65-86 s a
 166 s when queued behind foreign jobs; 300 s is more than three times the contended
 value and stops a dead job from holding the panel for fifteen minutes. Still timeouts
 were already 120 s.
+
+Deploy drain (critic finding CMP-8): every ComfyUI prompt MULLET submits is tracked in
+`src/lib/server/inflight.ts` until it finishes; `src/hooks.server.ts` cancels exactly
+those prompt IDs on SIGTERM, SIGINT and adapter-node's `sveltekit:shutdown`, so a deploy
+no longer leaves the operator's in-flight loop running on a shared lane behind a request
+that will never return. Not yet exercised: deploys here happen only when no MULLET job is
+running, so the first real evidence will be a ComfyUI history entry marked
+`execution_interrupted` next to a restart.
