@@ -1,4 +1,4 @@
-QUEUE-ITEM: 5 (failure latches) | STATE: committed, awaiting candidate check with item 3; 2 READY FOR OPERATOR on 2018be9 | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 5 (failure latches) | STATE: candidate check running (items 3+5); 3 candidate-verified; 2 READY FOR OPERATOR on 2018be9 | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -340,3 +340,8 @@ failed capability probe retries every 15 s up to six times instead of disabling 
 stage for the page session; the Media refresh reloads any missing capabilities before
 regenerating; both video routes log one line per delivered loop (prompt ID, filename,
 bytes, duration) so client-side rejections are diagnosable against the server log.
+
+Item 3 evidence, candidate on 8782 (`scratch/browser-check/loop-candidate-3/`): ok=true;
+the scene still f9925c3d and scene loop 534e152f prompts on firestorm:8189 carry "Jenna
+Stannis: blonde shoulder-length wavy hair, maroon and silver leather jacket, silver hoop
+earrings" with no background item and no filler. Caption round trip 7.2 s this run.
