@@ -30,7 +30,13 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       maxTokens: 384,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(INLINE_SCENE_TIMEOUT_MS)])
     });
-    const direction = parseInlineSceneResponse(completion, sceneRequest.candidates);
+    let direction;
+    try {
+      direction = parseInlineSceneResponse(completion, sceneRequest.candidates);
+    } catch (cause) {
+      console.error('inline-scene sidecar raw text:', String(completion).slice(0, 400).replace(/\s+/g, ' '));
+      throw cause;
+    }
     return json(createInlineSceneResult(sceneRequest, runtime.modelId, direction), {
       headers: { 'cache-control': 'no-store' }
     });

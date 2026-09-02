@@ -1,4 +1,4 @@
-QUEUE-ITEM: hardening | STATE: restart recovery verified on the served build; items 1-6 READY FOR OPERATOR on e9e8f8f | SERVED-SHA: e9e8f8f95b004793a1a55f7283c8be350a4e978d | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: hardening (sidecar parsing) | STATE: committed, candidate check queued behind the caption-display candidate; items 1-6 READY FOR OPERATOR on e9e8f8f | SERVED-SHA: e9e8f8f95b004793a1a55f7283c8be350a4e978d | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -454,3 +454,17 @@ loop request got 502 at 32.5 s, the first backoff retry at 47.6 s succeeded, and
 stage landed (portrait loop 110.1 s, scene still 98.0 s, scene loop 173.0 s), reload
 clean. The check reports ok=false only for the 502 the restart itself induced. A deploy
 now costs the operator's in-flight turn about 20 s, not the turn.
+
+Second-turn failure on the served e9e8f8f (`scratch/browser-check/loop-e9e8f8f/`,
+2026-09-02 00:03 CDT): turn 1 landed fully; on turn 2 the classifier answered
+off-vocabulary ("expression classifier returned an unknown label", twice) and the scene
+director named the cast by display name ("selected an unknown subject", four times), so
+the turn ended with no portrait, no loop and no scene. The earlier two-turn run at 23:16
+had passed with the same message; the local model's output varies. Decision: both parsers
+are now lenient. Classifier: JSON value, else the first vocabulary word in the text, else
+a synonym table (fearful, worried, focused, ...), else `neutral`, with the raw text logged
+server-side when it fell back. Director: extra JSON keys ignored, JSON extracted from
+surrounding prose, subjects resolved by ID, display name, alias or first name, unknown
+names dropped, an empty selection falls back to the speaking character, more than three
+keeps the first three, prompt length accepted between 20 and 260 words. Pinned by tests
+named after the failed turn.

@@ -606,13 +606,36 @@ function normalizeInlineScenePrompt(value: unknown): string {
   if (typeof value !== 'string') throw new Error('inline-scene prompt is invalid');
   const prompt = value.replace(/\s+/g, ' ').trim();
   const words = prompt ? prompt.split(/\s+/u).length : 0;
-  if (prompt.length > 2_000 || words < 40 || words > 160) {
-    throw new Error('inline-scene prompt must contain between 40 and 160 words');
+  // The system prompt asks for 40-160 words; the parser accepts what a model actually
+  // returns around that (a 35-word or 170-word direction is still a usable direction).
+  if (prompt.length > 2_000 || words < 20 || words > 260) {
+    throw new Error('inline-scene prompt must contain between 20 and 260 words');
   }
   if (H3_RESERVED_REFERENCE_TOKEN_PATTERN.test(prompt)) {
     throw new Error('inline-scene prompt cannot contain reserved H3 reference tokens');
   }
   return prompt;
+}
+
+// The director's JSON is read leniently: extra keys are ignored, a subject may be named
+// by ID, display name or alias, unknown names are dropped, and an empty selection falls
+// back to the first candidate (the speaking character). Observed 2026-09-02 00:03 on the
+// served build: the model named the cast by display name, the strict parser threw
+// "unknown subject" four times, and the turn ended with no scene.
+function resolveSubjectId(value: string, candidates: readonly InlineSceneSubjectCandidate[]): string | null {
+  const wanted = value.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US');
+  if (!wanted) return null;
+  const hyphenated = wanted.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  for (const candidate of candidates) {
+    if (candidate.id === wanted || candidate.id === hyphenated) return candidate.id;
+    if (candidate.displayName.toLocaleLowerCase('en-US') === wanted) return candidate.id;
+    if (candidate.aliases.some((alias) => alias.toLocaleLowerCase('en-US') === wanted)) return candidate.id;
+  }
+  const first = wanted.split(' ')[0];
+  for (const candidate of candidates) {
+    if (candidate.displayName.toLocaleLowerCase('en-US').split(' ')[0] === first && first.length > 2) return candidate.id;
+  }
+  return null;
 }
 
 export function parseInlineSceneResponse(
@@ -626,31 +649,33 @@ export function parseInlineSceneResponse(
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error('inline-scene sidecar must return one JSON object');
+    const embedded = cleaned.match(/\{[\s\S]*\}/);
+    try {
+      parsed = embedded ? JSON.parse(embedded[0]) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed === undefined) throw new Error('inline-scene sidecar must return one JSON object');
   }
   if (
     !isRecord(parsed)
-    || Object.keys(parsed).length !== 2
-    || !Object.hasOwn(parsed, 'prompt')
-    || !Object.hasOwn(parsed, 'subject_ids')
     || typeof parsed.prompt !== 'string'
     || !Array.isArray(parsed.subject_ids)
   ) {
     throw new Error('inline-scene sidecar must return exactly one prompt and one subject ID list');
   }
   const prompt = normalizeInlineScenePrompt(parsed.prompt);
-  if (
-    parsed.subject_ids.length < 1
-    || parsed.subject_ids.length > 3
-    || parsed.subject_ids.some((id) => typeof id !== 'string')
-  ) throw new Error('inline-scene sidecar must select between one and three subjects');
-  const requestedIds = parsed.subject_ids as string[];
-  if (new Set(requestedIds).size !== requestedIds.length) throw new Error('inline-scene sidecar selected duplicate subjects');
-  const selected = new Set(requestedIds);
-  if (requestedIds.some((id) => !normalizedCandidates.some((candidate) => candidate.id === id))) {
-    throw new Error('inline-scene sidecar selected an unknown subject');
+  const resolved = new Set<string>();
+  for (const entry of parsed.subject_ids) {
+    if (typeof entry !== 'string') continue;
+    const id = resolveSubjectId(entry, normalizedCandidates);
+    if (id) resolved.add(id);
   }
-  const subjectIds = normalizedCandidates.filter((candidate) => selected.has(candidate.id)).map((candidate) => candidate.id);
+  if (resolved.size === 0) resolved.add(normalizedCandidates[0].id);
+  const subjectIds = normalizedCandidates
+    .filter((candidate) => resolved.has(candidate.id))
+    .map((candidate) => candidate.id)
+    .slice(0, 3);
   return { prompt, subjectIds };
 }
 

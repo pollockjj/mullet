@@ -173,29 +173,85 @@ function withoutReasoning(value: string): string {
     .trim();
 }
 
+// Near-misses the classifier actually produces. Observed 2026-09-02 00:03 on the served
+// build: the second turn of a session returned an off-vocabulary word, the strict parser
+// threw "unknown label", and the turn ended with no portrait and no scene.
+const EXPRESSION_SYNONYMS: Readonly<Record<string, ExpressionLabel>> = Object.freeze({
+  fearful: 'fear', afraid: 'fear', scared: 'fear', terrified: 'fear', frightened: 'fear', dread: 'fear', alarmed: 'fear',
+  anxious: 'nervousness', nervous: 'nervousness', worried: 'nervousness', uneasy: 'nervousness', tense: 'nervousness',
+  apprehensive: 'nervousness', wary: 'nervousness', cautious: 'nervousness', unsettled: 'nervousness',
+  happy: 'joy', joyful: 'joy', delighted: 'joy', cheerful: 'joy', glad: 'joy', elated: 'joy',
+  sad: 'sadness', sorrow: 'sadness', sorrowful: 'sadness', melancholy: 'sadness', unhappy: 'sadness', downcast: 'sadness',
+  angry: 'anger', furious: 'anger', rage: 'anger', enraged: 'anger', irritated: 'annoyance', annoyed: 'annoyance',
+  frustrated: 'annoyance', exasperated: 'annoyance', impatient: 'annoyance',
+  surprised: 'surprise', astonished: 'surprise', shocked: 'surprise', startled: 'surprise', stunned: 'surprise',
+  curious: 'curiosity', intrigued: 'curiosity', interested: 'curiosity', inquisitive: 'curiosity',
+  confused: 'confusion', puzzled: 'confusion', bewildered: 'confusion', perplexed: 'confusion',
+  excited: 'excitement', eager: 'excitement', thrilled: 'excitement', exhilarated: 'excitement',
+  calm: 'neutral', composed: 'neutral', focused: 'neutral', determined: 'neutral', serious: 'neutral', attentive: 'neutral',
+  alert: 'neutral', resolute: 'neutral', steady: 'neutral', stoic: 'neutral', none: 'neutral', vigilant: 'neutral',
+  disgusted: 'disgust', repulsed: 'disgust', embarrassed: 'embarrassment', ashamed: 'embarrassment', proud: 'pride',
+  relieved: 'relief', loving: 'love', affectionate: 'love', tender: 'love', amused: 'amusement', wry: 'amusement',
+  approving: 'approval', disappointed: 'disappointment', disapproving: 'disapproval', optimistic: 'optimism',
+  hopeful: 'optimism', remorseful: 'remorse', guilty: 'remorse', regretful: 'remorse', grateful: 'gratitude',
+  thankful: 'gratitude', admiring: 'admiration', impressed: 'admiration', grieving: 'grief', mournful: 'grief',
+  bereaved: 'grief', concerned: 'caring', protective: 'caring', compassionate: 'caring', sympathetic: 'caring',
+  longing: 'desire', yearning: 'desire', wistful: 'desire', realizing: 'realization', realized: 'realization',
+  dawning: 'realization'
+});
+
+function earliestLabel(lower: string): ExpressionLabel | null {
+  let best: { label: ExpressionLabel; at: number } | null = null;
+  for (const label of EXPRESSION_LABELS) {
+    let from = 0;
+    while (from <= lower.length) {
+      const start = lower.indexOf(label, from);
+      if (start < 0) break;
+      const before = start === 0 ? '' : lower[start - 1];
+      const after = start + label.length >= lower.length ? '' : lower[start + label.length];
+      if (!/[a-z]/.test(before) && !/[a-z]/.test(after)) {
+        if (!best || start < best.at) best = { label, at: start };
+        break;
+      }
+      from = start + 1;
+    }
+  }
+  return best?.label ?? null;
+}
+
+// Resolves the classifier's text to one label. Prefers the JSON contract, then the first
+// vocabulary word in the text, then a synonym, and finally "neutral" rather than failing
+// the turn: a neutral portrait is better than none, and the route logs the raw text.
 export function parseExpressionResponse(value: unknown): ExpressionLabel {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error('expression classifier returned no text');
   const cleaned = withoutReasoning(value);
   try {
     const parsed = JSON.parse(cleaned);
     if (isRecord(parsed)) {
-      const expression = typeof parsed.emotion === 'string' ? parsed.emotion.trim().toLowerCase() : '';
-      if (isExpressionLabel(expression)) return expression;
+      for (const candidate of Object.values(parsed)) {
+        const expression = typeof candidate === 'string' ? candidate.trim().toLowerCase() : '';
+        if (isExpressionLabel(expression)) return expression;
+        if (expression && EXPRESSION_SYNONYMS[expression]) return EXPRESSION_SYNONYMS[expression];
+      }
     }
   } catch {
     // Plain-text output is the default SillyTavern LLM classifier contract.
   }
-
   const lower = cleaned.toLowerCase();
-  const matches = EXPRESSION_LABELS.filter((label) => {
-    const start = lower.indexOf(label);
-    if (start < 0) return false;
-    const before = start === 0 ? '' : lower[start - 1];
-    const after = start + label.length >= lower.length ? '' : lower[start + label.length];
-    return !/[a-z]/.test(before) && !/[a-z]/.test(after);
-  });
-  if (matches.length === 1) return matches[0];
-  throw new Error(matches.length > 1 ? 'expression classifier returned multiple labels' : 'expression classifier returned an unknown label');
+  const direct = earliestLabel(lower);
+  if (direct) return direct;
+  for (const word of lower.match(/[a-z]+/g) ?? []) {
+    const synonym = EXPRESSION_SYNONYMS[word];
+    if (synonym) return synonym;
+  }
+  return 'neutral';
+}
+
+export function expressionResponseWasRecognized(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const lower = withoutReasoning(value).toLowerCase();
+  if (earliestLabel(lower)) return true;
+  return (lower.match(/[a-z]+/g) ?? []).some((word) => Boolean(EXPRESSION_SYNONYMS[word]));
 }
 
 export function createExpressionSidecarResult(

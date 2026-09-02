@@ -6,6 +6,7 @@ import {
   cleanExpressionInput,
   createExpressionSidecarResult,
   normalizeExpressionSidecarRequest,
+  expressionResponseWasRecognized,
   parseExpressionResponse
 } from '$lib/sidecar';
 import { runSidecarCompletion } from '$lib/server/sidecar-model';
@@ -32,6 +33,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(SIDECAR_TIMEOUT_MS)])
     });
     const expression = parseExpressionResponse(completion);
+    if (!expressionResponseWasRecognized(completion)) {
+      console.warn('expression classifier fell back to neutral; raw text:', String(completion).slice(0, 300).replace(/\s+/g, ' '));
+    }
     return json(createExpressionSidecarResult(sidecarRequest, runtime.modelId, expression), {
       headers: { 'cache-control': 'no-store' }
     });

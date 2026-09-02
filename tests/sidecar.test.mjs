@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  expressionResponseWasRecognized,
   EXPRESSION_CLASSIFIER_PROMPT,
   EXPRESSION_LABELS,
   SIDECAR_TIMEOUT_MS,
@@ -39,8 +40,9 @@ test('matches SillyTavern LLM input cleanup and parses one known label only', ()
   assert.equal(parseExpressionResponse('grief'), 'grief');
   assert.equal(parseExpressionResponse('{"emotion":"JOY"}'), 'joy');
   assert.equal(parseExpressionResponse('<think>private reasoning</think>\nThe emotion is fear.'), 'fear');
-  assert.throws(() => parseExpressionResponse('joy and anger'), /multiple labels/);
-  assert.throws(() => parseExpressionResponse('melancholy'), /unknown label/);
+  // Several labels: the first one stated wins. A near-miss resolves through synonyms.
+  assert.equal(parseExpressionResponse('joy and anger'), 'joy');
+  assert.equal(parseExpressionResponse('melancholy'), 'sadness');
 });
 
 test('validates expression sidecar snapshots against the latest assistant response', () => {
@@ -123,4 +125,16 @@ test('forwards cancellation to a hung sidecar model request', async () => {
   });
   controller.abort(new DOMException('cancelled', 'AbortError'));
   await assert.rejects(completion, (cause) => cause instanceof DOMException && cause.name === 'AbortError');
+});
+
+// Observed 2026-09-02 00:03 on the served build: the classifier answered off-vocabulary
+// for the second turn of a session and the strict parser failed the whole turn.
+test('resolves near-miss classifier answers instead of failing the turn', () => {
+  assert.equal(parseExpressionResponse('The character is clearly fearful and tense.'), 'fear');
+  assert.equal(parseExpressionResponse('curiosity, then surprise'), 'curiosity');
+  assert.equal(parseExpressionResponse('{"emotion":"Worried"}'), 'nervousness');
+  assert.equal(parseExpressionResponse('She looks focused and alert.'), 'neutral');
+  assert.equal(parseExpressionResponse('no idea'), 'neutral');
+  assert.equal(expressionResponseWasRecognized('no idea'), false);
+  assert.equal(expressionResponseWasRecognized('fearful'), true);
 });

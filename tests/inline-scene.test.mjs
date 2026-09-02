@@ -399,13 +399,14 @@ test('accepts one bounded direction, canonicalizes cast order, and rejects inval
     { prompt: visualPrompt, subjectIds: ['jenna-stannis', 'servalan'] }
   );
   assert.throws(() => parseInlineSceneResponse(visualPrompt, candidates), /one JSON object/);
-  assert.throws(
-    () => parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis'], notes: 'extra' }), candidates),
-    /exactly one prompt and one subject ID list/
+  // Extra keys are ignored rather than failing the turn.
+  assert.deepEqual(
+    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis'], notes: 'extra' }), candidates),
+    { prompt: visualPrompt, subjectIds: ['jenna-stannis'] }
   );
   assert.throws(
     () => parseInlineSceneResponse(JSON.stringify({ prompt: 'too short', subject_ids: ['jenna-stannis'] }), candidates),
-    /40 and 160 words/
+    /20 and 260 words/
   );
   assert.throws(
     () => parseInlineSceneResponse(JSON.stringify({
@@ -414,24 +415,36 @@ test('accepts one bounded direction, canonicalizes cast order, and rejects inval
     }), candidates),
     /reserved H3 reference tokens/
   );
-  assert.throws(
-    () => parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: [] }), candidates),
-    /between one and three/
+  // Observed 2026-09-02 00:03 on the served build: the director named the cast by
+  // display name, the strict parser threw "unknown subject" four times, and the turn
+  // ended with no scene. Names, aliases and IDs all resolve; nothing usable falls back to
+  // the first candidate; duplicates collapse; more than three keeps the first three.
+  assert.deepEqual(
+    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: [] }), candidates).subjectIds,
+    ['jenna-stannis']
   );
-  assert.throws(
-    () => parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis', 'jenna-stannis'] }), candidates),
-    /duplicate subjects/
+  assert.deepEqual(
+    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis', 'jenna-stannis'] }), candidates).subjectIds,
+    ['jenna-stannis']
   );
-  assert.throws(
-    () => parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['unknown'] }), candidates),
-    /unknown subject/
+  assert.deepEqual(
+    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['unknown'] }), candidates).subjectIds,
+    ['jenna-stannis']
   );
-  assert.throws(
-    () => parseInlineSceneResponse(JSON.stringify({
+  assert.deepEqual(
+    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: [candidates[1].displayName, 'Servalan'] }), candidates).subjectIds,
+    ['cally', 'servalan']
+  );
+  assert.equal(
+    parseInlineSceneResponse(JSON.stringify({
       prompt: visualPrompt,
       subject_ids: ['jenna-stannis', 'cally', 'servalan', 'kerr-avon']
-    }), candidates),
-    /between one and three/
+    }), candidates).subjectIds.length,
+    3
+  );
+  assert.deepEqual(
+    parseInlineSceneResponse(`Here is the direction:\n${JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis'] })}`, candidates).subjectIds,
+    ['jenna-stannis']
   );
 });
 
