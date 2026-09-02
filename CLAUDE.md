@@ -41,7 +41,13 @@
 
 ## Model artifact rules
 
-- Route by pipeline, not media type. The expression pipeline (still, end frame, and motion) runs entirely on `EXPRESSION_COMFY_BASE_URL`; the scene pipeline (still and motion) runs entirely on `SCENE_COMFY_BASE_URL`. The two pipelines must never compete for the same instance. This supersedes the earlier image/video split, by operator order.
+- Lane routing is measured, not assumed (operator order, 2026-09-02): each of the four
+  stages reads its own ComfyUI lane from the runtime (`PORTRAIT_STILL_`,
+  `PORTRAIT_VIDEO_`, `SCENE_STILL_`, `SCENE_VIDEO_COMFY_BASE_URL`, defaulting to the
+  pipeline lanes `EXPRESSION_`/`SCENE_COMFY_BASE_URL`). The served layout is whichever
+  lands all four items fastest in the paired browser-check benchmark recorded in
+  `docs/STATE.md`; today's candidates are by pipeline (expression on 8188, scene on
+  8189) and by media type (every still on 8188, every H3 loop on 8189).
 - One image path and one video path, chosen by scenario data, with no model or method
   selection in the UI and no per-feature media toggles (operator order, 2026-09-01). Every
   media path uses a distillation LoRA or distilled weights at 4-8 steps; unaccelerated
