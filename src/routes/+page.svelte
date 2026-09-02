@@ -4364,6 +4364,14 @@
   $: mediaBusy = sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy;
   $: mediaError = portraitError || portraitVideoError || inlineSceneError || inlineSceneVideoError || sidecarError;
   $: mediaRefreshable = Boolean(portraitRequest || inlineSceneSidecarRequest);
+  // The exact caption the scene is being told, so the operator can see it and the
+  // browser check can compare it across turns.
+  $: continuityCaption = (() => {
+    if (!portraitRequest || !generatedPortrait || !portraitCurrent) return '';
+    const id = portraitRequest.source.characterId ?? '';
+    const descriptor = subjectDescriptors[id];
+    return descriptor && subjectDescriptorPortraitKeys[id] === generatedPortrait.requestKey ? descriptor.caption : '';
+  })();
   $: continuityStatus = continuityStatusFor(
     portraitRequest,
     Boolean(expressionsEnabled && expressionSnapshot && portraitDisplayProfile),
@@ -4817,7 +4825,7 @@
             <dt>Scene motion</dt>
             <dd>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'current' : 'none yet'}</dd>
             <dt>Continuity</dt>
-            <dd>{continuityStatus}</dd>
+            <dd>{continuityStatus}{continuityCaption ? ` · ${continuityCaption}` : ''}</dd>
           </dl>
           {#if mediaError}<div class="sidecar-error" role="alert">{mediaError}</div>{/if}
         {/if}

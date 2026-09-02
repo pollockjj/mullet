@@ -135,6 +135,12 @@ const EXPRESSION_LABEL = `(() => { const m = document.querySelector('[aria-label
   const match = m.replace(/\\s+/g, ' ').match(/Expression\\s+([a-z]+)/i);
   return match && !/^determining$/i.test(match[1]) ? match[1] : ''; })()`;
 
+// "Continuity current · <caption>" from the Media panel text, or '' when absent.
+function continuityFromPanel(text) {
+  const match = (text ?? '').match(/Continuity ([^·]+?)(?: · (.*?))? Turn media off/);
+  return match ? { status: match[1].trim(), caption: (match[2] ?? '').trim() } : { status: '', caption: '' };
+}
+
 function pathOf(url) {
   try {
     return new URL(url).pathname.replace(/^\/mullet/, '');
@@ -353,6 +359,10 @@ async function main() {
         durationMs: request.finishedAt ? request.finishedAt - request.startedAt : null
       }));
       record.loop.beforeReload = await page.evaluate(READ_PANELS);
+      record.loop.continuity = continuityFromPanel(record.loop.beforeReload?.panels?.media);
+      if (record.loop.continuity.status !== 'current' || !record.loop.continuity.caption) {
+        record.stages.continuity = `Media panel shows continuity "${record.loop.continuity.status}" with caption "${record.loop.continuity.caption}"`;
+      }
       await page.screenshot(join(outDir, 'loop.png'));
 
       // A second turn in the same place: the next scene must land the same way and carry
@@ -400,7 +410,11 @@ async function main() {
             path: pathOf(request.url), status: request.status, startedMs: request.startedAt - since,
             durationMs: request.finishedAt ? request.finishedAt - request.startedAt : null
           }));
-          turnRecord.mediaPanel = await page.evaluate(`document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`);
+          turnRecord.mediaPanel = await page.evaluate(`document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,600) ?? null`);
+          turnRecord.continuity = continuityFromPanel(turnRecord.mediaPanel);
+          if (turnRecord.continuity.status !== 'current' || !turnRecord.continuity.caption) {
+            turnRecord.stages.continuity = `second turn shows continuity "${turnRecord.continuity.status}" with caption "${turnRecord.continuity.caption}"`;
+          }
           for (const [stage, error] of Object.entries(turnRecord.stages)) record.stages[`turn2:${stage}`] = error;
           record.turn = { ...record.turn, ...turnRecord };
           await page.screenshot(join(outDir, 'turn2.png'));
