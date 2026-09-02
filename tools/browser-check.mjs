@@ -11,6 +11,9 @@
 //                        then reload the page in the same profile and prove that every
 //                        media item comes back from storage without a new generation
 //   --generate scene     (legacy) scene still + scene motion only
+//   --storage key=value  set a localStorage entry (repeatable) before the app mounts, e.g.
+//                        --storage mullet.inline-scene-megapixels=0.5 to pair a setting
+//                        that has no UI control any more
 //
 // Every multipart POST to 127.0.0.1 is rejected by the ORIGIN check, so the default URL
 // is the real origin. Override with MULLET_CHECK_URL or --url.
@@ -30,6 +33,14 @@ function argValue(name, fallback = null) {
 
 function hasFlag(name) {
   return process.argv.includes(`--${name}`);
+}
+
+function argValues(name) {
+  const values = [];
+  process.argv.forEach((value, index) => {
+    if (value === `--${name}` && index < process.argv.length - 1) values.push(process.argv[index + 1]);
+  });
+  return values;
 }
 
 function delay(milliseconds) {
@@ -178,6 +189,15 @@ async function main() {
     const navigationStarted = Date.now();
     await page.goto(url, { timeoutMs: 45_000 });
     record.timings.navigateMs = Date.now() - navigationStarted;
+
+    // Settings without a UI control are seeded into storage, then the page is loaded
+    // again so the app reads them on mount exactly as a returning browser would.
+    const storage = argValues('storage').map((entry) => entry.split(/=(.*)/s).slice(0, 2));
+    if (storage.length > 0) {
+      record.drove.storage = Object.fromEntries(storage);
+      await page.evaluate(`(() => { ${storage.map(([key, value]) => `localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)});`).join(' ')} return true; })()`);
+      await page.goto(url, { timeoutMs: 45_000 });
+    }
 
     // Scenario activation asks for confirmation when a transcript exists. Headless Chrome
     // leaves window.confirm unanswered, so the starter click silently does nothing.
