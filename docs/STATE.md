@@ -227,3 +227,12 @@ Observed in the same run, still open:
   byte-identical still (fixed seed per character) costs a new loop every turn.
 - The operator was playtesting the cabin scenario on the served build during the check;
   their jobs interleaved with the check's on both lanes.
+- The previous session left a candidate server (port 8782, pointed at the shared lanes)
+  and three headless Chrome instances from its browser checks running after it ended,
+  two started 08:20-08:30 CDT against the candidate and one started 15:09 CDT against
+  the served build itself. Their
+  pages kept reconciling media against the candidate build, so they submitted loops to
+  firestorm:8188/8189 alongside the operator's jobs for about eleven hours; several of the
+  39-70 s queue waits and some "loop without a preceding still" history entries come
+  from them. Killed at 19:32 CDT this session (agent-created processes only; the served
+  launchd service was not touched).
