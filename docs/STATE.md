@@ -1,4 +1,4 @@
-QUEUE-ITEM: operator order 2026-09-02 - Jan and Kristi on Krea 2 | STATE: implemented, candidate check running; served c05e34a | SERVED-SHA: c05e34ab3b60ef9466f054bf6c6e777e17357f22 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: operator orders 2026-09-02 - Krea for Jan/Kristi (deployed), lane-layout benchmark (running) | STATE: READY FOR OPERATOR on f57c7ef; benchmark candidates running on 8782 | SERVED-SHA: f57c7ef747f2045cbaffde6d90b0e0e71706f527 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -524,3 +524,15 @@ picks the Krea scene template when the profile's portrait template is Krea; the 
 longer lets a stored selector value override the scenario's declared template. Jan and
 Kristi's profiles in the cabin card and lorebook now declare the Krea template and LoRAs
 (same triggers, same seeds); Angela is unchanged.
+
+Krea evidence: MULLET's exact Krea portrait graph for Jan (576x1024, seed 560103,
+janpollock-krea2-v3-attn) submitted once to firestorm:8188 by
+`scratchpad/krea-graph-probe.mjs`: accepted, executed in 16.5 s (first run after an H3
+loop), output `mullet/krea-probe_00001_.png`. The candidate's browser run could not
+finish because the shared chat model on hammerhead returned "fetch failed" and 500 to
+its classifier at 18:07 while the operator was mid-session on the served build; that is
+LLM contention, not the image path, and the served build logged the same timeout at
+18:08. Deployed f57c7ef (Krea for Jan and Kristi, per-stage lane routing at the
+pipeline default) at 18:13 CDT from the verified build; rollback
+`scratch/deploy/rollback-c05e34a-before-f57c7ef.plist`. Served check follows the lane
+benchmark.
