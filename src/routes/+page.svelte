@@ -375,6 +375,17 @@
   let inlineSceneVideoGeneration = 0;
   let inlineSceneVideoController: AbortController | null = null;
   let lastInlineSceneVideoAttemptKey = '';
+  // One automatic retry per scene loop attempt, so a single 5xx or network failure does
+  // not leave the still without motion until the next still. Mirrors the portrait loop.
+  let inlineSceneVideoRetryTimer: number | null = null;
+  let inlineSceneVideoRetriedKey = '';
+  const sceneMotionRetryDelayMs = 15_000;
+  // Capability probes that fail while a lane is loading H3 used to disable a stage for
+  // the whole page session. They now retry, bounded.
+  const capabilityRetryDelayMs = 15_000;
+  const capabilityRetryLimit = 6;
+  let capabilityRetryCounts: Record<string, number> = {};
+  let capabilityRetryTimers: Record<string, number> = {};
   let inlineSceneVideoComponentDestroying = false;
   let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
@@ -1823,6 +1834,7 @@
     } catch (cause) {
       inlineSceneVideoCapabilities = null;
       inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline-scene motion generator is unavailable.';
+      scheduleCapabilityRetry('scene-video', loadInlineSceneVideoGenerator);
     } finally {
       inlineSceneVideoCapabilitiesLoading = false;
     }
@@ -2021,6 +2033,7 @@
       } else {
         inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline scene motion failed.';
       }
+      if (inlineSceneVideoError) queueInlineSceneVideoAutomaticRetry(key);
     } finally {
       window.clearTimeout(timeoutId);
       if (inlineSceneVideoController === activeController) {
@@ -2028,6 +2041,35 @@
         inlineSceneVideoController = null;
       }
     }
+  }
+
+  function queueInlineSceneVideoAutomaticRetry(key: string) {
+    if (!browser || lastInlineSceneVideoAttemptKey !== key || inlineSceneVideoRetriedKey === key) return;
+    inlineSceneVideoRetriedKey = key;
+    if (inlineSceneVideoRetryTimer !== null) window.clearTimeout(inlineSceneVideoRetryTimer);
+    inlineSceneVideoRetryTimer = window.setTimeout(() => {
+      inlineSceneVideoRetryTimer = null;
+      if (lastInlineSceneVideoAttemptKey !== key) return;
+      // Clearing the latch re-runs the reactive reconciliation for the same still.
+      lastInlineSceneVideoAttemptKey = '';
+      inlineSceneVideoError = '';
+    }, sceneMotionRetryDelayMs);
+  }
+
+  function scheduleCapabilityRetry(kind: string, load: () => Promise<void>) {
+    if (!browser) return;
+    const count = capabilityRetryCounts[kind] ?? 0;
+    if (count >= capabilityRetryLimit) return;
+    capabilityRetryCounts = { ...capabilityRetryCounts, [kind]: count + 1 };
+    if (capabilityRetryTimers[kind] !== undefined) window.clearTimeout(capabilityRetryTimers[kind]);
+    capabilityRetryTimers = {
+      ...capabilityRetryTimers,
+      [kind]: window.setTimeout(() => {
+        const { [kind]: _done, ...rest } = capabilityRetryTimers;
+        capabilityRetryTimers = rest;
+        void load();
+      }, capabilityRetryDelayMs)
+    };
   }
 
   function persistInlineSceneMotionEnabled() {
@@ -2105,6 +2147,7 @@
     } catch (cause) {
       inlineSceneCapabilities = null;
       inlineSceneError = cause instanceof Error ? cause.message : 'Inline-scene generator is unavailable.';
+      scheduleCapabilityRetry('scene', loadInlineSceneGenerator);
     } finally {
       if (restorationStarted) endInlineSceneVideoRestoration();
       inlineSceneCapabilitiesLoading = false;
@@ -2614,6 +2657,7 @@
     } catch (cause) {
       portraitCapabilities = null;
       portraitError = cause instanceof Error ? cause.message : 'Portrait generator is unavailable.';
+      scheduleCapabilityRetry('portrait', loadPortraitGenerator);
     } finally {
       portraitCapabilitiesLoading = false;
     }
@@ -3117,6 +3161,7 @@
     } catch (cause) {
       portraitVideoCapabilities = null;
       portraitVideoError = cause instanceof Error ? cause.message : 'Portrait-motion generator is unavailable.';
+      scheduleCapabilityRetry('portrait-video', loadPortraitVideoGenerator);
     } finally {
       portraitVideoCapabilitiesLoading = false;
     }
@@ -4414,6 +4459,12 @@
   // Refresh the latest image of both classes. Motion follows its own still automatically.
   async function refreshLatestMedia() {
     if (!mediaEnabled || mediaBusy) return;
+    await Promise.all([
+      portraitCapabilities ? Promise.resolve() : loadPortraitGenerator(),
+      portraitVideoCapabilities ? Promise.resolve() : loadPortraitVideoGenerator(),
+      inlineSceneCapabilities ? Promise.resolve() : loadInlineSceneGenerator(),
+      inlineSceneVideoCapabilities ? Promise.resolve() : loadInlineSceneVideoGenerator()
+    ]);
     await Promise.all([
       portraitRequest ? generatePortrait(portraitRequest) : Promise.resolve(),
       inlineSceneSidecarRequest ? generateInlineScene(inlineSceneSidecarRequest) : Promise.resolve()

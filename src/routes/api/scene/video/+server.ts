@@ -181,6 +181,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       priorMasterInput
     );
     const dimensions = inlineSceneVideoDimensions(videoRequest.aspectRatio, videoRequest.modelTemplate);
+    // Client-side rejections leave no server trace, so a delivered loop is logged here.
+    console.info('inline-scene video delivered', result.promptId, result.filename, result.bytes.byteLength, 'bytes', result.durationSeconds, 's');
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
       headers: {
         'content-type': result.contentType,

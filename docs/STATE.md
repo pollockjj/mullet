@@ -1,4 +1,4 @@
-QUEUE-ITEM: 3 (caption hygiene) | STATE: candidate check running; 2 READY FOR OPERATOR on 2018be9 | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 5 (failure latches) | STATE: committed, awaiting candidate check with item 3; 2 READY FOR OPERATOR on 2018be9 | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -331,3 +331,12 @@ Served 2018be9, five-stage check through the real origin
 scene loop 157.5 s. Scene still b488559c and scene loop 85bcd04c on firestorm:8189 both
 carry this turn's caption. Reload: all four restored, zero caption and zero generation
 requests. Media panel: Continuity current. READY FOR OPERATOR for item 2.
+
+## Queue item 5, session e2a4b9b0
+
+Decision: a scene-loop failure (5xx, timeout, client-side rejection) queues one
+automatic retry 15 s later for the same still, mirroring the portrait loop's retry; a
+failed capability probe retries every 15 s up to six times instead of disabling the
+stage for the page session; the Media refresh reloads any missing capabilities before
+regenerating; both video routes log one line per delivered loop (prompt ID, filename,
+bytes, duration) so client-side rejections are diagnosable against the server log.

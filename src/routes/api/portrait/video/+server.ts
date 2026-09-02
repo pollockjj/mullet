@@ -188,6 +188,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       headers['x-mullet-end-frame-height'] = String(portraitVideoRequest.source.portraitHeight);
       headers['x-mullet-end-frame-sha256'] = endFrame.sha256;
     }
+    console.info('portrait-video delivered', result.promptId, result.filename, result.bytes.byteLength, 'bytes', result.durationSeconds, 's');
     return new Response(result.bytes.slice().buffer as ArrayBuffer, {
       headers
     });
