@@ -427,3 +427,15 @@ served check `scratch/browser-check/loop-d0c2531/` ok=true. Rollback
 `scratch/deploy/rollback-14766b4-before-d0c2531.plist`. READY FOR OPERATOR for every
 queue item. What to look at: https://barracuda.meteor-tegu.ts.net/mullet/ after a hard
 reload - start a scenario, watch the Media panel, send a second turn, reload.
+
+Drain exercised on the served d0c2531 (`scratch/browser-check/drain-exercise/`): with
+MULLET's own portrait loop fdc3a9b1 executing on firestorm:8188, the service was
+restarted; stdout shows "draining 1 in-flight ComfyUI prompt(s) on SIGTERM / cancelled
+1 of 1", and the lane history marks that prompt `execution_interrupted`. The prompt no
+longer runs on as an orphan. The page, however, did not recover: its loop request got
+502 when the old process closed, the single automatic retry 9 s later hit the ~5 s
+restart window and got 502 again, the scene still request got 502 in 38 ms for the same
+reason, and the scene still has no automatic retry at all, so the turn stayed without
+motion or scene until reload. Next: retries with backoff (15/30/60 s, three attempts) on
+5xx and network failures for all four stages, so a restart costs the operator under a
+minute instead of the turn.
