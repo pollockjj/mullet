@@ -487,3 +487,19 @@ silver hoop earrings". Turn 2: response 42.2 s, portrait 74.4 s, portrait loop 1
 scene 139.5 s, scene loop 214.5 s, "Continuity current · ... silver collar necklace".
 Reload: all four restored, zero requests. The served log shows the fallback doing its
 job during that run: "expression classifier fell back to neutral; raw text: tension".
+
+## Session e2a4b9b0 summary (for the next reader)
+
+Served: c05e34a (healthz through the real origin). HEAD is ahead by one synonym
+(73d64cb, "tension" -> nervousness) and docs; it deploys with the next hardening change.
+Everything the v2 goal lists has served evidence; nothing is accepted. Commits this
+session, in order: browser check with five stages and reload assertion; expression loop
+restored on reload and keyed on the still's bytes (d3c9391); scene directed after this
+turn's caption, no stale caption, no discard (2018be9); caption hygiene (de26269);
+scene-loop retry, capability retries, delivery logs (f0a20bc); scene still 0.5 MP
+(77ff8be); 300 s loop timeouts (14766b4); shutdown drain (d0c2531); backoff retries for
+all four stages (e9e8f8f); live caption in the Media panel and the check's second turn
+(544705a); lenient sidecar parsers (89964af). Evidence for each is in
+`scratch/browser-check/<name>/check.json` and on the lanes' `/history`. A persistent log
+watch on `scratch/mullet.stderr.log` and `mullet.stdout.log` reports failures,
+classifier fallbacks, drains and restarts during the operator's own use.
