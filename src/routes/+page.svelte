@@ -236,6 +236,7 @@
   import { normalizeTranscriptSource, transcriptSourceForMessages } from '$lib/transcript-source';
   import {
     createSubjectDescriptor,
+    normalizeSubjectDescriptor,
     subjectContinuityClause,
     type SubjectDescriptor
   } from '$lib/subject-continuity';
@@ -412,6 +413,17 @@
   // Which portrait each descriptor was captioned from, so a descriptor is never treated
   // as current for a portrait it does not describe.
   let subjectDescriptorPortraitKeys: Record<string, string> = {};
+  // Which portrait each character's most recent caption attempt has finished for, whether
+  // it succeeded or not. The scene waits for this turn's portrait to reach this point.
+  let subjectCaptionSettledKeys: Record<string, string> = {};
+  // When the scene first started waiting for a portrait's caption, so the wait is bounded
+  // and can never latch.
+  let continuityWaitStartedAt: Record<string, number> = {};
+  let continuityWaitTick = 0;
+  let continuityWaitTimer: number | null = null;
+  let subjectCaptionError = '';
+  const SUBJECT_CONTINUITY_WAIT_MS = 60_000;
+  const subjectDescriptorStorageKey = 'mullet.subject-descriptors.v1';
   // Which portrait a caption attempt is currently in flight for. The scene waits only
   // while an attempt is genuinely running; any terminal outcome, success or failure,
   // releases it. Continuity must never be able to block media indefinitely.
@@ -710,7 +722,21 @@
     inlineSceneAspectRatio,
     inlineSceneMegapixels,
     scenarioSceneProfiles,
-    inlineSceneStillMode
+    inlineSceneStillMode,
+    // Continuity inputs: the caption landing, the portrait failing, or the bounded wait
+    // expiring must each re-run this, otherwise a deferred scene waits for an unrelated
+    // change.
+    [
+      subjectCaptionSettledKeys,
+      portraitRequest,
+      portraitError,
+      sidecarError,
+      expressionSnapshot,
+      expressionCurrent,
+      portraitCapabilities,
+      portraitDisplayProfile,
+      continuityWaitTick
+    ]
   );
   $: scheduleInlineSceneVideoReconciliation(
     true && inlineScenesEnabled,
@@ -851,6 +877,7 @@
     restoreInlineSceneSettings();
     restoreInlineSceneFinalizedSource();
     restoreScenarioOpeningInlineSceneSourceIfNeeded();
+    restoreSubjectDescriptors();
     void restoreExpressionAndGeneratedMedia();
     void restoreInlineSceneAndMotion();
     void loadPortraitGenerator();
@@ -2133,7 +2160,8 @@
     aspectRatio: InlineSceneAspectRatio,
     megapixels: InlineSceneMegapixels,
     profiles: readonly ScenarioPortraitProfile[],
-    stillMode: InlineSceneStillMode
+    stillMode: InlineSceneStillMode,
+    _continuitySignal: unknown = null
   ) {
     if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || isStreaming || busy || !request || current || profiles.length < 1) return;
     if (!subjectContinuityReady()) return;
@@ -2158,7 +2186,8 @@
     imageRequestKey: string,
     continuityMaster: InlineSceneContinuityMaster | null,
     stillMode: InlineSceneStillMode,
-    signal: AbortSignal
+    signal: AbortSignal,
+    submittedContinuity: string
   ): boolean {
     if (
       signal.aborted
@@ -2181,7 +2210,9 @@
       const liveImageRequest = buildInlineSceneImageRequest(result, {
         ...driver,
         cast,
-        continuity: castContinuityClause(cast),
+        // Frozen at submission: a caption that lands while the scene renders must not
+        // discard the finished scene. The next turn carries the new caption.
+        continuity: submittedContinuity,
         ...(continuityMaster ? { continuityMaster } : {}),
         aspectRatio: inlineSceneAspectRatio,
         megapixels: inlineSceneMegapixels
@@ -2314,7 +2345,8 @@
         requestKey,
         continuityMaster,
         selectedStillMode,
-        activeController.signal
+        activeController.signal,
+        imageRequest.continuity
       )) return;
       const imageForm = new FormData();
       imageForm.append('request', JSON.stringify(imageRequest));
@@ -2380,7 +2412,8 @@
           requestKey,
           continuityMaster,
           selectedStillMode,
-          activeController.signal
+          activeController.signal,
+          imageRequest.continuity
         ),
         install: (scene) => installGeneratedInlineScene(scene)
       });
@@ -2606,6 +2639,16 @@
     if (!characterId || !displayName || !expression) return;
     subjectCaptionInFlight = { ...subjectCaptionInFlight, [characterId]: portrait.requestKey };
     try {
+      // A byte-identical still already captioned (this session or before a reload) needs
+      // no second vision call.
+      const sha = await blobSha256(portrait.image);
+      const known = subjectDescriptors[characterId];
+      if (known && known.portraitSha256 === sha) {
+        subjectDescriptorPortraitKeys = { ...subjectDescriptorPortraitKeys, [characterId]: portrait.requestKey };
+        subjectCaptionError = '';
+        persistSubjectDescriptors();
+        return;
+      }
       const form = new FormData();
       form.append('image', portrait.image, 'portrait.png');
       form.append('characterId', characterId);
@@ -2613,6 +2656,7 @@
       form.append('expression', expression);
       const response = await fetch(`${base}/api/sidecar/caption`, { method: 'POST', body: form });
       if (!response.ok) {
+        subjectCaptionError = `Continuity caption failed (${response.status}); this scene runs without it.`;
         console.warn('subject caption failed', response.status);
         return;
       }
@@ -2629,12 +2673,63 @@
         ...subjectDescriptorPortraitKeys,
         [characterId]: portrait.requestKey
       };
+      subjectCaptionError = '';
+      persistSubjectDescriptors();
     } catch {
-      // continuity is an enhancement; the portrait stands on its own
+      subjectCaptionError = 'Continuity caption failed; this scene runs without it.';
     } finally {
+      // Settled on every outcome, so the scene's bounded wait ends here and never latches.
+      subjectCaptionSettledKeys = { ...subjectCaptionSettledKeys, [characterId]: portrait.requestKey };
       const { [characterId]: _released, ...rest } = subjectCaptionInFlight;
       subjectCaptionInFlight = rest;
     }
+  }
+
+  function persistSubjectDescriptors() {
+    if (!browser) return;
+    try {
+      localStorage.setItem(subjectDescriptorStorageKey, JSON.stringify({
+        descriptors: subjectDescriptors,
+        portraitKeys: subjectDescriptorPortraitKeys
+      }));
+    } catch {
+      // Quota or privacy mode: continuity simply re-captions next time.
+    }
+  }
+
+  function restoreSubjectDescriptors() {
+    if (!browser) return;
+    try {
+      const raw = localStorage.getItem(subjectDescriptorStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { descriptors?: Record<string, unknown>; portraitKeys?: Record<string, unknown> };
+      const descriptors: Record<string, SubjectDescriptor> = {};
+      const keys: Record<string, string> = {};
+      for (const [id, value] of Object.entries(parsed?.descriptors ?? {})) {
+        try {
+          descriptors[id] = normalizeSubjectDescriptor(value);
+          const key = parsed?.portraitKeys?.[id];
+          if (typeof key === 'string') keys[id] = key;
+        } catch {
+          // one bad entry does not poison the rest
+        }
+      }
+      subjectDescriptors = descriptors;
+      subjectDescriptorPortraitKeys = keys;
+      subjectCaptionSettledKeys = { ...keys };
+    } catch {
+      // unreadable: start clean
+    }
+  }
+
+  function clearSubjectDescriptors() {
+    subjectDescriptors = {};
+    subjectDescriptorPortraitKeys = {};
+    subjectCaptionSettledKeys = {};
+    subjectCaptionInFlight = {};
+    continuityWaitStartedAt = {};
+    subjectCaptionError = '';
+    if (browser) localStorage.removeItem(subjectDescriptorStorageKey);
   }
 
   async function restoreGeneratedPortrait() {
@@ -3550,6 +3645,7 @@
   }
 
   async function resetPortraitForConversation() {
+    clearSubjectDescriptors();
     invalidatePortraitVideoForPortraitChange(true);
     portraitController?.abort();
     lastPortraitAttemptKey = '';
@@ -4213,23 +4309,90 @@
   $: mediaBusy = sidecarBusy || portraitBusy || portraitVideoBusy || inlineSceneBusy || inlineSceneVideoBusy;
   $: mediaError = portraitError || portraitVideoError || inlineSceneError || inlineSceneVideoError || sidecarError;
   $: mediaRefreshable = Boolean(portraitRequest || inlineSceneSidecarRequest);
+  $: continuityStatus = continuityStatusFor(
+    portraitRequest,
+    Boolean(expressionsEnabled && expressionSnapshot && portraitDisplayProfile),
+    subjectDescriptorPortraitKeys,
+    subjectCaptionSettledKeys,
+    subjectCaptionError
+  );
 
   // True once every visible subject that currently has a portrait on screen also has a
   // caption read from that exact portrait. Without this the scene can be directed before
   // the caption lands and go out with no continuity at all - it would self-correct on the
   // next reconciliation, because continuity is part of the request key, but only after
   // burning a whole scene generation.
+  // A portrait is expected for this response as soon as there is a finalized response
+  // to classify and a scenario character to portray. The portrait request itself only
+  // exists after the classifier lands, and the scene director is faster than that, so
+  // the wait has to start from the response, not from the request.
+  function subjectContinuityWaitKey(): string {
+    if (!expressionsEnabled || !expressionSnapshot || !portraitDisplayProfile) return '';
+    return [
+      expressionSnapshot.source.conversationId,
+      expressionSnapshot.source.messageCount,
+      expressionSnapshot.source.messageIndex,
+      portraitDisplayProfile.id
+    ].join('\u001f');
+  }
+
   function subjectContinuityReady(): boolean {
-    if (!generatedPortrait || !portraitCurrent) return true;
-    const characterId = generatedPortrait.source.characterId;
+    const waitKey = subjectContinuityWaitKey();
+    // No portrait is expected for this response: nothing to wait for.
+    if (!waitKey) return true;
+    const characterId = portraitRequest?.source.characterId ?? portraitDisplayProfile?.id ?? '';
     if (!characterId) return true;
-    // Fail open: only an in-flight caption for this exact portrait defers the scene.
-    return subjectCaptionInFlight[characterId] !== generatedPortrait.requestKey;
+    // This turn's portrait has been captioned, or its caption has failed: go.
+    if (portraitRequest && subjectCaptionSettledKeys[characterId] === portraitRequestKey(portraitRequest)) return true;
+    // The classifier or the portrait failed, or the label landed but no portrait can be
+    // built for it: go without continuity rather than never.
+    if (portraitError || sidecarError) return true;
+    if (expressionCurrent && !portraitRequest && portraitCapabilities) return true;
+    // Bounded wait from the first time this response was awaited. Never latches: the
+    // timer bumps a reactive tick that re-runs the reconciliation past the bound.
+    const startedAt = continuityWaitStartedAt[waitKey];
+    if (startedAt === undefined) {
+      continuityWaitStartedAt = { [waitKey]: Date.now() };
+      scheduleContinuityWaitRelease();
+      return false;
+    }
+    return Date.now() - startedAt >= SUBJECT_CONTINUITY_WAIT_MS;
+  }
+
+  function scheduleContinuityWaitRelease() {
+    if (!browser) return;
+    if (continuityWaitTimer !== null) window.clearTimeout(continuityWaitTimer);
+    continuityWaitTimer = window.setTimeout(() => {
+      continuityWaitTimer = null;
+      continuityWaitTick += 1;
+    }, SUBJECT_CONTINUITY_WAIT_MS + 100);
+  }
+
+  function continuityStatusFor(
+    request: PortraitRequest | null,
+    expected: boolean,
+    portraitKeys: Record<string, string>,
+    settledKeys: Record<string, string>,
+    captionError: string
+  ): string {
+    if (!request) return expected ? 'waiting for portrait…' : 'none';
+    const id = request.source.characterId ?? '';
+    const key = portraitRequestKey(request);
+    if (portraitKeys[id] === key) return 'current';
+    if (settledKeys[id] === key || captionError) return 'unavailable';
+    return 'waiting for caption…';
   }
 
   function castContinuityClause(cast: { identities: readonly { characterId?: string; profileId?: string }[] }): string {
+    // Only a caption read from the portrait on screen for this turn may describe a
+    // subject. Anything older would force last turn's wardrobe onto this scene.
+    const currentKey = generatedPortrait && portraitCurrent ? generatedPortrait.requestKey : '';
     const descriptors = cast.identities
-      .map((identity) => subjectDescriptors[identity.characterId ?? identity.profileId ?? ''])
+      .map((identity) => {
+        const id = identity.characterId ?? identity.profileId ?? '';
+        const descriptor = subjectDescriptors[id];
+        return descriptor && currentKey && subjectDescriptorPortraitKeys[id] === currentKey ? descriptor : null;
+      })
       .filter((descriptor): descriptor is SubjectDescriptor => Boolean(descriptor));
     return subjectContinuityClause(descriptors);
   }
@@ -4592,6 +4755,8 @@
             <dd>{inlineSceneBusy ? 'Directing…' : inlineSceneCurrent ? `${generatedInlineScene?.width}×${generatedInlineScene?.height}` : 'none yet'}</dd>
             <dt>Scene motion</dt>
             <dd>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'current' : 'none yet'}</dd>
+            <dt>Continuity</dt>
+            <dd>{continuityStatus}</dd>
           </dl>
           {#if mediaError}<div class="sidecar-error" role="alert">{mediaError}</div>{/if}
         {/if}

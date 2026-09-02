@@ -47,12 +47,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(SUBJECT_CAPTION_TIMEOUT_MS)])
     });
   } catch (cause) {
+    console.error('subject caption failed', cause instanceof Error ? cause.message : 'unknown failure');
     throw error(502, cause instanceof Error ? cause.message : 'subject caption failed');
   }
 
   try {
     return json(createSubjectDescriptor(characterId, displayName, portraitSha256, expression, caption));
   } catch (cause) {
+    console.error('subject caption unusable', cause instanceof Error ? cause.message : 'unknown failure');
     throw error(502, cause instanceof Error ? cause.message : 'subject caption was unusable');
   }
 };

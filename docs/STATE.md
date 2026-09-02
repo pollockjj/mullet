@@ -1,4 +1,4 @@
-QUEUE-ITEM: 2 (chain ordering) | STATE: candidate built, checking; 1b READY FOR OPERATOR on d3c9391 | SERVED-SHA: d3c939123eb10ef9fb50a2f590dd401a6ce74812 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 2 (chain ordering) | STATE: candidate-verified, deploying | SERVED-SHA: d3c939123eb10ef9fb50a2f590dd401a6ce74812 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -294,3 +294,24 @@ loop 105.0 s, scene loop 111.9 s. After reload: portrait image, portrait loop, s
 still and scene loop all restored from storage, zero generation requests, one caption
 POST. READY FOR OPERATOR for items 1 and 1b. The scene was still directed at 11.1 s,
 before the portrait at 26.8 s, so that scene carried no continuity clause: queue item 2.
+
+## Queue item 2, session e2a4b9b0
+
+Decision: the scene waits for this turn's portrait caption from the moment there is a
+finalized response and a scenario character to portray (the request itself only exists
+after the classifier lands, and the scene director beat it every time), bounded at 60 s
+by a timer that re-runs the reconciliation; portrait failure, classifier failure, a
+label with no buildable portrait, or the caption settling (success or failure) all
+release it. Only a descriptor read from the portrait on screen for this turn is injected;
+older ones are ignored. The clause is frozen at submission, so a caption landing while a
+scene renders no longer discards the finished scene. Descriptors persist in localStorage
+keyed by portrait bytes, so a reload or an identical still does not re-caption; they are
+cleared on conversation reset. The Media panel shows a Continuity row.
+
+Evidence, candidate on 8782 (`scratch/browser-check/loop-candidate-2b/`): portrait
+27.5 s, caption 2.9 s, scene POST at 40.3 s (was 10.7 s, before the portrait), scene still
+80.4 s, portrait loop 97.5 s, scene loop 157.5 s; the scene still (49ef22a8) and scene
+loop (e452991f) prompts on firestorm:8189 both carry this turn's caption "blonde
+shoulder-length wavy hair, maroon and silver leather jacket, silver hoop earrings, ...".
+Reload: all four items restored, zero caption requests, zero generation requests. Cost of
+the ordering: the scene still lands ~30 s later than before, after the portrait.
