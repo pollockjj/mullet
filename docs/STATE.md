@@ -1,4 +1,4 @@
-QUEUE-ITEM: 6 (two-scene continuity) | STATE: READY FOR OPERATOR for items 1, 1b, 2, 3, 4, 5, 6 on d0c2531; hardening continues | SERVED-SHA: d0c2531099d0efcd77487afbe425ba770c1688b8 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: hardening (restart recovery) | STATE: committed, candidate check next; items 1-6 READY FOR OPERATOR on d0c2531 | SERVED-SHA: d0c2531099d0efcd77487afbe425ba770c1688b8 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -439,3 +439,8 @@ reason, and the scene still has no automatic retry at all, so the turn stayed wi
 motion or scene until reload. Next: retries with backoff (15/30/60 s, three attempts) on
 5xx and network failures for all four stages, so a restart costs the operator under a
 minute instead of the turn.
+
+Decision: every stage's automatic retry is now the same bounded backoff (15, 30, 60 s,
+three attempts per attempt key) instead of one retry after 1.5 s; the scene still, which
+had none, gets it too. A retry releases the stage's latch and bumps a reactive tick that
+re-runs the scheduler, so no stage waits for an unrelated change.

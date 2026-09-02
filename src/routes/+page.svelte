@@ -278,8 +278,44 @@
   let portraitH3ReferenceSummary = '';
   let portraitCurrent = false;
   let lastPortraitAttemptKey = '';
-  let portraitRetriedKey = '';
-  let portraitRetryTimer: number | null = null;
+  // Every stage retries a failed generation with backoff (15, 30, 60 s) for the same
+  // attempt key. A served-build restart costs the operator under a minute this way; a
+  // single retry 1.5 s later landed inside the restart window and latched the turn.
+  type StageRetry = { key: string; attempts: number; timer: number | null };
+  const STAGE_RETRY_DELAYS_MS = [15_000, 30_000, 60_000] as const;
+  const portraitRetry: StageRetry = { key: '', attempts: 0, timer: null };
+  const portraitVideoRetry: StageRetry = { key: '', attempts: 0, timer: null };
+  const inlineSceneRetry: StageRetry = { key: '', attempts: 0, timer: null };
+  const inlineSceneVideoRetry: StageRetry = { key: '', attempts: 0, timer: null };
+  // Bumped when a retry releases a latch, so the reactive schedulers re-run.
+  let stageRetryTick = 0;
+
+  function queueStageRetry(state: StageRetry, key: string, stillLatched: () => boolean, release: () => void) {
+    if (!browser || !key || !stillLatched()) return;
+    if (state.key !== key) {
+      state.key = key;
+      state.attempts = 0;
+    }
+    const delayMs = STAGE_RETRY_DELAYS_MS[state.attempts];
+    if (delayMs === undefined) return;
+    state.attempts += 1;
+    if (state.timer !== null) window.clearTimeout(state.timer);
+    state.timer = window.setTimeout(() => {
+      state.timer = null;
+      if (!stillLatched()) return;
+      release();
+      stageRetryTick += 1;
+    }, delayMs);
+  }
+
+  function clearStageRetry(state: StageRetry, key: string) {
+    if (state.timer !== null) window.clearTimeout(state.timer);
+    state.timer = null;
+    if (state.key === key) {
+      state.key = '';
+      state.attempts = 0;
+    }
+  }
   let portraitController: AbortController | null = null;
   let portraitMotionEnabled = true;
   let portraitVideoModelTemplate: PortraitVideoTemplateId = PORTRAIT_VIDEO_TEMPLATE_ID;
@@ -312,8 +348,6 @@
   let portraitVideoRestoreNeeded = true;
   let portraitVideoCurrent = false;
   let lastPortraitVideoAttemptKey = '';
-  let portraitVideoRetriedKey = '';
-  let portraitVideoRetryTimer: number | null = null;
   let portraitVideoController: AbortController | null = null;
   let portraitVideoGeneration = 0;
   let portraitImageDigestPromptId = '';
@@ -379,9 +413,6 @@
   let lastInlineSceneVideoAttemptKey = '';
   // One automatic retry per scene loop attempt, so a single 5xx or network failure does
   // not leave the still without motion until the next still. Mirrors the portrait loop.
-  let inlineSceneVideoRetryTimer: number | null = null;
-  let inlineSceneVideoRetriedKey = '';
-  const sceneMotionRetryDelayMs = 15_000;
   // Capability probes that fail while a lane is loading H3 used to disable a stage for
   // the whole page session. They now retry, bounded.
   const capabilityRetryDelayMs = 15_000;
@@ -710,7 +741,8 @@
     portraitPersistenceAvailable,
     portraitBusy,
     portraitRequest,
-    portraitCurrent
+    portraitCurrent,
+    stageRetryTick
   );
   $: schedulePortraitVideoReconciliation(
     true && expressionsEnabled,
@@ -722,7 +754,8 @@
     portraitVideoBusy,
     portraitVideoRequest,
     portraitVideoCurrent,
-    portraitVideoRestoreNeeded
+    portraitVideoRestoreNeeded,
+    stageRetryTick
   );
   $: scheduleInlineSceneReconciliation(
     true && inlineScenesEnabled,
@@ -749,7 +782,8 @@
       expressionCurrent,
       portraitCapabilities,
       portraitDisplayProfile,
-      continuityWaitTick
+      continuityWaitTick,
+      stageRetryTick
     ]
   );
   $: scheduleInlineSceneVideoReconciliation(
@@ -764,7 +798,8 @@
     inlineSceneVideoBusy,
     inlineSceneVideoError,
     inlineSceneVideoRequest,
-    inlineSceneVideoCurrent
+    inlineSceneVideoCurrent,
+    stageRetryTick
   );
 
   const fictionStarters = [
@@ -923,10 +958,12 @@
     if (browser) window.removeEventListener('pagehide', handleInlineSceneVideoPageHide);
     if (browser) window.removeEventListener('pageshow', handleInlineSceneVideoPageShow);
     portraitController?.abort();
-    if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
+    for (const state of [portraitRetry, portraitVideoRetry, inlineSceneRetry, inlineSceneVideoRetry]) {
+      if (state.timer !== null) window.clearTimeout(state.timer);
+      state.timer = null;
+    }
     portraitVideoGeneration += 1;
     portraitVideoController?.abort();
-    if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
     if (expressionRetryTimer !== null) window.clearTimeout(expressionRetryTimer);
     inlineSceneGeneration += 1;
     inlineSceneController?.abort();
@@ -1855,7 +1892,8 @@
     videoBusy: boolean,
     videoError: string,
     request: InlineSceneVideoRequest | null,
-    current: boolean
+    current: boolean,
+    _retrySignal: unknown = null
   ) {
     if (!request) return;
     if (!inlineSceneVideoReconciliationAllowed({
@@ -2047,16 +2085,10 @@
   }
 
   function queueInlineSceneVideoAutomaticRetry(key: string) {
-    if (!browser || lastInlineSceneVideoAttemptKey !== key || inlineSceneVideoRetriedKey === key) return;
-    inlineSceneVideoRetriedKey = key;
-    if (inlineSceneVideoRetryTimer !== null) window.clearTimeout(inlineSceneVideoRetryTimer);
-    inlineSceneVideoRetryTimer = window.setTimeout(() => {
-      inlineSceneVideoRetryTimer = null;
-      if (lastInlineSceneVideoAttemptKey !== key) return;
-      // Clearing the latch re-runs the reactive reconciliation for the same still.
+    queueStageRetry(inlineSceneVideoRetry, key, () => lastInlineSceneVideoAttemptKey === key, () => {
       lastInlineSceneVideoAttemptKey = '';
       inlineSceneVideoError = '';
-    }, sceneMotionRetryDelayMs);
+    });
   }
 
   function scheduleCapabilityRetry(kind: string, load: () => Promise<void>) {
@@ -2289,6 +2321,7 @@
     selectedStillMode: InlineSceneStillMode = inlineSceneStillMode
   ) {
     const selectedCapabilities = inlineSceneCapabilities;
+    const attemptKey = lastInlineSceneAttemptKey;
     if (
       !selectedSidecarRequest
       || !inlineScenesEnabled
@@ -2463,11 +2496,18 @@
         ),
         install: (scene) => installGeneratedInlineScene(scene)
       });
+      clearStageRetry(inlineSceneRetry, attemptKey);
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') {
         if (timedOut) inlineSceneError = `Inline scene timed out after ${(INLINE_SCENE_TIMEOUT_MS + imageTimeoutMs + 10_000) / 1000} seconds.`;
       } else {
         inlineSceneError = cause instanceof Error ? cause.message : 'Inline scene failed.';
+      }
+      if (inlineSceneError) {
+        queueStageRetry(inlineSceneRetry, attemptKey, () => lastInlineSceneAttemptKey === attemptKey, () => {
+          lastInlineSceneAttemptKey = '';
+          inlineSceneError = '';
+        });
       }
     } finally {
       window.clearTimeout(timeoutId);
@@ -3180,7 +3220,8 @@
     busy: boolean,
     request: PortraitVideoRequest | null,
     current: boolean,
-    restoreNeeded: boolean
+    restoreNeeded: boolean,
+    _retrySignal: unknown = null
   ) {
     if (
       !expressionsOn
@@ -3207,32 +3248,14 @@
   }
 
   function queuePortraitVideoAutomaticRetry(key: string) {
-    if (!browser || lastPortraitVideoAttemptKey !== key || portraitVideoRetriedKey === key) return;
-    portraitVideoRetriedKey = key;
-    if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
-    portraitVideoRetryTimer = window.setTimeout(() => {
-      portraitVideoRetryTimer = null;
-      if (lastPortraitVideoAttemptKey !== key) return;
+    queueStageRetry(portraitVideoRetry, key, () => lastPortraitVideoAttemptKey === key, () => {
       lastPortraitVideoAttemptKey = '';
-      schedulePortraitVideoReconciliation(
-        true && expressionsEnabled,
-        portraitMotionEnabled,
-        portraitVideoCapabilities,
-        portraitVideoPersistenceReady,
-        portraitVideoPersistenceAvailable,
-        portraitBusy,
-        portraitVideoBusy,
-        portraitVideoRequest,
-        portraitVideoCurrent,
-        portraitVideoRestoreNeeded
-      );
-    }, automaticExpressionRetryDelayMs);
+      portraitVideoError = '';
+    });
   }
 
   function clearPortraitVideoAutomaticRetry(key: string) {
-    if (portraitVideoRetryTimer !== null) window.clearTimeout(portraitVideoRetryTimer);
-    portraitVideoRetryTimer = null;
-    if (portraitVideoRetriedKey === key) portraitVideoRetriedKey = '';
+    clearStageRetry(portraitVideoRetry, key);
   }
 
   function responseHeaderSha256(response: Response, name: string): string {
@@ -3517,7 +3540,8 @@
     persistenceAvailable: boolean,
     busy: boolean,
     request: PortraitRequest | null,
-    current: boolean
+    current: boolean,
+    _retrySignal: unknown = null
   ) {
     if (!enabled || !capabilities || !persistenceReady || !persistenceAvailable || busy || !request || current) return;
     const key = portraitRequestKey(request);
@@ -3527,31 +3551,14 @@
   }
 
   function queuePortraitAutomaticRetry(key: string) {
-    if (!browser || lastPortraitAttemptKey !== key || portraitRetriedKey === key) return;
-    portraitRetriedKey = key;
-    if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
-    portraitRetryTimer = window.setTimeout(() => {
-      portraitRetryTimer = null;
-      if (lastPortraitAttemptKey !== key) return;
+    queueStageRetry(portraitRetry, key, () => lastPortraitAttemptKey === key, () => {
       lastPortraitAttemptKey = '';
-      schedulePortraitReconciliation(
-        true
-          && expressionsEnabled
-          && scenarioPortraitGenerationReady(activeCard, scenarioCatalogSettled),
-        portraitCapabilities,
-        portraitPersistenceReady,
-        portraitPersistenceAvailable,
-        portraitBusy,
-        portraitRequest,
-        portraitCurrent
-      );
-    }, automaticExpressionRetryDelayMs);
+      portraitError = '';
+    });
   }
 
   function clearPortraitAutomaticRetry(key: string) {
-    if (portraitRetryTimer !== null) window.clearTimeout(portraitRetryTimer);
-    portraitRetryTimer = null;
-    if (portraitRetriedKey === key) portraitRetriedKey = '';
+    clearStageRetry(portraitRetry, key);
   }
 
   function responseHeaderInteger(response: Response, name: string, minimum: number, maximum: number): number {
