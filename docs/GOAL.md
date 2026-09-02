@@ -57,10 +57,12 @@ Served build at end of session: `903140d` on launchd `com.pollockjj.mullet`, por
 
 ### OPEN defects, not fixed
 
-1. **Scene motion still fails to store.** `ComfyUI returned an unexpected inline-scene
-   video filename` is occurring currently, not historically. The loop renders on ComfyUI
-   (`scene-motion-loop_000NN_.mp4`, node 15, `animated:[true]`) but MULLET rejects it.
-   Scene motion is therefore still not reaching the operator.
+1. **WITHDRAWN 2026-09-01 (session e2a4b9b0).** "Scene motion still fails to store" was
+   a misread of two log lines written under build 8fc36ac before d853b4e fixed the
+   filename regex. On 903140d the browser check through the real origin shows the scene
+   loop playing (`scratch/browser-check/fable-served-903140d/`). The live defects are in
+   `docs/STATE.md`, session e2a4b9b0: the continuity chain runs one turn behind and can
+   drop the scene, reload regenerates the expression loop, and no speed gate is reachable.
 2. **Caption filler leaks into the prompt.** The captioner returns the literal word
    `none` for empty slots and it is passed through verbatim into the image prompt.
 3. **Caption background contradicts the clause.** The portrait's background is captured

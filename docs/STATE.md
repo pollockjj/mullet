@@ -1,4 +1,4 @@
-MILESTONE: 4 | STATE: ready-for-operator-with-known-defects | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: rejected on 903140d before scene motion was ever observed; browser check now shows all of [0]-[4] landing
+MILESTONE: 1 | STATE: awaiting-operator (2 blocked: reload regenerates the expression loop; 3-5 built, none accepted) | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: none accepted; browser check on 903140d observed [0],[1],[3],[4] landing, [2] not observed
 
 Rewrite the line above on every commit. One line. Milestones are defined in docs/PLAN.md.
 
@@ -157,15 +157,10 @@ Verified working on the served build, in a browser, through the real origin: exp
 label -> portrait 576x1024 -> caption -> scene still 1328x752 carrying the caption
 verbatim -> scene motion starts. Both ComfyUI lanes busy, no deadlock.
 
-NEXT AGENT: start with OPEN defect 1 in docs/GOAL.md. Scene motion renders on ComfyUI but
-MULLET rejects the output with "ComfyUI returned an unexpected inline-scene video
-filename". ComfyUI returns the file under the `images` key (not `videos`) on node 15 as
-`scene-motion-loop_000NN_.mp4` with `animated:[true]`; the rejection is in
-`inlineSceneVideoReference` in `src/lib/server/comfy-inline-scene-video.ts`. Reproduce
-against firestorm:8189 history before changing anything, and verify on the served build
-through https://barracuda.meteor-tegu.ts.net/mullet/ - a probe against 127.0.0.1 gets 403
-on every multipart POST because of the ORIGIN mismatch, which will look like a product
-bug and is not.
+NEXT AGENT (superseded 2026-09-01 by session e2a4b9b0 below): the "OPEN defect 1" this
+paragraph pointed at was withdrawn with evidence; start from the session e2a4b9b0 record
+and the goal in force. The warning stands: a probe against 127.0.0.1 gets 403 on every
+multipart POST because of the ORIGIN mismatch, which looks like a product bug and is not.
 
 ## Session e2a4b9b0 (Claude Fable 5.1), 2026-09-01 16:40 CDT onward - state re-verified
 
@@ -236,3 +231,27 @@ Observed in the same run, still open:
   39-70 s queue waits and some "loop without a preceding still" history entries come
   from them. Killed at 19:32 CDT this session (agent-created processes only; the served
   launchd service was not touched).
+
+- Foreign traffic on both shared lanes is heavy and unaccounted for in every timing so
+  far: at least 277 Qwen-edit jobs from a ComfyUI frontend client on 8189 (18:39-19:16Z
+  and 22:00-00:02Z), and a ComfyUI web session on 8188 that re-queued MULLET's own
+  portrait-loop graph at 1024x1024 and 73 frames at 18:50-19:02 CDT. The operator appears
+  to be probing larger and longer loops directly in ComfyUI. Paired timing runs are valid
+  only when `/queue` on the target lane is empty and the predecessor job is recorded.
+- Every deploy so far is `launchctl unload`/`load` with no drain: the server has no
+  SIGTERM handler, so in-flight portrait, scene and video requests die mid-turn and their
+  ComfyUI prompts run on as orphans. This reproduces the operator's "no scene, no
+  movement" symptom. Deploy only when no `mullet-*` client is running or pending on
+  either lane, or add a drain that cancels MULLET's own prompt IDs first.
+- The browser check's `ok` ignores stage failures (still/motion errors and 5xx console
+  entries never enter `blocking`) and never waits for the expression loop, so
+  `ok=true` is not evidence for stage [2] and only weak evidence for the rest. Both
+  checks on 903140d recorded one console 502 of unattributed origin; the caption route
+  logs nothing server-side on failure.
+- The chain the code implements for stages [3] and [4] is the caption chain the operator
+  ordered at 19:57Z (scenario details -> expression prompt -> caption the still -> scene
+  prompts) with an FL2VA loop of the scene still; the previous goal text still describes
+  the accepted expression still as an image reference and a Ref2VA scene loop with cast
+  references. Neither was recorded as a decision. Decision under the goal policy: the
+  caption chain is the contract; adding the accepted still as an extra Qwen reference
+  slot is a candidate to pair-test, not an assumption.

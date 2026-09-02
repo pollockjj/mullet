@@ -42,7 +42,12 @@
 ## Model artifact rules
 
 - Route by pipeline, not media type. The expression pipeline (still, end frame, and motion) runs entirely on `EXPRESSION_COMFY_BASE_URL`; the scene pipeline (still and motion) runs entirely on `SCENE_COMFY_BASE_URL`. The two pipelines must never compete for the same instance. This supersedes the earlier image/video split, by operator order.
-- MiniMax H3 is the current candidate image/video priority inside the product-wide media milestones. Do not start unrelated model work unless the operator names it in the current turn. The candidate contains native five-frame H3 Ref2VA keeper stills, an unaccelerated 20-step H3 Ref2VA scene path, and a silent four-step H3 FL2VA two-second expression loop. None is an accepted production default. The unaccelerated paths may not remain defaults without the full postmortem's paired Turbo/full-path comparison, explicit cold/warm click-to-visible SLO, and operator acceptance. Retained alternative workflows remain explicit selections and are never silently substituted.
+- One image path and one video path, chosen by scenario data, with no model or method
+  selection in the UI and no per-feature media toggles (operator order, 2026-09-01). Every
+  media path uses a distillation LoRA or distilled weights at 4-8 steps; unaccelerated
+  high-step paths, H3 keeper stills, the 20-step H3 scene path and LTX 2.5 are deleted,
+  not retained as selections. Do not reintroduce any of them or start unrelated model
+  work unless the operator names it in the current turn.
 - Mage-Flow and FLUX.2 are explicitly excluded from MULLET. Do not restore them as selectable options or hidden workflow dependencies without a new current-turn operator order.
 - ComfyUI diffusion-model weights for this project use the native INT8 ConvRot artifact when one exists. Do not substitute an official FP8 diffusion weight merely because the original publisher's repository is gated.
 - Search the public ComfyUI-native INT8 ConvRot conversions on Hugging Face before declaring a required model unavailable or gated.
