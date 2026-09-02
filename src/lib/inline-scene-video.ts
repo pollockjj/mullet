@@ -16,7 +16,8 @@ export const MINIMAX_H3_SCENE_LOOP_MODE = 'flf2v_loop' as const;
 export const INLINE_SCENE_VIDEO_TEMPLATE_ID = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
 export const INLINE_SCENE_VIDEO_MODE = MINIMAX_H3_SCENE_LOOP_MODE;
 export const INLINE_SCENE_VIDEO_FPS = 24 as const;
-export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 900_000 as const;
+// See PORTRAIT_VIDEO_TIMEOUT_MS: three times the contended measurement, not fifteen minutes.
+export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 300_000 as const;
 // MiniMaxH3ImageToVideo accepts lengths of 5 + 17k only; 73 is nearest three seconds.
 export const MINIMAX_H3_SCENE_LOOP_FRAMES = 73 as const;
 export const INLINE_SCENE_VIDEO_FRAMES = MINIMAX_H3_SCENE_LOOP_FRAMES;

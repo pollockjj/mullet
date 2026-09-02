@@ -13,7 +13,9 @@ export const PORTRAIT_VIDEO_CAPABILITIES_SPEC = 'mullet_portrait_video_capabilit
 export const MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID = 'minimax-h3-fl2va-portrait-v2' as const;
 export const PORTRAIT_VIDEO_TEMPLATE_ID = MINIMAX_H3_PORTRAIT_VIDEO_TEMPLATE_ID;
 export const PORTRAIT_END_FRAME_TEMPLATE_ID = 'qwen-image-edit-2511-end-frame-v1' as const;
-export const PORTRAIT_VIDEO_TIMEOUT_MS = 900_000 as const;
+// Loops measure 65-86 s alone and 166 s queued behind foreign jobs; 900 s only held a
+// dead job on screen for fifteen minutes.
+export const PORTRAIT_VIDEO_TIMEOUT_MS = 300_000 as const;
 export const PORTRAIT_VIDEO_DURATION_SECONDS = 2 as const;
 export const MINIMAX_H3_PORTRAIT_VIDEO_DURATIONS = Object.freeze([2, 3, 5] as const);
 export const PORTRAIT_VIDEO_DURATIONS = Object.freeze([2, 3, 5] as const);
