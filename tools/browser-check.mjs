@@ -11,6 +11,8 @@
 //                        then reload the page in the same profile and prove that every
 //                        media item comes back from storage without a new generation
 //   --generate scene     (legacy) scene still + scene motion only
+//   --turn "text"        after the first loop lands, send one chat turn and time the five
+//                        stages again from the send click (two consecutive scenes)
 //   --storage key=value  set a localStorage entry (repeatable) before the app mounts, e.g.
 //                        --storage mullet.inline-scene-megapixels=0.5 to pair a setting
 //                        that has no UI control any more
@@ -352,6 +354,60 @@ async function main() {
       }));
       record.loop.beforeReload = await page.evaluate(READ_PANELS);
       await page.screenshot(join(outDir, 'loop.png'));
+
+      // A second turn in the same place: the next scene must land the same way and carry
+      // the caption of the portrait made for that turn.
+      const turnText = argValue('turn');
+      if (turnText) {
+        record.turn = {};
+        const previous = await page.evaluate(`(() => ({
+          portrait: document.querySelector('.portrait img')?.src ?? '',
+          scene: document.querySelector('.scene-card img')?.src ?? '',
+          sceneVideo: document.querySelector('.scene-card video')?.currentSrc ?? ''
+        }))()`);
+        record.turn.typed = await page.evaluate(`(() => {
+          const area = document.querySelector('textarea[aria-label="Message"]');
+          if (!area || area.disabled) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(area, ${JSON.stringify(turnText)});
+          area.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`);
+        await delay(300);
+        const sentAt = Date.now();
+        record.turn.sent = await page.clickText('button.send', 'send');
+        if (record.turn.sent) {
+          const turnRecord = { timings: {}, stages: {} };
+          // Streaming ends when the Stop button gives way to Send again.
+          try {
+            turnRecord.timings.responseMs = await page.waitFor(
+              `(() => !document.querySelector('button.stop') && document.querySelector('button.send'))()`,
+              { timeoutMs: 300_000, pollMs: 500, label: 'second response finalized' }
+            );
+          } catch (error) { turnRecord.stages.response = error.message; }
+          const newSrc = (selector, attribute, before) => `(() => { const n = document.querySelector(${JSON.stringify(selector)});
+            return n && (n.${attribute} || '') !== ${JSON.stringify(before)} && ${attribute === 'src' ? 'n.complete && n.naturalWidth > 0' : 'n.readyState >= 2 && n.videoWidth > 0'}; })()`;
+          const since = sentAt;
+          const captionsBefore = page.requests.filter((request) => request.method === 'POST' && pathOf(request.url) === '/api/sidecar/caption').length;
+          await Promise.all([
+            waitStage(page, turnRecord, 'portraitVisibleMs', newSrc('.portrait img', 'src', previous.portrait), { timeoutMs: 360_000, pollMs: 250, since }),
+            waitStage(page, turnRecord, 'portraitMotionMs', PORTRAIT_VIDEO, { timeoutMs: 400_000, pollMs: 1_000, since }),
+            waitStage(page, turnRecord, 'sceneStillMs', newSrc('.scene-card img', 'src', previous.scene), { timeoutMs: 400_000, pollMs: 1_000, since }),
+            waitStage(page, turnRecord, 'sceneMotionMs', newSrc('.scene-card video', 'currentSrc', previous.sceneVideo), { timeoutMs: 900_000, pollMs: 2_000, since })
+          ]);
+          turnRecord.captionRequests = page.requests.filter((request) => request.method === 'POST' && pathOf(request.url) === '/api/sidecar/caption').length - captionsBefore;
+          turnRecord.generationRequests = generationRequests(page, since).map((request) => ({
+            path: pathOf(request.url), status: request.status, startedMs: request.startedAt - since,
+            durationMs: request.finishedAt ? request.finishedAt - request.startedAt : null
+          }));
+          turnRecord.mediaPanel = await page.evaluate(`document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`);
+          for (const [stage, error] of Object.entries(turnRecord.stages)) record.stages[`turn2:${stage}`] = error;
+          record.turn = { ...record.turn, ...turnRecord };
+          await page.screenshot(join(outDir, 'turn2.png'));
+        } else {
+          record.stages['turn2:send'] = 'could not send the second turn';
+        }
+      }
 
       // Reload in the same profile: everything must come back from storage, and no
       // generation may be submitted. A caption re-run is tolerated but recorded.
