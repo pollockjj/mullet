@@ -26,8 +26,8 @@ import { runtime } from '$lib/server/runtime';
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
 function configuredVideoComfyBaseUrl(): string {
-  if (!runtime.sceneComfyBaseUrl) throw error(503, 'Inline scene motion is not configured.');
-  return runtime.sceneComfyBaseUrl;
+  if (!runtime.sceneVideoComfyBaseUrl) throw error(503, 'Inline scene motion is not configured.');
+  return runtime.sceneVideoComfyBaseUrl;
 }
 
 function randomSeed(): number {

@@ -24,14 +24,15 @@ test('runtime exposes one Comfy endpoint per pipeline', async () => {
   assert.doesNotMatch(runtimeSource, /\bcomfyBaseUrl\s*:/);
 });
 
-// Lanes are split by pipeline: expression still, end frame and motion on one instance,
-// scene still and motion on the other, so the two pipelines never queue behind each other.
-test('expression and scene pipelines cannot cross their dedicated Comfy endpoint boundary', async () => {
+// Each stage reads exactly one lane from the runtime. By default the four stages follow
+// their pipeline lanes; per-stage overrides let the operator run the media-type layout
+// (stills on one instance, H3 loops on the other) when it measures faster.
+test('each stage reads exactly its own Comfy endpoint from the runtime', async () => {
   const routeExpectations = [
-    ['src/routes/api/portrait/+server.ts', ['expressionComfyBaseUrl']],
-    ['src/routes/api/portrait/video/+server.ts', ['expressionComfyBaseUrl']],
-    ['src/routes/api/scene/+server.ts', ['sceneComfyBaseUrl']],
-    ['src/routes/api/scene/video/+server.ts', ['sceneComfyBaseUrl']]
+    ['src/routes/api/portrait/+server.ts', ['portraitStillComfyBaseUrl']],
+    ['src/routes/api/portrait/video/+server.ts', ['portraitStillComfyBaseUrl', 'portraitVideoComfyBaseUrl']],
+    ['src/routes/api/scene/+server.ts', ['sceneStillComfyBaseUrl']],
+    ['src/routes/api/scene/video/+server.ts', ['sceneVideoComfyBaseUrl']]
   ];
 
   for (const [relativePath, expectedProperties] of routeExpectations) {

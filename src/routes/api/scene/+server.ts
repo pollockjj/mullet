@@ -22,8 +22,8 @@ import { runtime } from '$lib/server/runtime';
 const INPUT_LIMIT_BYTES = 20 * 1024 * 1024;
 
 function configuredImageComfyBaseUrl(): string {
-  if (!runtime.sceneComfyBaseUrl) throw error(503, 'Inline scene generation is not configured.');
-  return runtime.sceneComfyBaseUrl;
+  if (!runtime.sceneStillComfyBaseUrl) throw error(503, 'Inline scene generation is not configured.');
+  return runtime.sceneStillComfyBaseUrl;
 }
 
 function randomSeed(): number {
