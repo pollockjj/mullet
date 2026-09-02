@@ -1,4 +1,4 @@
-QUEUE-ITEM: 6 (two-scene continuity) | STATE: served two-turn check running; 4 candidate-verified and deploying as 14766b4; drain next | SERVED-SHA: 14766b4 (deploying) | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 6 (two-scene continuity) | STATE: READY FOR OPERATOR for items 1, 1b, 2, 3, 4, 5, 6 on d0c2531; hardening continues | SERVED-SHA: d0c2531099d0efcd77487afbe425ba770c1688b8 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -403,3 +403,27 @@ Item 4 evidence, candidate on 8782 (`scratch/browser-check/loop-candidate-4/`, l
 idle): ok=true. Scene still 944x528 landed at 57.9 s (was 79.5-80.5 s at 1 MP; the scene
 POST took 17.4 s instead of 40 s), scene loop at 132.0 s (was 155-157 s); portrait 27.3 s,
 portrait loop 94.0 s unchanged. Reload restored all four with zero requests.
+
+## Served 14766b4 then d0c2531, session e2a4b9b0
+
+14766b4 (scene still 0.5 MP, 300 s loop timeouts) deployed at 23:16 CDT from the exact
+candidate artifact that passed; rollback `scratch/deploy/rollback-79409d1-before-14766b4.plist`.
+Two-turn check through the real origin (`scratch/browser-check/loop-14766b4-turn2/`,
+ok=true): turn 1 label 1.3 s, portrait 27.1 s, caption 2.3 s, scene 78.5 s, portrait loop
+98.6 s, scene loop 153.5 s; second chat turn sent, response finalized at 57.9 s,
+expression `curiosity`, new portrait at 90.3 s, one caption, new scene still 944x528 at
+157.3 s (scene POST at 119.5 s, after the caption), new scene loop at 232.2 s; Media panel
+"Continuity current"; reload restored all four with zero requests.
+
+Item 6 evidence on firestorm:8189: turn 1 scene c5ca7d0a carried "blonde shoulder-length
+wavy hair, maroon and silver leather jacket, silver hoop earrings"; turn 2 scene 97212bd0
+was composed from the prior scene as continuity master (no outpaint pad) and carried its
+own portrait's caption "blonde shoulder-length wavy hair, maroon and silver jacket,
+silver collar necklace". Each scene carries the caption of the portrait made for that
+turn; hair and jacket held, the accessory reading differed between the two portraits.
+
+d0c2531 (shutdown drain) passed its candidate check and was deployed at 23:27 CDT;
+served check `scratch/browser-check/loop-d0c2531/` ok=true. Rollback
+`scratch/deploy/rollback-14766b4-before-d0c2531.plist`. READY FOR OPERATOR for every
+queue item. What to look at: https://barracuda.meteor-tegu.ts.net/mullet/ after a hard
+reload - start a scenario, watch the Media panel, send a second turn, reload.
