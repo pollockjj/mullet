@@ -109,6 +109,25 @@ Real remaining defects, in priority order:
    loop key also includes prompt ID and timestamps, so a byte-identical still (fixed
    seed per character) still costs a new loop every turn.
 
+## Budgets, measured in pipeline order on the served build (2026-09-01, five-stage check)
+
+| Stage | Click-to-visible from the starter click | What sets it |
+| --- | --- | --- |
+| [0] label | 1.3 s | classifier |
+| [1] portrait | 27 s | Qwen 4-step, cold every turn (H3 evicts it), ~25 s of ComfyUI |
+| caption | 2-8 s round trip | vision call on the chat model |
+| [3] scene still | 80 s at 1 MP | waits for the caption (~30 s), then 40 s of Qwen; 0.5 MP measures 15.5 s of ComfyUI |
+| [2] portrait loop | 95 s | 56 frames, 37 s warm / 48 s cold, queued behind the still |
+| [4] scene loop | 155 s | 73 frames, ~75-85 s, queued behind the scene still |
+
+Budget: each number above plus 25% is the alarm line; a run past it is investigated,
+not tolerated. These are hardware numbers (25 GB cards, H3 never resident), not targets:
+the v1 gates of 8 s / 25 s were never reachable here. Decisions taken with the pairing
+data are in `docs/STATE.md`: keep 56 frames (operator-specified 2 s; 39 frames would
+save ~12 s), scene still 0.5 MP, loop timeouts 300 s. Routing by media type would make
+stills warm (4-8 s) at the cost of serializing both loops; that remains the operator's
+standing order to route by pipeline and is not changed here.
+
 ## Work queue - in this order, one at a time, each verified in the browser before the next
 
 1. Extend `tools/browser-check.mjs` to wait for all five stages, record per-stage
