@@ -33,81 +33,24 @@ part of the contract.
 Done is: the operator ran the served build, saw all five stages work, and said so.
 Nothing else is done. Deploy + browser check produces `READY FOR OPERATOR`, never `done`.
 
-## Where it actually stands (verified 2026-09-01 16:43-16:46 CDT, served 903140d)
+## Where it actually stands (served c05e34a, 2026-09-02 00:57 CDT)
 
-`node tools/browser-check.mjs --url https://barracuda.meteor-tegu.ts.net/mullet/ --scenario Blake --starter Jenna --generate scene`
-(record: `scratch/browser-check/fable-served-903140d/check.json` + `app.png`):
+`node tools/browser-check.mjs --scenario Blake --starter Jenna --generate loop --turn "..."`
+through the real origin (`scratch/browser-check/loop-c05e34a/`): ok=true. Two consecutive
+turns each produced label, portrait, caption, portrait loop, scene still and scene loop;
+each scene carried the caption of the portrait made for that turn, shown in the Media
+panel as "Continuity current · <caption>"; a reload restored all four items with zero
+generation and zero caption requests. A service restart mid-loop is drained on the lane
+and recovered by the page in about 20 s. Every queue item below has served evidence in
+`docs/STATE.md`; none is accepted until the operator says so.
 
-| Stage | Observed in that run | Measured on the lanes (ComfyUI history, MULLET jobs only, medians) |
-| --- | --- | --- |
-| [0] label | `fear` | 1.0-1.5 s |
-| [1] still | 576x1024 Jenna, correct identity and costume | Z-Image 4.2 s warm / 13.0 s cold; Qwen 8.4 s warm / 25.6 s cold; plus 39-70 s queue wait when the previous turn's loop is still rendering on the lane |
-| [2] loop | "Animating…" at 151 s; never observed playing by any agent | 48.8 s warm / 66.8 s cold (56 frames, 576x1024, 4 steps) |
-| [3] scene | 1328x752, Jenna + Cally on the flight deck, 66 s after the starter click | Z-Image 17.5 s cold; Qwen 39-45 s cold; plus caption time and queue wait |
-| [4] motion | 1024x576, 3.04 s, silent, playing, 82 s after the still | 81.2 s cold (73 frames); never once warm, because a still always precedes it on the lane |
+The previous session's "OPEN defect 1" was withdrawn with evidence on 2026-09-01: it was
+a misread of a log written under an older build.
 
-Every stage runs cold by construction: each lane alternates a still model with H3, and the
-H3 model plus video VAE (26 GB) do not fit a 25 GB card, so each loop reloads (~18 s) and
-each still reloads (~9 s Z-Image, ~17 s Qwen). No gate in the previous goal is met.
-
-The previous session's "OPEN defect 1" (scene motion rejected on filename) does not exist
-on 903140d: the log lines it cited were written at 10:41 CDT under build 8fc36ac and the
-regex was fixed in d853b4e at 11:18. Nine scene loops completed on the lane after that,
-and the check above shows one playing.
-
-Real remaining defects, in priority order:
-
-1. **The continuity chain runs one turn behind and can drop the scene.** The scene is
-   directed seconds after the response finalizes, before this turn's portrait exists
-   (the portrait needs classifier + 12-34 s + caption), and the fail-open gate in
-   903140d (`subjectContinuityReady`, +page.svelte:4193) only defers when a current
-   portrait is already installed. Three consequences, all verified in code and on the
-   lanes:
-   - the clause injected is empty on a character's first portrait of the session and
-     the **previous** portrait's caption after that (`castContinuityClause` reads
-     `subjectDescriptors` with no staleness check; `subjectDescriptorPortraitKeys` is
-     written at +page.svelte:2613 and never read), so a changed outfit is actively forced
-     back to the old one;
-   - when the fresh caption lands while the scene is generating, the finished scene is
-     discarded at commit (continuity is in `inlineSceneImageRequestKey` but not in the
-     page attempt key or `inlineSceneMatchesSettings`) and never retried: no scene and no
-     loop for that turn (6 of 6 such turns on firestorm:8189 history);
-   - when the caption lands after install, nothing re-attempts, so the scene keeps the
-     stale or missing clause (observed: scene_00067 at 16:43:46, no clause; portrait at
-     16:44:14).
-   Descriptors are in-memory only (re-captioned on every reload, never cleared across
-   conversations) and only the speaking character is ever captioned.
-2. **Caption filler leaks**: the captioner writes `none` for an empty slot and it goes
-   into the prompt verbatim.
-3. **Background leaks into continuity**: the clause says surroundings may change, then
-   pins "window frame, outdoor background" from the portrait.
-4. **Speed**: see the table. The 5.8 s "warm" Qwen figure in `docs/PLAN.md` was
-   measured in isolation and never occurs in pipeline order; the composed 6.5-7.5 s was
-   never observed. The levers that exist, measured:
-   - **Loop frame count** (the only lever that moves all four stages, because it also
-     shortens the next still's queue wait): H3 4-step at 0.59 MP costs ~5.7 s for the
-     first latent frame and ~14 s per additional 17 frames. 22 frames (~0.9 s of video)
-     is predicted ~20 s warm; 39 frames ~34 s; 56 frames measures 48.8 s.
-   - **Cancel the superseded loop**: each lane is a single FIFO and MULLET never
-     pre-empts, so a still submitted while a 47-88 s loop is running waits for it. When a
-     new still is requested, cancel MULLET's own still-rendering loop from the previous
-     turn by its exact prompt ID before submitting. Inside the shared-service rule (own
-     prompt ID only). The 39-70 s waits recorded on 09-01 were mostly caused by stale
-     loops re-fired on reload and by the previous session's orphaned candidate server and
-     headless Chrome pages, which kept submitting to the shared lanes for eleven hours
-     until this session killed them; the mechanism stands, the number was inflated.
-   - **Routing by media type** (all stills on one lane, both loops on the other) would make
-     stills warm (Z-Image 4.2 s, Qwen 8.4 s) and loops ~49-63 s warm. It is barred by the
-     operator's standing order to route by pipeline. That order is the operator's to
-     revisit with these numbers; it is not decided here.
-5. **Stage [2] has never been watched to completion** by any agent or check, and **every
-   page reload regenerates it**: `restoreGeneratedPortraitVideo` runs once, before the
-   portrait capabilities have loaded, so the stored loop is never accepted and a fresh
-   45-90 s H3 loop is submitted (seven loop-only jobs with no preceding still on the
-   expression lane, two of them minutes after the previous agent told the operator to
-   reload). The still, scene still and scene loop do restore from stored bytes. The
-   loop key also includes prompt ID and timestamps, so a byte-identical still (fixed
-   seed per character) still costs a new loop every turn.
+Known limits that remain, by design of the hardware rather than defects: stills run cold
+every turn and loops take 65-90 s because both lanes are single 25 GB cards on which H3
+is never resident; the scene lands about 80 s after the turn because it waits for the
+portrait's caption (operator-ordered chain).
 
 ## Budgets, measured in pipeline order on the served build (2026-09-01, five-stage check)
 
