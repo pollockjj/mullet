@@ -11,6 +11,10 @@ import {
   Z_IMAGE_TURBO_TEMPLATE,
   buildQwenReferenceEditWorkflow,
   buildZImageTurboImageWorkflow,
+  buildKrea2TurboImageWorkflow,
+  KREA2_TURBO_TEMPLATE,
+  isKreaLoraName,
+  isZImageLoraName,
   isPortraitLoraName,
   type PortraitReferenceImage
 } from './portrait.ts';
@@ -20,6 +24,7 @@ export const INLINE_SCENE_RESULT_SPEC = 'mullet_inline_scene_result_v3' as const
 export const INLINE_SCENE_IMAGE_REQUEST_SPEC = 'mullet_inline_scene_image_request_v5' as const;
 export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_v4' as const;
 export const INLINE_SCENE_TEMPLATE_ID = 'z-image-turbo-scene-v1' as const;
+export const INLINE_SCENE_KREA_TEMPLATE_ID = 'krea2-turbo-scene-v1' as const;
 export const INLINE_SCENE_QWEN_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
 export const INLINE_SCENE_TIMEOUT_MS = 30_000 as const;
 export const INLINE_SCENE_IMAGE_TIMEOUT_MS = 120_000 as const;
@@ -72,12 +77,33 @@ export const Z_IMAGE_TURBO_SCENE_TEMPLATE = Object.freeze({
 } as const);
 
 
-// Only distillation-accelerated scene stills: Z-Image Turbo and Qwen Image Edit 2511
-// with its four-step Lightning LoRA. The 20-step H3 keeper still is deleted.
+export const KREA2_TURBO_SCENE_TEMPLATE = Object.freeze({
+  id: INLINE_SCENE_KREA_TEMPLATE_ID,
+  label: 'Krea 2 Turbo · linked identity LoRA',
+  modelFamily: KREA2_TURBO_TEMPLATE.modelFamily,
+  promptGuide: 'cinematic realistic landscape fiction still, coherent anatomy and spatial relationships, natural skin texture, controlled depth of field, no text, and no watermark',
+  modelFiles: KREA2_TURBO_TEMPLATE.modelFiles,
+  requiredNodes: KREA2_TURBO_TEMPLATE.requiredNodes,
+  loraPrefix: KREA2_TURBO_TEMPLATE.loraPrefix,
+  multiple: KREA2_TURBO_TEMPLATE.multiple,
+  outputNode: KREA2_TURBO_TEMPLATE.outputNode,
+  steps: KREA2_TURBO_TEMPLATE.steps,
+  cfg: KREA2_TURBO_TEMPLATE.cfg,
+  sampler: KREA2_TURBO_TEMPLATE.sampler,
+  scheduler: KREA2_TURBO_TEMPLATE.scheduler
+} as const);
+
+// Only distillation-accelerated scene stills: Z-Image Turbo, Krea 2 Turbo (both with a
+// linked subject LoRA) and Qwen Image Edit 2511 with its four-step Lightning LoRA.
 export const INLINE_SCENE_TEMPLATES = Object.freeze([
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
+  KREA2_TURBO_SCENE_TEMPLATE,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE
 ] as const);
+
+export function isInlineSceneLoraTemplateId(value: unknown): value is typeof INLINE_SCENE_TEMPLATE_ID | typeof INLINE_SCENE_KREA_TEMPLATE_ID {
+  return value === INLINE_SCENE_TEMPLATE_ID || value === INLINE_SCENE_KREA_TEMPLATE_ID;
+}
 
 export type InlineSceneAspectRatio = (typeof INLINE_SCENE_ASPECT_RATIOS)[number]['id'];
 export type InlineSceneMegapixels = (typeof INLINE_SCENE_MEGAPIXELS)[number];
@@ -1056,8 +1082,14 @@ export function normalizeInlineSceneImageRequest(value: unknown): InlineSceneIma
     ? undefined
     : normalizeInlineSceneContinuityMaster(value.continuityMaster);
   const lora = normalizeInlineSceneLora(value.lora);
-  if (modelTemplate === INLINE_SCENE_TEMPLATE_ID && (!lora || cast.kind !== 'solo' || continuityMaster)) {
+  if (isInlineSceneLoraTemplateId(modelTemplate) && (!lora || cast.kind !== 'solo' || continuityMaster)) {
     throw new Error('Z-Image inline scenes require one cast identity, one linked LoRA, and no continuity master');
+  }
+  if (modelTemplate === INLINE_SCENE_TEMPLATE_ID && lora && !isZImageLoraName(lora.path)) {
+    throw new Error('Z-Image inline scenes require a Z-Image LoRA');
+  }
+  if (modelTemplate === INLINE_SCENE_KREA_TEMPLATE_ID && lora && !isKreaLoraName(lora.path)) {
+    throw new Error('Krea inline scenes require a Krea LoRA');
   }
   if (modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID && lora !== null) {
     throw new Error('Qwen inline scenes require one to three identity references and no selectable LoRA');
@@ -1280,6 +1312,26 @@ export function buildQwenImageEditSceneWorkflow(
   });
 }
 
+export function buildKrea2TurboSceneWorkflow(
+  request: InlineSceneImageRequest,
+  seed: number,
+  _capabilities?: InlineSceneCapabilities
+): Record<string, unknown> {
+  const normalized = normalizeInlineSceneImageRequest(request);
+  if (normalized.modelTemplate !== INLINE_SCENE_KREA_TEMPLATE_ID || !normalized.lora) {
+    throw new Error('Krea scene workflow requires a linked LoRA request');
+  }
+  const { width, height } = inlineSceneDimensions(normalized.aspectRatio, normalized.megapixels, KREA2_TURBO_SCENE_TEMPLATE.multiple);
+  return buildKrea2TurboImageWorkflow({
+    prompt: buildInlineScenePrompt(normalized),
+    width,
+    height,
+    seed,
+    lora: normalized.lora.path,
+    filenamePrefix: 'mullet/scene'
+  });
+}
+
 export function buildZImageTurboSceneWorkflow(
   request: InlineSceneImageRequest,
   seed: number,
@@ -1358,7 +1410,7 @@ export function normalizeInlineSceneCapabilities(value: unknown): InlineSceneCap
 }
 export function buildInlineScenePrompt(request: InlineSceneImageRequest): string {
   const normalized = normalizeInlineSceneImageRequest(request);
-  if (normalized.modelTemplate === INLINE_SCENE_TEMPLATE_ID && normalized.lora) {
+  if (isInlineSceneLoraTemplateId(normalized.modelTemplate) && normalized.lora) {
     const [identity] = normalized.cast.identities;
     return [
       `The loaded identity LoRA token ${normalized.lora.trigger} represents ${identity.subject}.`,

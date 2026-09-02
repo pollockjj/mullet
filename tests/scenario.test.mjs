@@ -21,6 +21,7 @@ import {
 } from '../src/lib/scenario.ts';
 import {
   PORTRAIT_TEMPLATE_ID,
+  PORTRAIT_KREA_TEMPLATE_ID,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
 } from '../src/lib/portrait.ts';
 
@@ -247,10 +248,11 @@ test('ships the private cabin lore with three byte-exact references and latest Z
   const references = new Map([
     ['jan-pollock', {
       name: 'cabin-jan-v1.png',
+      modelTemplate: PORTRAIT_KREA_TEMPLATE_ID,
       lora: {
-        name: 'zimage/jan6.safetensors',
+        name: 'janpollock-krea2-v3-attn.safetensors',
         trigger: 'janpollock',
-        sha256: '5aa76c01fab06cbf89e80dcb1e3bfdaddc5cbdd1a287512650226dff3686687f'
+        sha256: '45cb6a77582ed989ce022ae55de2cfc917bbdc8f52a4a7781288001abad41ba3'
       },
       sha256: '5fb84b3a0a3a2cff07488e3799d89e5a3539e90bd01932c7bb44e58fad4a832f',
       width: 1024,
@@ -258,10 +260,11 @@ test('ships the private cabin lore with three byte-exact references and latest Z
     }],
     ['kristi-bentler', {
       name: 'cabin-kristi-v1.png',
+      modelTemplate: PORTRAIT_KREA_TEMPLATE_ID,
       lora: {
-        name: 'zimage/kristi6.safetensors',
+        name: 'kristibentler-krea2-v4-attn.safetensors',
         trigger: 'kristibentler',
-        sha256: '42ad2ba10023183cb5f38bc2db1f196a266ca9c13c19f83b368ac5568d78f4a9'
+        sha256: '41308a40e6eed3cb001f0d2fdbe6b6f403a382de2bcc01526427c225a0e8d26b'
       },
       sha256: 'faea3ae4289d2443a9bd22b8d3c329972470d97b9488c2c7f549431a0159f4ea',
       width: 2048,
@@ -269,6 +272,7 @@ test('ships the private cabin lore with three byte-exact references and latest Z
     }],
     ['angela-pollock', {
       name: 'cabin-angela-v1.png',
+      modelTemplate: PORTRAIT_TEMPLATE_ID,
       lora: {
         name: 'zimage/angela3_000001500.safetensors',
         trigger: 'angelapollock',
@@ -282,7 +286,9 @@ test('ships the private cabin lore with three byte-exact references and latest Z
   for (const profile of packaged.portraitCast.profiles) {
     const expected = references.get(profile.id);
     assert.ok(expected, `unexpected cabin portrait profile ${profile.id}`);
-    assert.equal(profile.modelTemplate, PORTRAIT_TEMPLATE_ID);
+    // Jan and Kristi moved to Krea 2 on 2026-09-02 (operator order); Angela's Krea LoRA
+    // is not ready yet, so she stays on Z-Image.
+    assert.equal(profile.modelTemplate, expected.modelTemplate);
     assert.deepEqual(profile.subjectLora, expected.lora);
     assert.match(profile.subject, new RegExp(`^${profile.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`));
     assert.deepEqual(profile.referenceImage, {
@@ -429,7 +435,7 @@ test('enforces model-specific subject-LoRA linkage and fingerprints its exact ve
   missingCard.data.character_book = structuredClone(missingLore.data);
   assert.throws(
     () => validateScenarioPackage(cabin.entry, missingCard, missingLore),
-    /Z-Image template requires subject_lora/
+    /template requires subject_lora/
   );
 
   const unsafeLore = structuredClone(cabin.lorebookRaw);
@@ -438,11 +444,11 @@ test('enforces model-specific subject-LoRA linkage and fingerprints its exact ve
   unsafeCard.data.character_book = structuredClone(unsafeLore.data);
   assert.throws(
     () => validateScenarioPackage(cabin.entry, unsafeCard, unsafeLore),
-    /safe Z-Image LoRA path/
+    /safe LoRA path/
   );
 
   const changedLore = structuredClone(cabin.lorebookRaw);
-  changedLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora.name = 'zimage/jan7.safetensors';
+  changedLore.data.extensions.mullet.portrait_cast_v2.profiles[0].visual_profile.subject_lora.name = 'janpollock-krea2-v9-attn.safetensors';
   const changedCard = structuredClone(cabin.cardRaw);
   changedCard.data.character_book = structuredClone(changedLore.data);
   const changed = validateScenarioPackage(cabin.entry, changedCard, changedLore);

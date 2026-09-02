@@ -32,6 +32,7 @@
     INLINE_SCENE_IMAGE_TIMEOUT_MS,
     INLINE_SCENE_QWEN_TEMPLATE_ID,
     INLINE_SCENE_TEMPLATE_ID,
+    INLINE_SCENE_KREA_TEMPLATE_ID,
     INLINE_SCENE_TIMEOUT_MS,
     MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS,
     buildInlineSceneImageRequest,
@@ -120,6 +121,8 @@
   import {
     PORTRAIT_H3_TIMEOUT_MS,
     PORTRAIT_TEMPLATE_ID,
+    isPortraitReferenceTemplateId,
+    PORTRAIT_KREA_TEMPLATE_ID,
     PORTRAIT_TIMEOUT_MS,
     buildPortraitRequest,
     migratePortraitModelTemplateSelection,
@@ -582,7 +585,7 @@
     selectedPortraitCapability?.available
     && portraitModelTemplateAvailable(portraitCapabilities, portraitModelTemplate)
   );
-  $: portraitSelectedModelUsesReference = portraitModelTemplate !== PORTRAIT_TEMPLATE_ID;
+  $: portraitSelectedModelUsesReference = isPortraitReferenceTemplateId(portraitModelTemplate);
   $: portraitSelectedSubjectLoraAvailable = Boolean(
     !scenarioPortraitProfile?.subjectLora
     || portraitSelectedModelUsesReference
@@ -990,7 +993,10 @@
     else localStorage.removeItem(portraitModelTemplateStorageKey);
     localStorage.removeItem(previousPortraitModelTemplateStorageKey);
     portraitModelSelectionPersisted = savedModelTemplate !== null;
-    portraitModelTemplate = savedModelTemplate ?? declaredPortraitModelTemplate();
+    // The scenario declares the model per character; a stored selection from the days
+    // when a selector existed must not override it (Jan and Kristi moved to Krea while
+    // browsers still held "z-image-turbo-v1").
+    portraitModelTemplate = declaredPortraitModelTemplate();
     const savedMegapixels = Number(localStorage.getItem(portraitMegapixelsStorageKey));
     if (savedMegapixels === 0.5 || savedMegapixels === 0.75 || savedMegapixels === 0.9 || savedMegapixels === 1 || savedMegapixels === 1.5 || savedMegapixels === 2) {
       portraitMegapixels = savedMegapixels;
@@ -1395,7 +1401,7 @@
       ));
       if (profile?.subjectLora) {
         return {
-          modelTemplate: INLINE_SCENE_TEMPLATE_ID,
+          modelTemplate: profile.modelTemplate === PORTRAIT_KREA_TEMPLATE_ID ? INLINE_SCENE_KREA_TEMPLATE_ID : INLINE_SCENE_TEMPLATE_ID,
           lora: {
             path: profile.subjectLora.name,
             trigger: profile.subjectLora.trigger,
@@ -1417,6 +1423,7 @@
 
   function inlineSceneStillDriverLabel(modelTemplate: InlineSceneImageRequest['modelTemplate']): string {
     if (modelTemplate === INLINE_SCENE_TEMPLATE_ID) return 'Z-Image + exact linked LoRA';
+    if (modelTemplate === INLINE_SCENE_KREA_TEMPLATE_ID) return 'Krea 2 + exact linked LoRA';
     if (false) return 'MiniMax H3 Ref2VA keeper still';
     return 'Qwen multi-reference master';
   }

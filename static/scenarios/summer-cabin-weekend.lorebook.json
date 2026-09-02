@@ -34,11 +34,11 @@
                   "caring": "Use the supplied Jan reference as the sole identity source. Preserve the exact same adult woman, facial structure, blue eyes, nose, mouth, age, skin tone, and long wavy dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a caring, quietly attentive expression. Dress her in comfortable summer weekend clothing and place her on the covered porch of a rustic log cabin, with natural wood and soft green forest light behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech.",
                   "neutral": "Use the supplied Jan reference as the sole identity source. Preserve the exact same adult woman, facial structure, blue eyes, nose, mouth, age, skin tone, and long wavy dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a calm, natural expression. Dress her in comfortable summer weekend clothing and place her on the covered porch of a rustic log cabin, with natural wood and soft green forest light behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech."
                 },
-                "model_template": "z-image-turbo-v1",
+                "model_template": "krea2-turbo-lora-v1",
                 "subject_lora": {
-                  "name": "zimage/jan6.safetensors",
+                  "name": "janpollock-krea2-v3-attn.safetensors",
                   "trigger": "janpollock",
-                  "sha256": "5aa76c01fab06cbf89e80dcb1e3bfdaddc5cbdd1a287512650226dff3686687f"
+                  "sha256": "45cb6a77582ed989ce022ae55de2cfc917bbdc8f52a4a7781288001abad41ba3"
                 },
                 "reference_image": {
                   "name": "cabin-jan-v1.png",
@@ -67,11 +67,11 @@
                   "curiosity": "Use the supplied Kristi reference as the sole identity source. Preserve the exact same adult woman, facial structure, light eyes, nose, mouth, age, skin tone, build visible in frame, and swept-back strawberry-blonde hairstyle. Create a photorealistic head-and-chest portrait with an attentive, mildly curious expression. Dress her in practical casual summer weekend clothing and place her in the open doorway of a rustic log cabin, with natural wood and softly lit forest greenery behind her. Preserve identity; do not substitute, beautify, rejuvenate, slim, or reshape her. No text, watermark, extra people, or speech.",
                   "neutral": "Use the supplied Kristi reference as the sole identity source. Preserve the exact same adult woman, facial structure, light eyes, nose, mouth, age, skin tone, build visible in frame, and swept-back strawberry-blonde hairstyle. Create a photorealistic head-and-chest portrait with a composed, natural expression. Dress her in practical casual summer weekend clothing and place her in the open doorway of a rustic log cabin, with natural wood and softly lit forest greenery behind her. Preserve identity; do not substitute, beautify, rejuvenate, slim, or reshape her. No text, watermark, extra people, or speech."
                 },
-                "model_template": "z-image-turbo-v1",
+                "model_template": "krea2-turbo-lora-v1",
                 "subject_lora": {
-                  "name": "zimage/kristi6.safetensors",
+                  "name": "kristibentler-krea2-v4-attn.safetensors",
                   "trigger": "kristibentler",
-                  "sha256": "42ad2ba10023183cb5f38bc2db1f196a266ca9c13c19f83b368ac5568d78f4a9"
+                  "sha256": "41308a40e6eed3cb001f0d2fdbe6b6f403a382de2bcc01526427c225a0e8d26b"
                 },
                 "reference_image": {
                   "name": "cabin-kristi-v1.png",

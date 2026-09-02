@@ -4,6 +4,8 @@ import {
   INLINE_SCENE_MEGAPIXELS,
   INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
+  INLINE_SCENE_KREA_TEMPLATE_ID,
+  buildKrea2TurboSceneWorkflow,
   INLINE_SCENE_TEMPLATES,
   QWEN_IMAGE_EDIT_SCENE_TEMPLATE,
   Z_IMAGE_TURBO_SCENE_TEMPLATE,
@@ -18,6 +20,7 @@ import {
   type InlineSceneImageRequest,
   type InlineSceneUploadedMasterInput
 } from '../inline-scene.ts';
+import { isKreaLoraName } from '../portrait.ts';
 import { trackPrompt, untrackPrompt } from './inflight.ts';
 import { sha256Hex as sha256BytesHex } from './comfy-portrait-video.ts';
 import { assertComfyIdentityReference } from './comfy-portrait.ts';
@@ -172,6 +175,12 @@ export async function loadInlineSceneCapabilities(
         )) missing.push(`node-input:TextEncodeQwenImageEditPlus:optional:${inputName}:IMAGE`);
       }
     }
+    if (template.id === INLINE_SCENE_KREA_TEMPLATE_ID) {
+      if (!unets.includes(template.modelFiles.unet)) missing.push(`model:unet:${template.modelFiles.unet}`);
+      if (!clips.includes(template.modelFiles.clip)) missing.push(`model:clip:${template.modelFiles.clip}`);
+      if (!clipTypes.includes('krea2')) missing.push('clip-type:krea2');
+      if (!vaes.includes(template.modelFiles.vae)) missing.push(`model:vae:${template.modelFiles.vae}`);
+    }
     for (const nodeName of template.requiredNodes) {
       if (!nodeAvailable(info.get(nodeName), nodeName)) missing.push(`node:${nodeName}`);
     }
@@ -182,7 +191,9 @@ export async function loadInlineSceneCapabilities(
     templates,
     aspectRatios: INLINE_SCENE_ASPECT_RATIOS,
     megapixels: INLINE_SCENE_MEGAPIXELS,
-    loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_SCENE_TEMPLATE.loraPrefix)).sort()
+    loras: [...new Set([...loras, ...modelOnlyLoras])]
+      .filter((lora) => lora.startsWith(Z_IMAGE_TURBO_SCENE_TEMPLATE.loraPrefix) || isKreaLoraName(lora))
+      .sort()
   };
 }
 
@@ -376,6 +387,8 @@ export async function runComfyInlineScene(
   }
   const workflow = request.modelTemplate === INLINE_SCENE_TEMPLATE_ID
     ? buildZImageTurboSceneWorkflow(request, seed, capabilities)
+    : request.modelTemplate === INLINE_SCENE_KREA_TEMPLATE_ID
+      ? buildKrea2TurboSceneWorkflow(request, seed, capabilities)
     : request.modelTemplate === INLINE_SCENE_QWEN_TEMPLATE_ID
       ? buildQwenImageEditSceneWorkflow(request, seed, capabilities, continuityMasterInput)
       : (() => { throw new Error('unsupported inline-scene model template'); })();

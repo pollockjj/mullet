@@ -8,6 +8,10 @@ import {
   PORTRAIT_REQUEST_SPEC,
   PORTRAIT_TEMPLATE_ID,
   PORTRAIT_TEMPLATES,
+  PORTRAIT_KREA_TEMPLATE_ID,
+  KREA2_TURBO_TEMPLATE,
+  buildKrea2TurboWorkflow,
+  isKreaLoraName,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
   buildPortraitPrompt,
@@ -162,4 +166,33 @@ test('rejects arbitrary templates, portrait geometry, malformed reference metada
   assert.notEqual(portraitRequestKey(referenceRequest()), portraitRequestKey(referenceRequest({
     referenceImage: { ...referenceRequest().referenceImage, width: 800, height: 1200 }
   })));
+});
+
+// Operator order 2026-09-02: Jan and Kristi move to Krea 2 turbo with their Krea LoRAs.
+// This pins the graph the operator runs by hand on firestorm:8188 (prompt f8377cfa):
+// model-only LoRA, no sampling-shift node, EmptyLatentImage, 8 euler/simple steps, cfg 1.
+test('builds the operator\'s Krea 2 turbo graph with a model-only subject LoRA', () => {
+  assert.equal(isKreaLoraName('janpollock-krea2-v3-attn.safetensors'), true);
+  assert.equal(isKreaLoraName('zimage/jan6.safetensors'), false);
+  const graph = buildKrea2TurboWorkflow(request({ modelTemplate: PORTRAIT_KREA_TEMPLATE_ID, lora: 'kristibentler-krea2-v4-attn.safetensors' }), 43);
+  assert.equal(graph['1'].inputs.unet_name, 'krea2_turbo_int8_convrot.safetensors');
+  assert.deepEqual(graph['2'].inputs, { clip_name: 'qwen3vl_4b_fp8_scaled.safetensors', type: 'krea2', device: 'default' });
+  assert.equal(graph['3'].inputs.vae_name, 'qwen_image_vae.safetensors');
+  assert.equal(graph['7'].class_type, 'EmptyLatentImage');
+  assert.equal(graph['6'], undefined);
+  assert.equal(graph['8'].inputs.steps, 8);
+  assert.equal(graph['8'].inputs.sampler_name, 'euler');
+  assert.deepEqual(graph['8'].inputs.model, ['11', 0]);
+  assert.deepEqual(graph['4'].inputs.clip, ['2', 0]);
+  assert.equal(graph['11'].class_type, 'LoraLoaderModelOnly');
+  assert.equal(graph['11'].inputs.lora_name, 'kristibentler-krea2-v4-attn.safetensors');
+  assert.equal(KREA2_TURBO_TEMPLATE.outputNode, '10');
+  assert.throws(
+    () => buildKrea2TurboWorkflow(request({ modelTemplate: PORTRAIT_KREA_TEMPLATE_ID, lora: 'zimage/kristi6.safetensors' }), 43),
+    /does not belong to the selected model family/
+  );
+  assert.throws(
+    () => normalizePortraitRequest(request({ lora: 'kristibentler-krea2-v4-attn.safetensors' })),
+    /does not belong to the selected model family/
+  );
 });

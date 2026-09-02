@@ -8,6 +8,8 @@ import { normalizeLorebook, type ImportedLorebook } from './lorebook.ts';
 import {
   PORTRAIT_TEMPLATE_ID,
   isPortraitLoraName,
+  isPortraitLoraTemplateId,
+  portraitLoraFitsTemplate,
   isPortraitModelTemplate,
   isPortraitReferenceTemplateId,
   type PortraitModelTemplate,
@@ -253,7 +255,7 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       }
       const name = requiredString(visual.subject_lora.name, `scenario portrait profile ${index} subject_lora name`, 200);
       if (!isPortraitLoraName(name)) {
-        throw new Error(`scenario portrait profile ${index} subject_lora name must be a safe Z-Image LoRA path`);
+        throw new Error(`scenario portrait profile ${index} subject_lora name must be a safe LoRA path`);
       }
       const trigger = requiredString(
         visual.subject_lora.trigger,
@@ -273,11 +275,14 @@ export function normalizeScenarioPortraitCast(value: unknown): ScenarioPortraitC
       }
       subjectLora = { name, trigger, sha256 };
     }
-    if (modelTemplate === PORTRAIT_TEMPLATE_ID && subjectLora === null) {
-      throw new Error(`scenario portrait profile ${index} Z-Image template requires subject_lora`);
+    if (isPortraitLoraTemplateId(modelTemplate) && subjectLora === null) {
+      throw new Error(`scenario portrait profile ${index} ${modelTemplate} template requires subject_lora`);
     }
     if (isPortraitReferenceTemplateId(modelTemplate) && subjectLora !== null) {
       throw new Error(`scenario portrait profile ${index} reference-conditioned template cannot use subject_lora`);
+    }
+    if (subjectLora !== null && !portraitLoraFitsTemplate(modelTemplate, subjectLora.name)) {
+      throw new Error(`scenario portrait profile ${index} subject_lora does not belong to ${modelTemplate}`);
     }
     const referenceImage = normalizeScenarioPortraitReference(visual.reference_image, index, 'reference_image');
     const bodyReferenceImage = visual.body_reference_image === undefined || visual.body_reference_image === null

@@ -4,6 +4,10 @@ import {
   PORTRAIT_MEGAPIXELS,
   PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID,
   PORTRAIT_TEMPLATE_ID,
+  PORTRAIT_KREA_TEMPLATE_ID,
+  KREA2_TURBO_TEMPLATE,
+  buildKrea2TurboWorkflow,
+  isKreaLoraName,
   PORTRAIT_TEMPLATES,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE,
   Z_IMAGE_TURBO_TEMPLATE,
@@ -136,6 +140,7 @@ export async function loadPortraitCapabilities(
   const loras = optionList(loraInfo, 'LoraLoader', 'lora_name');
   const clipType = new Map<PortraitTemplate['id'], string>([
     [Z_IMAGE_TURBO_TEMPLATE.id, 'lumina2'],
+    [KREA2_TURBO_TEMPLATE.id, 'krea2'],
     [QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE.id, 'qwen_image']
   ]);
   const templates = PORTRAIT_TEMPLATES.map((template) => {
@@ -157,7 +162,7 @@ export async function loadPortraitCapabilities(
     templates,
     aspectRatios: PORTRAIT_ASPECT_RATIOS,
     megapixels: PORTRAIT_MEGAPIXELS,
-    loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_TEMPLATE.loraPrefix)).sort()
+    loras: loras.filter((lora) => lora.startsWith(Z_IMAGE_TURBO_TEMPLATE.loraPrefix) || isKreaLoraName(lora)).sort()
   };
 }
 
@@ -400,6 +405,8 @@ export async function runComfyPortrait(
   }
   const workflow = request.modelTemplate === PORTRAIT_TEMPLATE_ID
     ? buildZImageTurboWorkflow(request, seed)
+    : request.modelTemplate === PORTRAIT_KREA_TEMPLATE_ID
+      ? buildKrea2TurboWorkflow(request, seed)
     : request.modelTemplate === PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
       ? buildQwenReferencePortraitWorkflow(request, seed)
       : (() => { throw new Error('unsupported portrait model template'); })();

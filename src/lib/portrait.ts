@@ -8,6 +8,9 @@ import {
 export const PORTRAIT_REQUEST_SPEC = 'mullet_portrait_request_v6' as const;
 export const PORTRAIT_CAPABILITIES_SPEC = 'mullet_portrait_capabilities_v6' as const;
 export const PORTRAIT_TEMPLATE_ID = 'z-image-turbo-v1' as const;
+// Krea 2 turbo with a trained subject LoRA: the operator's own working graph on the
+// expression lane (8 steps, euler/simple, cfg 1, model-only LoRA), 2026-09-02.
+export const PORTRAIT_KREA_TEMPLATE_ID = 'krea2-turbo-lora-v1' as const;
 export const PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID = 'qwen-image-edit-2511-reference-v1' as const;
 export const PORTRAIT_H3_REFERENCE_TEMPLATE_ID = 'minimax-h3-ref2va-portrait-still-v1' as const;
 export const PORTRAIT_REFERENCE_TEMPLATE_ID = PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
@@ -27,7 +30,8 @@ export type PortraitMegapixels = (typeof PORTRAIT_MEGAPIXELS)[number];
 export type PortraitReferenceModelTemplate =
   | typeof PORTRAIT_QWEN_REFERENCE_TEMPLATE_ID
   | typeof PORTRAIT_H3_REFERENCE_TEMPLATE_ID;
-export type PortraitModelTemplate = typeof PORTRAIT_TEMPLATE_ID | PortraitReferenceModelTemplate;
+export type PortraitLoraModelTemplate = typeof PORTRAIT_TEMPLATE_ID | typeof PORTRAIT_KREA_TEMPLATE_ID;
+export type PortraitModelTemplate = PortraitLoraModelTemplate | PortraitReferenceModelTemplate;
 
 export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
   id: PORTRAIT_TEMPLATE_ID,
@@ -51,6 +55,29 @@ export const Z_IMAGE_TURBO_TEMPLATE = Object.freeze({
   sampler: 'res_multistep',
   scheduler: 'simple',
   shift: 3
+} as const);
+
+export const KREA2_TURBO_TEMPLATE = Object.freeze({
+  id: PORTRAIT_KREA_TEMPLATE_ID,
+  label: 'Krea 2 Turbo · linked identity LoRA',
+  modelFamily: 'krea2',
+  promptGuide: 'cinematic realistic fiction still, coherent anatomy, natural skin texture, detailed eyes, controlled depth of field, no text, no watermark',
+  modelFiles: {
+    unet: 'krea2_turbo_int8_convrot.safetensors',
+    clip: 'qwen3vl_4b_fp8_scaled.safetensors',
+    vae: 'qwen_image_vae.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader', 'CLIPLoader', 'VAELoader', 'CLIPTextEncode', 'ConditioningZeroOut',
+    'EmptyLatentImage', 'KSampler', 'VAEDecode', 'SaveImage', 'LoraLoaderModelOnly'
+  ],
+  loraPrefix: '',
+  multiple: 16,
+  outputNode: '10',
+  steps: 8,
+  cfg: 1,
+  sampler: 'euler',
+  scheduler: 'simple'
 } as const);
 
 export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
@@ -94,8 +121,13 @@ export const QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE = Object.freeze({
 // still is deleted, not demoted.
 export const PORTRAIT_TEMPLATES = Object.freeze([
   Z_IMAGE_TURBO_TEMPLATE,
+  KREA2_TURBO_TEMPLATE,
   QWEN_IMAGE_EDIT_REFERENCE_TEMPLATE
 ] as const);
+
+export function isPortraitLoraTemplateId(value: unknown): value is PortraitLoraModelTemplate {
+  return value === PORTRAIT_TEMPLATE_ID || value === PORTRAIT_KREA_TEMPLATE_ID;
+}
 
 export type PortraitTemplate = (typeof PORTRAIT_TEMPLATES)[number];
 
@@ -222,6 +254,9 @@ const FINGERPRINT_PATTERN = /^\d+:[0-9a-f]{8}$/;
 const PROFILE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PROFILE_FINGERPRINT_PATTERN = /^[0-9a-f]{8}$/;
 const LORA_PATTERN = /^zimage\/[A-Za-z0-9][A-Za-z0-9._ -]*\.safetensors$/;
+// Krea LoRAs live at the top level of the loras folder and carry "krea2" in their name
+// (janpollock-krea2-v3-attn.safetensors, kristibentler-krea2-v4-attn.safetensors).
+const KREA_LORA_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._ -]*krea2[A-Za-z0-9._ -]*\.safetensors$/;
 const REFERENCE_IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i;
 const MANAGED_BODY_REFERENCE_PATTERN = /^body-[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{8}-[0-9a-f]{64}\.png$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -235,7 +270,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isPortraitLoraName(value: unknown): value is string {
+  return typeof value === 'string' && (LORA_PATTERN.test(value) || KREA_LORA_PATTERN.test(value));
+}
+
+export function isKreaLoraName(value: unknown): value is string {
+  return typeof value === 'string' && KREA_LORA_PATTERN.test(value);
+}
+
+export function isZImageLoraName(value: unknown): value is string {
   return typeof value === 'string' && LORA_PATTERN.test(value);
+}
+
+// A LoRA only fits the model family it was trained for.
+export function portraitLoraFitsTemplate(modelTemplate: PortraitModelTemplate, lora: string | null): boolean {
+  if (lora === null) return true;
+  if (modelTemplate === PORTRAIT_TEMPLATE_ID) return isZImageLoraName(lora);
+  if (modelTemplate === PORTRAIT_KREA_TEMPLATE_ID) return isKreaLoraName(lora);
+  return false;
 }
 
 function textField(value: unknown, name: string, minimum: number, maximum: number): string {
@@ -445,7 +496,10 @@ export function normalizePortraitRequest(value: unknown): PortraitRequest {
   if (isPortraitReferenceTemplateId(modelTemplate) && lora !== null) {
     throw new Error('reference-conditioned portrait does not accept a Z-Image LoRA');
   }
-  if (modelTemplate === PORTRAIT_TEMPLATE_ID && (referenceImage !== null || bodyReferenceImage !== null)) {
+  if (lora !== null && !portraitLoraFitsTemplate(modelTemplate, lora)) {
+    throw new Error('portrait LoRA does not belong to the selected model family');
+  }
+  if (isPortraitLoraTemplateId(modelTemplate) && (referenceImage !== null || bodyReferenceImage !== null)) {
     throw new Error('Z-Image portrait does not accept identity references');
   }
   if (modelTemplate !== PORTRAIT_H3_REFERENCE_TEMPLATE_ID && bodyReferenceImage !== null) {
@@ -612,6 +666,81 @@ export function buildZImageTurboImageWorkflow(
     };
   }
   return graph;
+}
+
+export type Krea2TurboImageWorkflowSettings = {
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  lora: string | null;
+  filenamePrefix: 'mullet/portrait' | 'mullet/scene';
+};
+
+// The operator's own Krea graph: model-only LoRA, no sampling shift node, plain
+// EmptyLatentImage, 8 euler/simple steps at cfg 1 with a zeroed negative.
+export function buildKrea2TurboImageWorkflow(
+  settings: Krea2TurboImageWorkflowSettings
+): Record<string, unknown> {
+  const template = KREA2_TURBO_TEMPLATE;
+  const validatedSeed = integer(settings.seed, 'Krea seed', 0, Number.MAX_SAFE_INTEGER);
+  const width = integer(settings.width, 'Krea width', 16, 8192);
+  const height = integer(settings.height, 'Krea height', 16, 8192);
+  if (width % template.multiple !== 0 || height % template.multiple !== 0) {
+    throw new Error(`Krea dimensions must be divisible by ${template.multiple}`);
+  }
+  if (settings.lora !== null && !isKreaLoraName(settings.lora)) throw new Error('Krea LoRA path is invalid');
+  if (settings.filenamePrefix !== 'mullet/portrait' && settings.filenamePrefix !== 'mullet/scene') {
+    throw new Error('Krea filename prefix is invalid');
+  }
+  const prompt = textField(settings.prompt, 'Krea prompt', 1, 2000);
+  const modelSource: [string, number] = settings.lora ? ['11', 0] : ['1', 0];
+  const graph: Record<string, unknown> = {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'krea2', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.vae } },
+    '4': { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['2', 0] } },
+    '5': { class_type: 'ConditioningZeroOut', inputs: { conditioning: ['4', 0] } },
+    '7': { class_type: 'EmptyLatentImage', inputs: { width, height, batch_size: 1 } },
+    '8': {
+      class_type: 'KSampler',
+      inputs: {
+        seed: validatedSeed,
+        steps: template.steps,
+        cfg: template.cfg,
+        sampler_name: template.sampler,
+        scheduler: template.scheduler,
+        denoise: 1,
+        model: modelSource,
+        positive: ['4', 0],
+        negative: ['5', 0],
+        latent_image: ['7', 0]
+      }
+    },
+    '9': { class_type: 'VAEDecode', inputs: { samples: ['8', 0], vae: ['3', 0] } },
+    '10': { class_type: 'SaveImage', inputs: { images: ['9', 0], filename_prefix: settings.filenamePrefix } }
+  };
+  if (settings.lora) {
+    graph['11'] = {
+      class_type: 'LoraLoaderModelOnly',
+      inputs: { model: ['1', 0], lora_name: settings.lora, strength_model: 1 }
+    };
+  }
+  return graph;
+}
+
+export function buildKrea2TurboWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {
+  const normalized = normalizePortraitRequest(request);
+  if (normalized.modelTemplate !== PORTRAIT_KREA_TEMPLATE_ID) throw new Error('Krea workflow requires the Krea template');
+  const { width, height } = portraitDimensions(normalized.aspectRatio, normalized.megapixels);
+  return buildKrea2TurboImageWorkflow({
+    prompt: buildPortraitPrompt(normalized),
+    width,
+    height,
+    seed,
+    lora: normalized.lora,
+    filenamePrefix: 'mullet/portrait'
+  });
 }
 
 export function buildZImageTurboWorkflow(request: PortraitRequest, seed: number): Record<string, unknown> {

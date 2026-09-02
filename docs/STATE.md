@@ -1,4 +1,4 @@
-QUEUE-ITEM: hardening | STATE: all six items plus hardening verified on the served build, READY FOR OPERATOR; watching the served log | SERVED-SHA: c05e34ab3b60ef9466f054bf6c6e777e17357f22 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: operator order 2026-09-02 - Jan and Kristi on Krea 2 | STATE: implemented, candidate check running; served c05e34a | SERVED-SHA: c05e34ab3b60ef9466f054bf6c6e777e17357f22 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -503,3 +503,24 @@ all four stages (e9e8f8f); live caption in the Media panel and the check's secon
 `scratch/browser-check/<name>/check.json` and on the lanes' `/history`. A persistent log
 watch on `scratch/mullet.stderr.log` and `mullet.stdout.log` reports failures,
 classifier fallbacks, drains and restarts during the operator's own use.
+
+## Operator order 2026-09-02: Jan and Kristi move to Krea 2 (Angela stays on Z-Image)
+
+Facts from the lanes: both lanes list `krea2_turbo_int8_convrot.safetensors`, the
+`qwen3vl_4b_fp8_scaled.safetensors` text encoder with CLIPLoader type `krea2`,
+`qwen_image_vae.safetensors`, and the LoRAs `janpollock-krea2-v3-attn.safetensors` and
+`kristibentler-krea2-v4-attn.safetensors` (no Krea LoRA for Angela). The operator's own
+Krea graph on firestorm:8188 (prompt f8377cfa, 19-25 s at 1 MP) is UNETLoader ->
+LoraLoaderModelOnly -> KSampler 8 steps euler/simple cfg 1, CLIPTextEncode positive with
+ConditioningZeroOut negative, EmptyLatentImage, VAEDecode, SaveImage; no sampling-shift
+node. LoRA hashes are the `sshs_model_hash` from each file's safetensors header (that is
+how the zimage hashes in the card were sourced), read through ComfyUI's view_metadata.
+
+Decision: new portrait template `krea2-turbo-lora-v1` and scene template
+`krea2-turbo-scene-v1` mirroring that graph (multiple 16, output node 10, prefix
+mullet/portrait and mullet/scene as before); Krea LoRA names are top-level files with
+`krea2` in the name; a LoRA must belong to the template's family; the scene cast driver
+picks the Krea scene template when the profile's portrait template is Krea; the page no
+longer lets a stored selector value override the scenario's declared template. Jan and
+Kristi's profiles in the cabin card and lorebook now declare the Krea template and LoRAs
+(same triggers, same seeds); Angela is unchanged.
