@@ -2,12 +2,25 @@
 // This is the evidence for a milestone. `node --test` is not.
 // It boots a real Chrome against a served build, waits for the app to actually be
 // interactive, drives it, and records what is on the screen plus how long it took.
+//
+// Modes:
+//   (none)               load, select scenario/starter, read the panels, screenshot
+//   --generate portrait  click "Generate portrait" and time click-to-visible
+//   --generate loop      the whole five-stage loop from the starter click: label,
+//                        portrait, caption, portrait motion, scene still, scene motion,
+//                        then reload the page in the same profile and prove that every
+//                        media item comes back from storage without a new generation
+//   --generate scene     (legacy) scene still + scene motion only
+//
+// Every multipart POST to 127.0.0.1 is rejected by the ORIGIN check, so the default URL
+// is the real origin. Override with MULLET_CHECK_URL or --url.
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch } from './cdp.mjs';
 
-const DEFAULT_URL = process.env.MULLET_CHECK_URL ?? 'http://127.0.0.1:8781/mullet/';
+const DEFAULT_URL = process.env.MULLET_CHECK_URL ?? 'https://barracuda.meteor-tegu.ts.net/mullet/';
+const GENERATION_ROUTES = ['/api/portrait', '/api/portrait/video', '/api/scene', '/api/scene/video'];
 
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(`--${name}`);
@@ -17,6 +30,10 @@ function argValue(name, fallback = null) {
 
 function hasFlag(name) {
   return process.argv.includes(`--${name}`);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 // The app server-renders the shell, so an <h1> exists long before Svelte hydrates and
@@ -96,16 +113,46 @@ const READ_PANELS = `(() => {
   };
 })()`;
 
-// Enable a feature toggle by the panel it lives in, then confirm it actually flipped.
-async function enablePanelToggle(page, panelLabel) {
-  const selector = `[aria-label="${panelLabel}"] input[type="checkbox"]`;
-  return page.evaluate(`(() => {
-    const box = document.querySelector(${JSON.stringify(selector)});
-    if (!box) return 'no-toggle';
-    if (box.checked) return 'already-on';
-    box.click();
-    return box.checked ? 'enabled' : 'click-ignored';
-  })()`);
+// Predicates for each media item, as the operator sees them.
+const PORTRAIT_IMAGE = `(() => { const i = document.querySelector('.portrait img'); return i && i.complete && i.naturalWidth > 0; })()`;
+const PORTRAIT_VIDEO = `(() => { const v = document.querySelector('.portrait video'); return v && v.readyState >= 2 && v.videoWidth > 0; })()`;
+const SCENE_IMAGE = `(() => { const i = document.querySelector('.scene-card img'); return i && i.complete && i.naturalWidth > 0; })()`;
+const SCENE_VIDEO = `(() => { const v = document.querySelector('.scene-card video'); return v && v.readyState >= 2 && v.videoWidth > 0; })()`;
+const EXPRESSION_LABEL = `(() => { const m = document.querySelector('[aria-label="Media"]')?.textContent ?? '';
+  const match = m.replace(/\\s+/g, ' ').match(/Expression\\s+([a-z]+)/i);
+  return match && !/^determining$/i.test(match[1]) ? match[1] : ''; })()`;
+
+function pathOf(url) {
+  try {
+    return new URL(url).pathname.replace(/^\/mullet/, '');
+  } catch {
+    return url;
+  }
+}
+
+function requestsSince(page, startedAt) {
+  return page.requests.filter((request) => request.startedAt >= startedAt);
+}
+
+function generationRequests(page, startedAt) {
+  return requestsSince(page, startedAt).filter((request) => (
+    request.method === 'POST' && GENERATION_ROUTES.includes(pathOf(request.url))
+  ));
+}
+
+function firstRequest(page, startedAt, path, method = 'POST') {
+  return requestsSince(page, startedAt).find((request) => request.method === method && pathOf(request.url) === path) ?? null;
+}
+
+async function waitStage(page, record, name, expression, { timeoutMs, pollMs, since }) {
+  try {
+    await page.waitFor(expression, { timeoutMs, pollMs, label: name });
+    record.timings[name] = Date.now() - since;
+    return true;
+  } catch (error) {
+    record.stages[name] = error.message;
+    return false;
+  }
 }
 
 async function main() {
@@ -114,12 +161,18 @@ async function main() {
   const scenario = argValue('scenario');
   const starter = argValue('starter');
   const headless = !hasFlag('headed');
+  const generate = argValue('generate');
+  const settleMs = Number(argValue('settle', '30000'));
   const startedAt = Date.now();
 
   await mkdir(outDir, { recursive: true });
   const { page, close } = await launch({ headless });
+  // A check that dies mid-run must not leave a Chrome behind, submitting to the lanes.
+  const teardown = () => { void close().finally(() => process.exit(130)); };
+  process.once('SIGINT', teardown);
+  process.once('SIGTERM', teardown);
 
-  const record = { url, headless, timings: {}, drove: {}, ok: false };
+  const record = { url, headless, timings: {}, drove: {}, stages: {}, ok: false };
 
   try {
     const navigationStarted = Date.now();
@@ -143,19 +196,19 @@ async function main() {
         return null;
       });
 
+    let starterClickedAt = null;
     if (record.timings.interactiveMs !== null) {
-      // Enable expressions BEFORE the scenario loads. The classifier fires on the
-      // finalized-response transition; switching it on afterwards leaves it idle.
       // Media is always on; there are no per-feature toggles left to click.
       record.drove.mediaState = await page.evaluate(
         `document.querySelector('[aria-label="Media"] strong')?.textContent.trim() ?? null`
       );
       if (scenario) {
         record.drove.scenario = await page.selectByText('Bundled scenario', scenario);
-        await page.waitFor('true', { timeoutMs: 1_000, pollMs: 250 }).catch(() => {});
+        await delay(250);
       }
       if (starter) {
         await page.evaluate('window.confirm = () => true; true');
+        starterClickedAt = Date.now();
         record.drove.starter = await page.clickText('button', starter);
         // Scenario activation is async (package load, lore, sidecar reset). INTERACTIVE is
         // already true, so waiting on it measures nothing. Wait for the starter button to
@@ -174,9 +227,8 @@ async function main() {
     }
 
     // Click-to-visible: the only latency number that matches what the operator feels.
-    const generate = argValue('generate');
     if (generate === 'portrait' && record.timings.interactiveMs !== null) {
-      record.generate = { expressionsToggle: record.drove.expressionsToggle };
+      record.generate = {};
       const model = argValue('model');
       if (model) record.generate.model = await page.selectByText('Portrait image model', model);
       record.generate.selectedModel = await page.evaluate(
@@ -194,7 +246,6 @@ async function main() {
         )
         .catch((error) => {
           record.generate.notReady = error.message;
-          record.generate.sidecar = document.title;
           return null;
         });
 
@@ -213,14 +264,12 @@ async function main() {
           input.dispatchEvent(new Event('change', { bubbles: true }));
           return true;
         })()`);
-        await page.waitFor('true', { timeoutMs: 1500, pollMs: 400 }).catch(() => {});
+        await delay(1_500);
       }
 
       // An image may already be on screen (card avatar, or a restored portrait).
       // Measure the arrival of a NEW one, not the presence of any.
-      const previousSrc = await page.evaluate(
-        `document.querySelector('.portrait img')?.src ?? ''`
-      );
+      const previousSrc = await page.evaluate(`document.querySelector('.portrait img')?.src ?? ''`);
       record.generate.previousSrc = previousSrc;
       const clickedAt = Date.now();
       record.generate.clicked = await page.clickText(
@@ -243,42 +292,86 @@ async function main() {
       }
     }
 
-    // Scene still then scene motion, the two stages that were never exercised.
-    // Enabling the scene toggle starts the still automatically; "Generate motion" lives
-    // inside the same panel, not in a separate one.
+    // The whole loop, timed from the starter click, then a reload that must restore
+    // every item from storage and submit nothing.
+    if (generate === 'loop' && record.timings.interactiveMs !== null && starterClickedAt !== null) {
+      const since = starterClickedAt;
+      record.loop = {};
+
+      // [0] the label shows up in the Media panel as "Expression <label>".
+      if (await waitStage(page, record, 'expressionLabelMs', `${EXPRESSION_LABEL} !== ''`, { timeoutMs: 120_000, pollMs: 500, since })) {
+        record.loop.expression = await page.evaluate(EXPRESSION_LABEL);
+      }
+      // [1]-[4] arrive in whatever order the lanes allow, so every stage is watched at
+      // once and each records the moment it actually appeared.
+      const captionWatch = (async () => {
+        const captionDeadline = Date.now() + 400_000;
+        while (Date.now() < captionDeadline) {
+          const caption = firstRequest(page, since, '/api/sidecar/caption');
+          if (caption && caption.finishedAt) {
+            record.timings.captionStartedMs = caption.startedAt - since;
+            record.timings.captionRoundTripMs = caption.finishedAt - caption.startedAt;
+            record.loop.captionStatus = caption.status;
+            return;
+          }
+          await delay(500);
+        }
+        record.stages.caption = 'no completed caption request within 400 s of the starter click';
+      })();
+      await Promise.all([
+        waitStage(page, record, 'portraitVisibleMs', PORTRAIT_IMAGE, { timeoutMs: 360_000, pollMs: 250, since }),
+        captionWatch,
+        waitStage(page, record, 'portraitMotionMs', PORTRAIT_VIDEO, { timeoutMs: 400_000, pollMs: 1_000, since }),
+        waitStage(page, record, 'sceneStillMs', SCENE_IMAGE, { timeoutMs: 400_000, pollMs: 1_000, since }),
+        waitStage(page, record, 'sceneMotionMs', SCENE_VIDEO, { timeoutMs: 900_000, pollMs: 2_000, since })
+      ]);
+
+      record.loop.generationRequests = generationRequests(page, since).map((request) => ({
+        path: pathOf(request.url), status: request.status, startedMs: request.startedAt - since,
+        durationMs: request.finishedAt ? request.finishedAt - request.startedAt : null
+      }));
+      record.loop.beforeReload = await page.evaluate(READ_PANELS);
+      await page.screenshot(join(outDir, 'loop.png'));
+
+      // Reload in the same profile: everything must come back from storage, and no
+      // generation may be submitted. A caption re-run is tolerated but recorded.
+      const reloadAt = Date.now();
+      await page.goto(url, { timeoutMs: 45_000 });
+      await page.evaluate('window.confirm = () => true; window.alert = () => undefined; true');
+      record.timings.reloadInteractiveMs = await page
+        .waitFor(INTERACTIVE, { timeoutMs: 60_000, label: 'interactive after reload' })
+        .catch((error) => { record.stages.reloadInteractive = error.message; return null; });
+      await delay(settleMs);
+      record.reload = {
+        settleMs,
+        portraitImage: await page.evaluate(PORTRAIT_IMAGE),
+        portraitVideo: await page.evaluate(PORTRAIT_VIDEO),
+        sceneImage: await page.evaluate(SCENE_IMAGE),
+        sceneVideo: await page.evaluate(SCENE_VIDEO),
+        generationRequests: generationRequests(page, reloadAt).map((request) => ({
+          path: pathOf(request.url), status: request.status, startedMs: request.startedAt - reloadAt
+        })),
+        captionRequests: requestsSince(page, reloadAt)
+          .filter((request) => request.method === 'POST' && pathOf(request.url) === '/api/sidecar/caption').length,
+        mediaPanel: await page.evaluate(`document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`)
+      };
+      for (const item of ['portraitImage', 'portraitVideo', 'sceneImage', 'sceneVideo']) {
+        if (!record.reload[item]) record.stages[`reload:${item}`] = `${item} not restored within ${settleMs} ms of reload`;
+      }
+      if (record.reload.generationRequests.length > 0) {
+        record.stages['reload:regeneration'] = `${record.reload.generationRequests.length} generation request(s) submitted after reload: ` +
+          record.reload.generationRequests.map((request) => request.path).join(', ');
+      }
+    }
+
+    // (legacy) scene still then scene motion only.
     if (generate === 'scene' && record.timings.interactiveMs !== null) {
-      const SCENE = '[aria-label="Inline landscape scene"]';
       record.scene = {};
       const sceneStart = Date.now();
-
-
-
-      record.timings.sceneStillMs = await page
-        .waitFor(
-          `(() => { const i = document.querySelector('.scene-card img');
-                    return i && i.complete && i.naturalWidth > 0; })()`,
-          { timeoutMs: 400_000, pollMs: 1_000, label: 'scene still visible' }
-        )
-        .catch((error) => { record.scene.stillError = error.message; return null; });
-      record.scene.stillElapsedMs = Date.now() - sceneStart;
-
-      const motionStart = Date.now();
-      {
-        record.timings.sceneMotionMs = await page
-          .waitFor(
-            `(() => { const v = document.querySelector('.scene-card video');
-                      return v && v.readyState >= 2 && v.videoWidth > 0; })()`,
-            { timeoutMs: 900_000, pollMs: 2_000, label: 'scene motion playable' }
-          )
-          .catch((error) => { record.scene.motionError = error.message; return null; });
-      }
-      record.scene.motionElapsedMs = Date.now() - motionStart;
+      await waitStage(page, record, 'sceneStillMs', SCENE_IMAGE, { timeoutMs: 400_000, pollMs: 1_000, since: sceneStart });
+      await waitStage(page, record, 'sceneMotionMs', SCENE_VIDEO, { timeoutMs: 900_000, pollMs: 2_000, since: sceneStart });
       record.scene.mediaPanel = await page.evaluate(
         `document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`
-      );
-      record.scene.video = await page.evaluate(
-        `(() => { const v = document.querySelector('.scene-card video');
-                  return v ? { w: v.videoWidth, h: v.videoHeight, dur: v.duration, ready: v.readyState } : null; })()`
       );
     }
 
@@ -292,6 +385,9 @@ async function main() {
     record.console = page.consoleMessages.filter((entry) => entry.level === 'error');
     record.pageErrors = page.pageErrors;
     record.failedRequests = page.failedRequests;
+    record.serverErrors = page.requests
+      .filter((request) => typeof request.status === 'number' && request.status >= 500)
+      .map((request) => ({ method: request.method, path: pathOf(request.url), status: request.status, atMs: request.startedAt - startedAt }));
 
     const blocking = [];
     if (record.notInteractive) blocking.push(`never became interactive: ${record.notInteractive}`);
@@ -300,6 +396,15 @@ async function main() {
     for (const alert of record.observed.alerts) blocking.push(`alert: ${alert}`);
     if (scenario && record.drove.scenario === false) blocking.push(`could not select scenario "${scenario}"`);
     if (starter && record.drove.starter === false) blocking.push(`could not click starter "${starter}"`);
+    if (generate && !starter) blocking.push('--generate needs --starter');
+    // A stage that did not land, a generation submitted on reload, or any 5xx from the
+    // app is a failed check. "ok" means the operator would have seen the whole loop.
+    for (const [stage, error] of Object.entries(record.stages)) blocking.push(`${stage}: ${error}`);
+    if (record.generate?.error) blocking.push(`portrait: ${record.generate.error}`);
+    for (const failure of record.serverErrors) {
+      if (failure.path === '/favicon.ico') continue;
+      blocking.push(`server ${failure.status} on ${failure.method} ${failure.path}`);
+    }
 
     // A selector offering an option marked unavailable is not fatal, but it is the
     // exact condition that silently demotes a default. Always surface it.
@@ -315,6 +420,7 @@ async function main() {
     record.ok = blocking.length === 0;
   } catch (error) {
     record.error = error instanceof Error ? error.message : String(error);
+    record.ok = false;
     try {
       await page.screenshot(join(outDir, 'failure.png'));
       record.screenshot = join(outDir, 'failure.png');

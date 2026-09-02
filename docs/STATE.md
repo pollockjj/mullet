@@ -1,4 +1,4 @@
-QUEUE-ITEM: 1 (five-stage browser check with reload assertion) | STATE: in-progress | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 1b (expression loop restored on reload, loop keyed on still bytes) | STATE: candidate-verified, deploying | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -255,3 +255,34 @@ Observed in the same run, still open:
   references. Neither was recorded as a decision. Decision under the goal policy: the
   caption chain is the contract; adding the accepted still as an extra Qwen reference
   slot is a candidate to pair-test, not an assumption.
+
+## Queue items 1 and 1b, session e2a4b9b0
+
+Decision: the browser check is the five-stage loop plus a reload in the same Chrome
+profile (`--generate loop`); `ok` is false on any stage error, any 5xx from the app, or any
+generation request after reload. The favicon 502 (Tailscale serve on a missing
+`/favicon.ico`) is recorded but not blocking; it is the "502 of unknown origin" both
+earlier checks showed.
+
+Evidence on the served build 903140d (`scratch/browser-check/loop-903140d/`): all five
+stages landed in one run - label 0.3 s, portrait 37.4 s (POST 28.4 s), caption 8.0 s
+round trip, portrait loop 114.7 s, scene motion 128.7 s. After reload the portrait image,
+scene still and scene loop came back from storage; the portrait loop did not, and a POST
+`/api/portrait/video` went out 121 ms after reload. That is the reload-regeneration defect,
+now pinned by the check.
+
+Decision: `restoreGeneratedPortraitVideo` no longer counts as an attempt while the loop
+request is not derivable; a `portraitVideoRestoreNeeded` flag blocks the reconciliation
+until a real restore attempt has run, and a reactive late restore runs once the request
+exists. `portraitVideoRequestKey` is keyed on the still's bytes and loop parameters
+instead of prompt ID, seed, timestamp and transcript position, so a byte-identical still
+(fixed seed per character) reuses its stored loop. Previously stored loops mismatch the
+new key once and regenerate.
+
+Evidence on the candidate (`scratch/browser-check/loop-candidate-1b/`, port 8782, same
+lanes): after reload the portrait image and loop were restored and zero generation
+requests were submitted. The scene still was generated (POST `/api/scene` 200 in 40.4 s,
+10.6-51.0 s after the click) but never installed: the caption landed at 34.7 s, inside
+that window, so the commit-time currency check discarded the finished scene and nothing
+retried. That is queue item 2's defect (stale/racing caption), reproduced by the check
+on unchanged scene code; on 903140d the caption happened to land after the scene.

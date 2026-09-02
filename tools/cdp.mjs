@@ -114,6 +114,10 @@ export class Page {
     this.consoleMessages = [];
     this.pageErrors = [];
     this.failedRequests = [];
+    // Every request the page makes, with its response status when one arrives. This is
+    // how the check times the sidecars (caption, classifier) and proves that a reload
+    // submits no generation.
+    this.requests = [];
   }
 
   #call(method, params) {
@@ -142,6 +146,23 @@ export class Page {
     this.#scoped('Log.entryAdded', (params) => {
       const entry = params.entry ?? {};
       this.consoleMessages.push({ level: entry.level, text: entry.text ?? '' });
+    });
+    this.#scoped('Network.requestWillBeSent', (params) => {
+      const request = params.request ?? {};
+      this.requests.push({
+        id: params.requestId,
+        method: request.method,
+        url: request.url,
+        startedAt: Date.now(),
+        status: null,
+        finishedAt: null
+      });
+    });
+    this.#scoped('Network.responseReceived', (params) => {
+      const entry = this.requests.find((candidate) => candidate.id === params.requestId);
+      if (!entry) return;
+      entry.status = params.response?.status ?? null;
+      entry.finishedAt = Date.now();
     });
     this.#scoped('Network.loadingFailed', (params) => {
       if (params.type === 'Image' && params.blockedReason === undefined && params.canceled) return;

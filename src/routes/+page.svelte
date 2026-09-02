@@ -304,6 +304,11 @@
   let portraitVideoBusy = false;
   let portraitVideoError = '';
   let portraitVideoRequest: PortraitVideoRequest | null = null;
+  // True until a restore attempt has run with a derivable loop request. On page load the
+  // first attempt runs before capabilities and the scenario catalog resolve, when the
+  // request is still null; without this flag the reconciliation regenerated a 45-90 s
+  // loop on every reload instead of restoring the stored one.
+  let portraitVideoRestoreNeeded = true;
   let portraitVideoCurrent = false;
   let lastPortraitVideoAttemptKey = '';
   let portraitVideoRetriedKey = '';
@@ -580,6 +585,15 @@
     portraitVideoDurationSeconds,
     portraitVideoModelTemplate
   );
+  // Reload restore, second chance: the loop request only becomes derivable once the
+  // portrait capabilities, the scenario profile and the portrait digest have landed.
+  $: if (
+    browser
+    && portraitVideoRestoreNeeded
+    && portraitVideoRequest
+    && portraitVideoPersistenceReady
+    && !portraitVideoBusy
+  ) void restoreGeneratedPortraitVideo();
   $: selectedInlineSceneVideoTemplateCapability = inlineSceneVideoTemplateCapability(
     inlineSceneVideoCapabilities,
     inlineSceneVideoModelTemplate
@@ -681,7 +695,8 @@
     portraitBusy,
     portraitVideoBusy,
     portraitVideoRequest,
-    portraitVideoCurrent
+    portraitVideoCurrent,
+    portraitVideoRestoreNeeded
   );
   $: scheduleInlineSceneReconciliation(
     true && inlineScenesEnabled,
@@ -2817,7 +2832,10 @@
     portraitImageDigestPromptId = '';
     portraitImageSha256 = '';
     removeInstalledPortraitVideo();
-    if (!preserveStoredMotion && portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
+    if (!preserveStoredMotion) {
+      portraitVideoRestoreNeeded = false;
+      if (portraitVideoPersistenceAvailable) clearStoredPortraitVideoLocked(portraitVideoGeneration);
+    }
     return portraitVideoGeneration;
   }
 
@@ -2902,6 +2920,13 @@
       portraitVideoModelTemplate
     );
     const restoredKey = restoredRequest ? portraitVideoRequestKey(restoredRequest) : '';
+    if (!restoredRequest) {
+      // Nothing to compare against yet; the reactive late restore retries once the
+      // request exists. Do not let the reconciliation run in the meantime.
+      endPortraitVideoPersistenceOperation();
+      return;
+    }
+    portraitVideoRestoreNeeded = false;
     try {
       await restoreStoredPortraitVideo({
         exclusive: runStoredPortraitVideoExclusive,
@@ -3011,7 +3036,8 @@
     staticBusy: boolean,
     busy: boolean,
     request: PortraitVideoRequest | null,
-    current: boolean
+    current: boolean,
+    restoreNeeded: boolean
   ) {
     if (
       !expressionsOn
@@ -3028,6 +3054,8 @@
       || busy
       || !request
       || current
+      // Never generate before the stored loop has had a real chance to be restored.
+      || restoreNeeded
     ) return;
     const key = portraitVideoRequestKey(request);
     if (key === lastPortraitVideoAttemptKey) return;
@@ -3052,7 +3080,8 @@
         portraitBusy,
         portraitVideoBusy,
         portraitVideoRequest,
-        portraitVideoCurrent
+        portraitVideoCurrent,
+        portraitVideoRestoreNeeded
       );
     }, automaticExpressionRetryDelayMs);
   }

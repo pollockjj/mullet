@@ -337,20 +337,18 @@ export function normalizePortraitVideoRequest(value: unknown): PortraitVideoRequ
   };
 }
 
+// The loop depends only on the exact still it animates and the loop parameters. The
+// still's prompt ID, seed, timestamp and transcript position stay in the request as
+// provenance, but keying on them meant a byte-identical still (the seed is fixed per
+// character, so the same expression reproduces the same bytes) cost a fresh 45-90 s loop
+// on every turn and on every reload instead of reusing the stored one.
 export function portraitVideoRequestKey(request: PortraitVideoRequest): string {
   const normalized = normalizePortraitVideoRequest(request);
   return [
     normalized.source.conversationId,
-    normalized.source.portraitRequestKey,
-    normalized.source.portraitPromptId,
-    normalized.source.portraitSeed,
-    normalized.source.portraitGeneratedAt,
     normalized.source.portraitWidth,
     normalized.source.portraitHeight,
     normalized.source.portraitImageSha256,
-    normalized.source.portraitSource.messageCount,
-    normalized.source.portraitSource.messageIndex,
-    normalized.source.portraitSource.fingerprint,
     normalized.source.portraitSource.expression,
     normalized.modelTemplate,
     normalized.endFrameModelTemplate ?? '',
