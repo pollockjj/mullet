@@ -1,4 +1,4 @@
-QUEUE-ITEM: 2 (chain ordering) | STATE: candidate-verified, deploying | SERVED-SHA: d3c939123eb10ef9fb50a2f590dd401a6ce74812 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 3 (caption hygiene) | STATE: committed, candidate check pending; 2 deployed as 2018be9, served check running | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -315,3 +315,12 @@ loop (e452991f) prompts on firestorm:8189 both carry this turn's caption "blonde
 shoulder-length wavy hair, maroon and silver leather jacket, silver hoop earrings, ...".
 Reload: all four items restored, zero caption requests, zero generation requests. Cost of
 the ordering: the scene still lands ~30 s later than before, after the portrait.
+
+## Queue item 3, session e2a4b9b0
+
+Decision: the caption prompt no longer asks for the background and says to omit
+categories that are not visible; the normalizer drops filler items (`none`, `n/a`,
+`no visible ...`) and any item naming a background, backdrop, setting or surroundings,
+keeping the model's own sentence otherwise. Pinned by two tests named after the served
+prompts that leaked (`37c34bd5`, `afa0bfd5`, `bd6c123a`). Rollback plist for 2018be9:
+`scratch/deploy/rollback-d3c9391-before-2018be9.plist`.

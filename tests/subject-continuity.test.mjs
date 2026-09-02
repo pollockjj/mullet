@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SUBJECT_CAPTION_MAX_CHARS,
+  SUBJECT_CAPTION_PROMPT,
   createSubjectDescriptor,
   normalizeSubjectCaption,
   subjectContinuityClause
@@ -15,9 +16,31 @@ const SHA = 'a'.repeat(64);
 
 test('keeps a real caption verbatim on one line', () => {
   const caption = normalizeSubjectCaption(
-    ' Blonde hair, white and maroon bodysuit,\n gold hoop earrings, orange and black background. '
+    ' Blonde hair, white and maroon bodysuit,\n gold hoop earrings '
   );
-  assert.equal(caption, 'Blonde hair, white and maroon bodysuit, gold hoop earrings, orange and black background.');
+  assert.equal(caption, 'Blonde hair, white and maroon bodysuit, gold hoop earrings');
+});
+
+// Served scene prompt 37c34bd5 (2026-09-01 21:26Z) carried "blue and white patterned top,
+// none, wooden structure and green foliage" verbatim: the captioner's empty-slot filler
+// and the portrait's background both reached the image model.
+test('drops the captioner\'s literal none for an empty slot', () => {
+  const caption = normalizeSubjectCaption('brown hair with bangs, blue and white patterned top, none, wooden structure and green foliage');
+  assert.equal(caption, 'brown hair with bangs, blue and white patterned top, wooden structure and green foliage');
+  assert.equal(normalizeSubjectCaption('short black hair, N/A, no visible accessories, grey coat'), 'short black hair, grey coat');
+  assert.throws(() => normalizeSubjectCaption('none, none, none'), /empty/);
+});
+
+// Served scene prompts afa0bfd5 and bd6c123a carried "window frame, outdoor background" and
+// "brick wall, window frame, outdoor foliage." inside a clause that says surroundings may
+// change. The prompt no longer asks for a background and any item that names one is dropped.
+test('keeps the portrait background out of the continuity clause', () => {
+  assert.equal(
+    normalizeSubjectCaption('blonde hair pulled back, grey patterned top, red and white patterned scarf, window frame, outdoor background.'),
+    'blonde hair pulled back, grey patterned top, red and white patterned scarf, window frame'
+  );
+  assert.doesNotMatch(SUBJECT_CAPTION_PROMPT, /background\./);
+  assert.match(SUBJECT_CAPTION_PROMPT, /Do not describe the background/);
 });
 
 test('rejects empty or non-string captions', () => {
