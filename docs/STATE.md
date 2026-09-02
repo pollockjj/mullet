@@ -1,4 +1,4 @@
-QUEUE-ITEM: operator orders 2026-09-02 - Krea for Jan/Kristi (deployed), lane-layout benchmark (running) | STATE: READY FOR OPERATOR on f57c7ef; benchmark candidates running on 8782 | SERVED-SHA: f57c7ef747f2045cbaffde6d90b0e0e71706f527 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: lane-layout benchmark (operator order 2026-09-02) | STATE: armed, blocked on hammerhead:1234 being down; Krea served on f57c7ef | SERVED-SHA: f57c7ef747f2045cbaffde6d90b0e0e71706f527 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -536,3 +536,15 @@ LLM contention, not the image path, and the served build logged the same timeout
 pipeline default) at 18:13 CDT from the verified build; rollback
 `scratch/deploy/rollback-c05e34a-before-f57c7ef.plist`. Served check follows the lane
 benchmark.
+
+Lane-layout benchmark (operator order 2026-09-02): per-stage lane routing is in f57c7ef;
+the benchmark runs the same build twice per layout as a candidate on 8782 (cabin scenario,
+Jan, two turns each): A = by pipeline (expression still and loop on 8188, scene still and
+loop on 8189), B = by media type (both stills on 8188, both H3 loops on 8189, via
+PORTRAIT_VIDEO_COMFY_BASE_URL=8189 and SCENE_STILL_COMFY_BASE_URL=8188). Two attempts
+died before any generation because the local chat model on hammerhead:1234 stopped
+answering at 18:07 CDT (first 500s and "fetch failed", then connection refused; the
+host answers ping and ssh, port 1234 is closed). The classifier, director and caption
+all run on that model, so no MULLET turn can start until it is back. The benchmark is
+armed to start by itself once `GET http://hammerhead:1234/v1/models` returns 200 and
+both lanes are idle.
