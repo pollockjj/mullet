@@ -1,4 +1,4 @@
-QUEUE-ITEM: hardening (sidecar parsing) | STATE: committed, candidate check queued behind the caption-display candidate; items 1-6 READY FOR OPERATOR on e9e8f8f | SERVED-SHA: e9e8f8f95b004793a1a55f7283c8be350a4e978d | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: hardening | STATE: all six items plus hardening verified on the served build, READY FOR OPERATOR; watching the served log | SERVED-SHA: c05e34ab3b60ef9466f054bf6c6e777e17357f22 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -475,3 +475,15 @@ maroon and silver leather jacket, silver hoop earrings" on both turns (the secon
 portrait reproduced the first's bytes, so its caption was reused by hash without a second
 vision call). Its deploy was skipped because the lanes were busy; the lenient-parser
 build 89964af contains it and deploys next.
+
+Lenient parsers (89964af) with the caption display: candidate two-turn check
+(`scratch/browser-check/candidate-parsers/`) ok=true; deployed as c05e34a (same code,
+docs-only commits on top) at 00:50 CDT from the verified artifact; rollback
+`scratch/deploy/rollback-e9e8f8f-before-c05e34a.plist`. Served two-turn check
+(`scratch/browser-check/loop-c05e34a/`): ok=true. Turn 1: label 3.8 s, portrait 29.3 s,
+caption 7.7 s, scene 83.0 s, portrait loop 96.0 s, scene loop 158.0 s, Media panel
+"Continuity current · blonde shoulder-length wavy hair, maroon and silver leather jacket,
+silver hoop earrings". Turn 2: response 42.2 s, portrait 74.4 s, portrait loop 137.5 s,
+scene 139.5 s, scene loop 214.5 s, "Continuity current · ... silver collar necklace".
+Reload: all four restored, zero requests. The served log shows the fallback doing its
+job during that run: "expression classifier fell back to neutral; raw text: tension".
