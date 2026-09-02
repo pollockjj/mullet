@@ -1,4 +1,4 @@
-QUEUE-ITEM: hardening (restart recovery) | STATE: committed, candidate check next; items 1-6 READY FOR OPERATOR on d0c2531 | SERVED-SHA: d0c2531099d0efcd77487afbe425ba770c1688b8 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: hardening | STATE: restart recovery verified on the served build; items 1-6 READY FOR OPERATOR on e9e8f8f | SERVED-SHA: e9e8f8f95b004793a1a55f7283c8be350a4e978d | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -444,3 +444,13 @@ Decision: every stage's automatic retry is now the same bounded backoff (15, 30,
 three attempts per attempt key) instead of one retry after 1.5 s; the scene still, which
 had none, gets it too. A retry releases the stage's latch and bumps a reactive tick that
 re-runs the scheduler, so no stage waits for an unrelated change.
+
+e9e8f8f (backoff retries) passed its candidate check (`scratch/browser-check/candidate-retry/`,
+ok=true, reload clean) and was deployed at 23:53 CDT from that artifact; rollback
+`scratch/deploy/rollback-d0c2531-before-e9e8f8f.plist`. Drain exercise 2 on the served
+build (`scratch/browser-check/drain-exercise-2/`): the service was restarted while
+MULLET's loop 3e52b70b was executing; stdout shows the drain cancelling it; the page's
+loop request got 502 at 32.5 s, the first backoff retry at 47.6 s succeeded, and every
+stage landed (portrait loop 110.1 s, scene still 98.0 s, scene loop 173.0 s), reload
+clean. The check reports ok=false only for the 502 the restart itself induced. A deploy
+now costs the operator's in-flight turn about 20 s, not the turn.
