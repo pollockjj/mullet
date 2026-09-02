@@ -1,4 +1,4 @@
-QUEUE-ITEM: 4 (speed levers) | STATE: in-progress; 3 and 5 deployed as 79409d1, served check next; 2 READY FOR OPERATOR | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 4 (speed levers) | STATE: pairing in progress; 1b, 2, 3, 5 READY FOR OPERATOR on 79409d1 | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -351,3 +351,12 @@ ok=true, all five stages, reload restored all four with zero requests; the candi
 server log carries the new delivery lines ("portrait-video delivered ... 200479 bytes 2 s",
 "inline-scene video delivered ... 352973 bytes 3.04 s"). Deployed as 79409d1; rollback
 plist `scratch/deploy/rollback-2018be9-before-79409d1.plist`.
+
+Served 79409d1, five-stage check through the real origin
+(`scratch/browser-check/loop-79409d1/`): ok=true. Label 1.3 s, portrait 26.8 s, caption
+2.4 s, scene still 79.5 s, portrait loop 96.6 s, scene loop 157.5 s; reload restored all
+four with zero requests; the served stdout now carries "delivered" lines for both loops.
+READY FOR OPERATOR for items 1, 1b, 2, 3 and 5. What the operator should see on
+https://barracuda.meteor-tegu.ts.net/mullet/ after a hard reload: start a scenario,
+watch the Media panel go Expression -> Portrait -> Continuity current -> Scene ->
+motions, then reload and see nothing regenerate.
