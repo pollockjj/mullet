@@ -1,4 +1,4 @@
-QUEUE-ITEM: 4 (speed levers) | STATE: candidate check waiting for idle lanes; drain committed, unexercised; 1b, 2, 3, 5 READY FOR OPERATOR on 79409d1 | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 6 (two-scene continuity) | STATE: served two-turn check running; 4 candidate-verified and deploying as 14766b4; drain next | SERVED-SHA: 14766b4 (deploying) | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -398,3 +398,8 @@ no longer leaves the operator's in-flight loop running on a shared lane behind a
 that will never return. Not yet exercised: deploys here happen only when no MULLET job is
 running, so the first real evidence will be a ComfyUI history entry marked
 `execution_interrupted` next to a restart.
+
+Item 4 evidence, candidate on 8782 (`scratch/browser-check/loop-candidate-4/`, lanes
+idle): ok=true. Scene still 944x528 landed at 57.9 s (was 79.5-80.5 s at 1 MP; the scene
+POST took 17.4 s instead of 40 s), scene loop at 132.0 s (was 155-157 s); portrait 27.3 s,
+portrait loop 94.0 s unchanged. Reload restored all four with zero requests.
