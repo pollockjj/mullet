@@ -1,4 +1,4 @@
-QUEUE-ITEM: 5 (failure latches) | STATE: candidate check running (items 3+5); 3 candidate-verified; 2 READY FOR OPERATOR on 2018be9 | SERVED-SHA: 2018be901d20a54b1c8419e57ba851aeb5ad2bb9 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 4 (speed levers) | STATE: in-progress; 3 and 5 deployed as 79409d1, served check next; 2 READY FOR OPERATOR | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -345,3 +345,9 @@ Item 3 evidence, candidate on 8782 (`scratch/browser-check/loop-candidate-3/`): 
 the scene still f9925c3d and scene loop 534e152f prompts on firestorm:8189 carry "Jenna
 Stannis: blonde shoulder-length wavy hair, maroon and silver leather jacket, silver hoop
 earrings" with no background item and no filler. Caption round trip 7.2 s this run.
+
+Items 3 and 5 evidence, candidate on 8782 (`scratch/browser-check/loop-candidate-5/`):
+ok=true, all five stages, reload restored all four with zero requests; the candidate's
+server log carries the new delivery lines ("portrait-video delivered ... 200479 bytes 2 s",
+"inline-scene video delivered ... 352973 bytes 3.04 s"). Deployed as 79409d1; rollback
+plist `scratch/deploy/rollback-2018be9-before-79409d1.plist`.
