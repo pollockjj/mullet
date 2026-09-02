@@ -1,4 +1,4 @@
-QUEUE-ITEM: 4 (speed levers) | STATE: pairing in progress; 1b, 2, 3, 5 READY FOR OPERATOR on 79409d1 | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 4 (speed levers) | STATE: decisions recorded, candidate check next; 1b, 2, 3, 5 READY FOR OPERATOR on 79409d1 | SERVED-SHA: 79409d102e121894cfb73d2a873503eb3b52f57a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -360,3 +360,33 @@ READY FOR OPERATOR for items 1, 1b, 2, 3 and 5. What the operator should see on
 https://barracuda.meteor-tegu.ts.net/mullet/ after a hard reload: start a scenario,
 watch the Media panel go Expression -> Portrait -> Continuity current -> Scene ->
 motions, then reload and see nothing regenerate.
+
+## Queue item 4, session e2a4b9b0 - paired measurements and decisions
+
+Loop frame count (`tools/time-loop-frames.mjs`, real served graph, 576x1024, 4 steps,
+turbo LoRA, lane 8188 idle, `scratch/loop-frame-timings.json`): 22 frames 42.2 s first /
+14.9 s warm; 39 frames 37.6 / 25.4; 56 frames 47.7 / 37.2. Decision: keep 56 frames. The
+operator specified a two-second loop; 39 frames (1.4 s) would save ~12 s of a ~95 s
+click-to-loop, the reload penalty (10-27 s) and the serialized lanes dominate. Not worth
+overriding an operator-stated duration.
+
+Cancelling MULLET's own running loop (`tools/cancel-own-loop-test.mjs`, own prompt ID
+only, `scratch/cancel-own-loop-test.log`): POST `/api/jobs/<id>/cancel` on a job that
+had been executing for 13 s returned 200 and the job was `execution_interrupted` 1.1 s
+later. MULLET already aborts the in-flight loop request when a new still is requested
+(`suspendPortraitVideoForStaticGeneration`), and the abandoned server request cancels
+its exact prompt ID, so the superseded-loop lever is live by construction; it was
+masked by the previous session's orphaned pages re-firing loops.
+
+Scene still at 0.5 MP versus 1 MP (`scratch/browser-check/loop-79409d1-0.5mp/`, lane
+8189 shared with a foreign ComfyUI client running 13-17 s Qwen jobs back to back):
+ComfyUI execution 15.5 s for 944x528 versus 34-45 s cold for 1328x752 on the same lane
+earlier tonight; the pipeline numbers of that run (scene still 99.6 s, scene loop
+265.7 s) are queue waits behind the foreign jobs, not MULLET cost. Decision: scene still
+default is 0.5 MP; the scene loop renders at 0.59 MP from it regardless. Storage key
+bumped so a browser holding the old 1 MP choice takes the new default.
+
+Timeouts: the two 900 s loop timeouts become 300 s. Measured loops are 65-86 s alone and
+166 s when queued behind foreign jobs; 300 s is more than three times the contended
+value and stops a dead job from holding the panel for fifteen minutes. Still timeouts
+were already 120 s.

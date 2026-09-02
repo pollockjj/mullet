@@ -340,7 +340,9 @@
   let inlineSceneBusy = false;
   let inlineSceneError = '';
   let inlineSceneAspectRatio: InlineSceneAspectRatio = '16:9';
-  let inlineSceneMegapixels: InlineSceneMegapixels = 1;
+  // 0.5 MP (944x528 at 16:9): the scene loop renders at 0.59 MP from this still anyway,
+  // and the paired lane measurement is 15.5 s versus 34-45 s cold at 1 MP.
+  let inlineSceneMegapixels: InlineSceneMegapixels = 0.5;
   let inlineSceneSidecarRequest: InlineSceneRequest | null = null;
   let generatedInlineScene: StoredInlineScene | null = null;
   let generatedInlineSceneUrl = '';
@@ -484,7 +486,8 @@
   const inlineScenesEnabledStorageKey = 'mullet.inline-scenes-enabled';
   const inlineSceneFinalizedStorageKey = 'mullet.inline-scene-finalized';
   const inlineSceneAspectStorageKey = 'mullet.inline-scene-aspect';
-  const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels';
+  // v2: the 1 MP default was retired; browsers that stored it get the new default.
+  const inlineSceneMegapixelsStorageKey = 'mullet.inline-scene-megapixels.v2';
   // v3: discards persisted selections of the 20-step H3 keeper still, which never
   // met the latency gate. Explicit re-selection still works and is respected.
   const inlineSceneStillModeStorageKey = 'mullet.inline-scene-still-mode.v3';
