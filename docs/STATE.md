@@ -1,6 +1,6 @@
-MILESTONE: 1 | STATE: awaiting-operator (2 blocked: reload regenerates the expression loop; 3-5 built, none accepted) | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: none accepted; browser check on 903140d observed [0],[1],[3],[4] landing, [2] not observed
+QUEUE-ITEM: 1 (five-stage browser check with reload assertion) | STATE: in-progress | SERVED-SHA: 903140d772cfabbd0ef63aef520fa7e49f6f022a | LAST-OPERATOR-RESULT: none accepted
 
-Rewrite the line above on every commit. One line. Milestones are defined in docs/PLAN.md.
+Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
 ## Decision log
 

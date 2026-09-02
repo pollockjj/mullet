@@ -72,6 +72,12 @@ on the image lane, excluding Mage-Flow and FLUX.2 by standing operator order:
 Expression work is an *edit* on a fixed identity reference, so the edit models are the
 primary candidates and the generators are fallbacks.
 
+Correction (2026-09-01 audit): the 5.8 s Qwen figure above is an isolation number. In
+pipeline order on the served build Qwen measures 8.4 s warm and 25.6 s cold, Z-Image
+4.2 s warm and 13.0 s cold, and every still runs cold because an H3 loop precedes it on
+the lane; the composed 6.5-7.5 s click-to-visible was never observed (the sub-second
+browser-check numbers were ComfyUI cache hits).
+
 ## The defect
 
 `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` is installed on both
@@ -156,32 +162,27 @@ identical first and last frame, and the scene loop prompt carries the same capti
 
 Every default is the fastest path that passes identity. Not the reverse.
 
-Budget, click to visible, warm: still ≤ 8s, video ≤ 25s. Cold ≤ 3× warm.
-Any candidate that misses is not eligible to be a default regardless of quality.
+Budgets are measured in pipeline order on the served lanes, through the browser check,
+never in isolation. Measured 2026-09-01 (ComfyUI history, MULLET jobs only, medians):
+expression still Z-Image 4.2 s warm / 13.0 s cold, Qwen 8.4 s warm / 25.6 s cold;
+expression loop 48.8 s warm / 66.8 s cold (56 frames); scene still Z-Image 17.5 s cold,
+Qwen 39-45 s cold; scene loop 81.2 s cold and never warm. Every stage runs cold because
+each lane alternates a still model with H3 and the H3 model plus VAE (26 GB) do not fit a
+25 GB card. The 8 s / 25 s gates of v1 were never reachable on this hardware; budgets are
+set from measurements in `docs/GOAL.md` once the levers there have been paired.
 
-Measurement is a real generation through the candidate app, broken into classifier /
-queue / load / inference / transfer / persist / paint. Paired cold+warm, identical
-references, dimensions, seed, prompt. No default changes without the pair recorded.
+Paired cold+warm, identical references, dimensions, seed, prompt, on an empty lane queue,
+with the predecessor job recorded. No default changes without the pair recorded.
 
-Known baseline: Qwen Image Edit 2511 + `Lightning-4steps` at 576×1024, 4 steps, cfg 1,
-euler/simple — operator-reported ~5s warm. This is the bar H3 Ref2VA + `ref2v_turbo_4step`
-has to beat or match. Whichever wins becomes the default; the loser stays selectable.
+## Work queue
 
-## Milestones
+The serialized milestones of v1 are retired: every stage is in scope at all times, and
+the acceptance criterion is the operator seeing all five stages land in one turn on the
+served build, then two consecutive turns holding continuity. The ordered queue lives in
+`docs/GOAL.md`; `docs/STATE.md` line 1 names the item in progress.
 
-Each ends with a served build and a screenshot. None starts before the previous is
-accepted. Each is one sitting or it is reported as a miss and retried on the same target.
-
-| # | Deliverable | Accepted when |
-| --- | --- | --- |
-| 0 | Browser check in-repo; discard list executed; timing harness | Suite boots the built app, drives it, writes screenshot + timing JSON |
-| 1 | Expression still fast | Paired timings across Qwen Image Edit 2511 + Lightning-4step, Z-Image Turbo and boogu edit turbo; H3 is not a candidate; winner is default; portrait is recognizable and correctly framed |
-| 2 | Expression motion | 2s silent loop from exactly the accepted still; no reload regeneration |
-| 3 | Scene still | Landscape uses identity refs + accepted portrait; selected model provably in the submitted graph |
-| 4 | Scene motion | Accepted scene still is Picture 1; plays; no reload regeneration |
-| 5 | Continuity | Two consecutive scenes in one location hold identity, wardrobe, setting |
-
-Nothing past 5 — no living lore, assistant mode, training, quote banks — until 5 is accepted.
+Nothing past the five stages and continuity - no living lore, assistant mode, training,
+quote banks - until the operator accepts.
 
 ## Rules I hold
 
