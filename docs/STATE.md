@@ -1,4 +1,4 @@
-QUEUE-ITEM: 2 (chain ordering: caption of this turn, bounded wait, no discard) | STATE: in-progress; 1b deployed as d3c9391, served check running | SERVED-SHA: d3c939123eb10ef9fb50a2f590dd401a6ce74812 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: 2 (chain ordering) | STATE: candidate built, checking; 1b READY FOR OPERATOR on d3c9391 | SERVED-SHA: d3c939123eb10ef9fb50a2f590dd401a6ce74812 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -286,3 +286,11 @@ requests were submitted. The scene still was generated (POST `/api/scene` 200 in
 that window, so the commit-time currency check discarded the finished scene and nothing
 retried. That is queue item 2's defect (stale/racing caption), reproduced by the check
 on unchanged scene code; on 903140d the caption happened to land after the scene.
+
+Served d3c9391, five-stage check through the real origin
+(`scratch/browser-check/loop-d3c9391/`): ok=true. From the starter click: label 1.8 s,
+scene still 25.8 s, portrait 26.8 s (POST 25.0 s), caption 2.9 s round trip, portrait
+loop 105.0 s, scene loop 111.9 s. After reload: portrait image, portrait loop, scene
+still and scene loop all restored from storage, zero generation requests, one caption
+POST. READY FOR OPERATOR for items 1 and 1b. The scene was still directed at 11.1 s,
+before the portrait at 26.8 s, so that scene carried no continuity clause: queue item 2.
