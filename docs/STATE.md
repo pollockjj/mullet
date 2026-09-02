@@ -548,3 +548,11 @@ host answers ping and ssh, port 1234 is closed). The classifier, director and ca
 all run on that model, so no MULLET turn can start until it is back. The benchmark is
 armed to start by itself once `GET http://hammerhead:1234/v1/models` returns 200 and
 both lanes are idle.
+
+Krea end to end (benchmark run 1, candidate of f57c7ef on 8782, cabin scenario as Jan,
+18:18 CDT): Krea portrait 3.7 s warm on 8188 (16.1 s cold on the second turn, after an
+H3 loop), Krea scene still 14.6 s on 8189, both prompts using janpollock-krea2-v3-attn;
+portrait loop 66.6 s and scene loop 73.9 s delivered. The Krea path works on both stills.
+The local model on hammerhead came back at 18:18 and is slow under load (5 s for a
+five-token reply while the benchmark, the operator's chat and the sidecars share it);
+the served build logged 30 s director timeouts at 18:32 for that reason.
