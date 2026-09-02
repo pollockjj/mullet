@@ -468,3 +468,10 @@ surrounding prose, subjects resolved by ID, display name, alias or first name, u
 names dropped, an empty selection falls back to the speaking character, more than three
 keeps the first three, prompt length accepted between 20 and 260 words. Pinned by tests
 named after the failed turn.
+
+Caption display (544705a) candidate two-turn check (`scratch/browser-check/candidate-caption/`):
+ok=true; the Media panel read "Continuity current · blonde shoulder-length wavy hair,
+maroon and silver leather jacket, silver hoop earrings" on both turns (the second
+portrait reproduced the first's bytes, so its caption was reused by hash without a second
+vision call). Its deploy was skipped because the lanes were busy; the lenient-parser
+build 89964af contains it and deploys next.
