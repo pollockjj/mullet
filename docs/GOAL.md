@@ -67,9 +67,10 @@ Budget: each number above plus 25% is the alarm line; a run past it is investiga
 not tolerated. These are hardware numbers (25 GB cards, H3 never resident), not targets:
 the v1 gates of 8 s / 25 s were never reachable here. Decisions taken with the pairing
 data are in `docs/STATE.md`: keep 56 frames (operator-specified 2 s; 39 frames would
-save ~12 s), scene still 0.5 MP, loop timeouts 300 s. Routing by media type would make
-stills warm (4-8 s) at the cost of serializing both loops; that remains the operator's
-standing order to route by pipeline and is not changed here.
+save ~12 s), scene still 0.5 MP, loop timeouts 300 s. Routing is now the operator's 2026-09-02 order: benchmark
+by-pipeline against stills-on-cuda0 / H3-on-cuda1 through the browser check and serve
+whichever lands all four items fastest; the numbers and the decision live in
+`docs/STATE.md`.
 
 ## Work queue - in this order, one at a time, each verified in the browser before the next
 
