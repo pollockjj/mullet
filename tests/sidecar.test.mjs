@@ -134,6 +134,8 @@ test('resolves near-miss classifier answers instead of failing the turn', () => 
   assert.equal(parseExpressionResponse('curiosity, then surprise'), 'curiosity');
   assert.equal(parseExpressionResponse('{"emotion":"Worried"}'), 'nervousness');
   assert.equal(parseExpressionResponse('She looks focused and alert.'), 'neutral');
+  // Served log, 2026-09-02 00:5x CDT: the classifier answered "tension" and fell back to neutral.
+  assert.equal(parseExpressionResponse('tension'), 'nervousness');
   assert.equal(parseExpressionResponse('no idea'), 'neutral');
   assert.equal(expressionResponseWasRecognized('no idea'), false);
   assert.equal(expressionResponseWasRecognized('fearful'), true);

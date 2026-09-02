@@ -180,6 +180,7 @@ const EXPRESSION_SYNONYMS: Readonly<Record<string, ExpressionLabel>> = Object.fr
   fearful: 'fear', afraid: 'fear', scared: 'fear', terrified: 'fear', frightened: 'fear', dread: 'fear', alarmed: 'fear',
   anxious: 'nervousness', nervous: 'nervousness', worried: 'nervousness', uneasy: 'nervousness', tense: 'nervousness',
   apprehensive: 'nervousness', wary: 'nervousness', cautious: 'nervousness', unsettled: 'nervousness',
+  tension: 'nervousness', tensed: 'nervousness', strained: 'nervousness', concern: 'caring',
   happy: 'joy', joyful: 'joy', delighted: 'joy', cheerful: 'joy', glad: 'joy', elated: 'joy',
   sad: 'sadness', sorrow: 'sadness', sorrowful: 'sadness', melancholy: 'sadness', unhappy: 'sadness', downcast: 'sadness',
   angry: 'anger', furious: 'anger', rage: 'anger', enraged: 'anger', irritated: 'annoyance', annoyed: 'annoyance',
