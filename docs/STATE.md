@@ -1,4 +1,4 @@
-QUEUE-ITEM: lane layout (operator order 2026-09-02) | STATE: media-type layout measured faster on every stage; switching the served plist and re-checking | SERVED-SHA: f57c7ef747f2045cbaffde6d90b0e0e71706f527 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: chat-context fix + served check of the media layout | STATE: f212642 deploying; served check armed on the model server returning | SERVED-SHA: f57c7ef (media layout) -> f212642 pending | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -584,3 +584,19 @@ The second turn failed in all four runs for a reason outside the lanes: the chat
 threw "model metadata does not expose n_ctx for gemma-4-ortenzya" (the operator's
 LM Studio restart at ~18:15 changed the model metadata), so no second response was
 produced. Being diagnosed next; it affects the served build's chat as well.
+
+The served plist now carries PORTRAIT_VIDEO_COMFY_BASE_URL=http://firestorm:8189 and
+SCENE_STILL_COMFY_BASE_URL=http://firestorm:8188 (media-type layout), applied at
+19:41 CDT. The model server on hammerhead:1234 went down again at ~19:40 (second
+outage today), so the served check of that layout could not run; it is armed to run by
+itself when the endpoint answers, the fix below is served, and the lanes are idle.
+
+Chat-context fix (f212642): the benchmark's second turns failed because the chat route
+threw "model metadata does not expose n_ctx for gemma-4-ortenzya" after the operator's
+model-server restart; every chat message on the served build would have failed the same
+way. The lookup now accepts the field names other servers use and falls back to
+MODEL_CONTEXT_TOKENS (default 32768) with a warning, since the value only sizes the lore
+budget. Pinned by a test named after the failure. Deploying from the verified build
+without a browser candidate check because chat itself is the thing that is broken and
+the check needs chat; the served two-turn check is armed to run as soon as the model
+server is back.
