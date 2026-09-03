@@ -17,9 +17,10 @@ finalized response
   └─ [0] expression label          classifier, no canonical-chat write
      └─ [1] EXPRESSION STILL       ref: immutable identity portrait (Qwen Edit 4-step / Z-Image LoRA)
         └─ [2] EXPRESSION LOOP     FL2VA 4-step, first=last=the still, silent, 2 s, 576x1024
-        └─ [3] SCENE CLIP          Ref2VA 4-step from the cast's reference pack (up to nine
-                                   Krea pictures), this turn's caption in the prompt,
-                                   silent, 3 s, 1024x576. No scene still.
+        └─ [3] SCENE CLIP          Ref2VA 4-step from ONE subject's reference pack, this
+                                   turn's caption in the prompt, framed waist-up and close,
+                                   nobody else in frame, no speech, silent, 3 s, 1024x576.
+                                   No scene still.
 ```
 
 Then two consecutive turns in one location hold identity, wardrobe, and setting.
@@ -27,10 +28,17 @@ Then two consecutive turns in one location hold identity, wardrobe, and setting.
 The consistency contract is the caption chain the operator ordered on 2026-09-01: the
 scenario's subject, attire and setting go into the expression prompt; the produced still
 is captioned; that caption, and nothing older, goes verbatim into this turn's scene clip
-prompt. Identity, wardrobe and body come from the cast's reference pack (operator order,
-2026-09-02): three Krea views per LoRA subject, or the identity photo for a
-reference-driven subject, prepared once on the loop lane and named after the subject's
-profile fingerprint, so every turn cites the same pictures as `<Picture N>`.
+prompt. Identity, wardrobe and body come from the subject's reference pack (operator order,
+2026-09-02): three close Krea views per LoRA subject (face, three-quarter, waist up), or
+the identity photo for a reference-driven subject, prepared once on the loop lane and named
+after the subject's profile fingerprint, so every turn cites the same pictures as
+`<Picture N>` at full reference resolution.
+
+MULLET is one-to-one (operator order, 2026-09-03). The scene is the single character the
+player is interacting with: the director selects exactly one subject, and both the
+direction and the clip prompt require a close waist-up framing of that person alone, with
+no other people, bystanders, silhouettes or crowds, and no talking, lip movement, or
+speech gestures. A scene that is wide, crowded, or mid-speech is a defect, not a variation.
 
 Done is: the operator ran the served build, saw all five stages work, and said so.
 Nothing else is done. Deploy + browser check produces `READY FOR OPERATOR`, never `done`.

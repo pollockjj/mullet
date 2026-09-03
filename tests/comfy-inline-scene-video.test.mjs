@@ -4,7 +4,6 @@ import test from 'node:test';
 
 import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
-  INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
@@ -50,12 +49,6 @@ const sceneCandidate = Object.freeze({
   aliases: ['Jenna', 'Jenna Stannis'],
   profileFingerprint: 'd'.repeat(64)
 });
-const callyCandidate = Object.freeze({
-  id: 'cally',
-  displayName: 'Cally',
-  aliases: ['Cally'],
-  profileFingerprint: 'f'.repeat(64)
-});
 const jennaIdentity = Object.freeze({
   profileId: sceneCandidate.id,
   profileFingerprint: sceneCandidate.profileFingerprint,
@@ -72,24 +65,9 @@ const jennaIdentity = Object.freeze({
   },
   bodyReferenceImage: null
 });
-const callyIdentity = Object.freeze({
-  profileId: callyCandidate.id,
-  profileFingerprint: callyCandidate.profileFingerprint,
-  displayName: callyCandidate.displayName,
-  subject: 'Cally',
-  referenceImage: {
-    name: 'cally-v2.jpg',
-    subfolder: 'mullet/identity',
-    type: 'input',
-    sha256: '5'.repeat(64),
-    width: 400,
-    height: 600,
-    aspectRatio: '2:3'
-  },
-  bodyReferenceImage: null
-});
+// One-to-one by design (operator order, 2026-09-03): the director selects exactly one
+// subject, so a scene request can only ever carry a solo cast.
 const soloCast = Object.freeze({ kind: 'solo', identities: [jennaIdentity] });
-const duoCast = Object.freeze({ kind: 'duo', identities: [jennaIdentity, callyIdentity] });
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -104,26 +82,25 @@ function reference(identity, view, salt = 0) {
   };
 }
 
-function referencesFor(cast, views = ['face', 'threequarter', 'fullbody']) {
+function referencesFor(cast, views = ['face', 'threequarter', 'waistup']) {
   return cast.identities.flatMap((identity) => views.map((view) => reference(identity, view)));
 }
 
 function request(cast = soloCast, references = referencesFor(cast)) {
-  const candidates = cast.identities.map(({ profileId }) => profileId === 'jenna' ? sceneCandidate : callyCandidate);
   const sidecar = buildInlineSceneRequest(
     conversationId,
     messages,
     transcriptSourceForMessages(conversationId, messages),
-    candidates
+    [sceneCandidate]
   );
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', {
     prompt,
     subjectIds: cast.identities.map(({ profileId }) => profileId)
   });
   const sceneRequest = buildInlineSceneImageRequest(result, {
-    modelTemplate: cast.kind === 'solo' ? INLINE_SCENE_TEMPLATE_ID : INLINE_SCENE_QWEN_TEMPLATE_ID,
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
     cast,
-    lora: cast.kind === 'solo' ? sceneLora : null,
+    lora: sceneLora,
     aspectRatio: '16:9',
     megapixels: 1
   });
@@ -312,14 +289,14 @@ test('reports the exact installed MiniMax H3 reference stack and names every mis
       missing: ['node-input:MiniMaxH3ReferenceToVideo.ref_images']
     },
     {
-      label: 'ref_image_size without match',
-      mutate: (nodeName, info) => { if (nodeName === 'MiniMaxH3ReferenceToVideo') info.MiniMaxH3ReferenceToVideo.input.required.ref_image_size = ['COMBO', { options: ['max'] }]; },
-      missing: ['ref-image-size:match']
+      label: 'ref_image_size without max',
+      mutate: (nodeName, info) => { if (nodeName === 'MiniMaxH3ReferenceToVideo') info.MiniMaxH3ReferenceToVideo.input.required.ref_image_size = ['COMBO', { options: ['match'] }]; },
+      missing: ['ref-image-size:max']
     },
     {
       label: 'ref_image_size as a legacy option list',
-      mutate: (nodeName, info) => { if (nodeName === 'MiniMaxH3ReferenceToVideo') info.MiniMaxH3ReferenceToVideo.input.required.ref_image_size = [['max'], {}]; },
-      missing: ['ref-image-size:match']
+      mutate: (nodeName, info) => { if (nodeName === 'MiniMaxH3ReferenceToVideo') info.MiniMaxH3ReferenceToVideo.input.required.ref_image_size = [['match'], {}]; },
+      missing: ['ref-image-size:max']
     },
     {
       label: 'reference node not installed',
@@ -421,13 +398,15 @@ test('queues the reference graph with its own client id, polls history, and retu
   assert.equal(cancellations(calls).length, 0);
   assert.equal(inflightPromptIds().includes(comfyPromptId), false);
 
-  const duoRequest = request(duoCast, [reference(jennaIdentity, 'face'), reference(callyIdentity, 'identity')]);
-  const duo = comfyFetcher();
-  await runComfyInlineSceneVideo(duo.fetcher, baseUrl, duoRequest, 7);
-  const duoQueued = JSON.parse(duo.calls[0].init.body);
-  assert.deepEqual(duoQueued.prompt['6'].inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0] });
-  assert.equal(duoQueued.prompt['21'].inputs.image, `mullet/identity/refpack/cally-identity-${'f'.repeat(16)}.png`);
-  assert.match(duoQueued.prompt['6'].inputs.prompt, /Jenna Stannis is the person in <Picture 1> face; Cally is the person in <Picture 2> identity/);
+  // A shorter reference set for the same one subject: the pictures keep their submitted
+  // order, each gets its own LoadImage node, and both bind to the one cast display name.
+  const pairRequest = request(soloCast, [reference(jennaIdentity, 'face'), reference(jennaIdentity, 'identity')]);
+  const pair = comfyFetcher();
+  await runComfyInlineSceneVideo(pair.fetcher, baseUrl, pairRequest, 7);
+  const pairQueued = JSON.parse(pair.calls[0].init.body);
+  assert.deepEqual(pairQueued.prompt['6'].inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0] });
+  assert.equal(pairQueued.prompt['21'].inputs.image, `mullet/identity/refpack/jenna-identity-${'d'.repeat(16)}.png`);
+  assert.match(pairQueued.prompt['6'].inputs.prompt, /Jenna Stannis is the person in <Picture 1> face, <Picture 2> identity/);
 });
 
 test('waits through pending history and keeps polling until the clip lands', async () => {
@@ -609,14 +588,15 @@ test('confirms every reference on the loop lane with a drained GET before queuin
     );
   }
 
-  const duoRequest = request(duoCast, [reference(callyIdentity, 'identity'), reference(jennaIdentity, 'fullbody')]);
-  const duoCalls = [];
+  // The probe follows the submitted reference order, whatever it is, and accepts a 204.
+  const reorderedRequest = request(soloCast, [reference(jennaIdentity, 'identity'), reference(jennaIdentity, 'waistup')]);
+  const reorderedCalls = [];
   await assertInlineSceneVideoReferencesPresent(async (inputUrl) => {
-    duoCalls.push(String(inputUrl));
+    reorderedCalls.push(String(inputUrl));
     return new Response(null, { status: 204 });
-  }, baseUrl, duoRequest);
-  assert.deepEqual(duoCalls, [
-    refpackViewUrl(`cally-identity-${'f'.repeat(16)}.png`),
-    refpackViewUrl(`jenna-fullbody-${'d'.repeat(16)}.png`)
+  }, baseUrl, reorderedRequest);
+  assert.deepEqual(reorderedCalls, [
+    refpackViewUrl(`jenna-identity-${'d'.repeat(16)}.png`),
+    refpackViewUrl(`jenna-waistup-${'d'.repeat(16)}.png`)
   ]);
 });

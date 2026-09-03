@@ -74,10 +74,12 @@ const callyIdentity = Object.freeze({
   bodyReferenceImage: null
 });
 
+// One-to-one by design (operator order, 2026-09-03): the director selects exactly one
+// subject, so a stored scene can only ever carry a solo cast. Cally stays as the foreign
+// subject a stored reference must never smuggle into that cast.
 const soloCast = Object.freeze({ kind: 'solo', identities: Object.freeze([jennaIdentity]) });
-const duoCast = Object.freeze({ kind: 'duo', identities: Object.freeze([jennaIdentity, callyIdentity]) });
 
-const SCENE_VIEWS = Object.freeze(['face', 'threequarter', 'fullbody']);
+const SCENE_VIEWS = Object.freeze(['face', 'threequarter', 'waistup']);
 
 function request(overrides = {}) {
   return {
@@ -104,10 +106,6 @@ function request(overrides = {}) {
     megapixels: 0.5,
     ...overrides
   };
-}
-
-function duoRequest() {
-  return request({ modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID, cast: duoCast, lora: null });
 }
 
 function openingRequest() {
@@ -206,20 +204,23 @@ test('preserves a Qwen reference-edit solo cast in the v7 envelope', async () =>
   await verifyStoredInlineScene(scene);
 });
 
-test('carries one reference pack per cast member, up to nine pictures', async () => {
-  const duo = normalizeStoredInlineScene(stored({}, duoRequest()));
-  assert.equal(duo.references.length, 6);
-  assert.deepEqual([...new Set(duo.references.map(({ profileId }) => profileId))], ['jenna-stannis', 'cally']);
-  await verifyStoredInlineScene(duo);
+test('carries the solo cast reference pack, up to nine pictures', async () => {
+  const everyView = referencesFor(request(), [...SCENE_VIEWS, 'identity']);
+  const pack = normalizeStoredInlineScene(stored({
+    references: everyView,
+    referencesSha256: referencesSha256(everyView)
+  }));
+  assert.equal(pack.references.length, 4);
+  assert.deepEqual([...new Set(pack.references.map(({ profileId }) => profileId))], ['jenna-stannis']);
+  await verifyStoredInlineScene(pack);
 
   const tenReferences = [
-    ...referencesFor(duoRequest(), SCENE_VIEWS),
-    ...referencesFor(duoRequest(), ['identity']),
-    ...[0, 1].map((salt) => reference('cally', 'identity', { salt: salt + 2 }))
+    ...everyView,
+    ...[1, 2, 3, 4, 5, 6].map((salt) => reference('jenna-stannis', 'face', { salt }))
   ];
   assert.equal(tenReferences.length, MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES + 1);
   assert.throws(
-    () => normalizeStoredInlineScene(stored({ references: tenReferences }, duoRequest())),
+    () => normalizeStoredInlineScene(stored({ references: tenReferences })),
     /between 1 and 9 references/
   );
   assert.throws(() => normalizeStoredInlineScene(stored({ references: [] })), /references are invalid/);
@@ -258,16 +259,6 @@ test('rejects a reference naming a profile outside the cast', () => {
       references: [...referencesFor(request()), reference('cally', 'face')]
     })),
     /does not belong to the scene cast/
-  );
-});
-
-test('rejects a cast member with no reference', () => {
-  const duo = duoRequest();
-  assert.throws(
-    () => normalizeStoredInlineScene(stored({
-      references: SCENE_VIEWS.map((view) => reference('jenna-stannis', view))
-    }, duo)),
-    /missing references for cally/
   );
 });
 

@@ -87,16 +87,20 @@ export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE = Object.freeze({
   denoise: 1,
   shiftVideo: 6,
   shiftAudio: 3,
-  refImageSize: 'match',
+  // 'max' feeds the references at their own resolution instead of scaling them down to
+  // the clip's pixel area. Measured on the lane 2026-09-03 with an identical seed: 46.2 s
+  // either way, because the pack's 832x1024 pictures are already under the 2048 limit, so
+  // the identity fidelity is free.
+  refImageSize: 'max',
   format: 'auto',
   codec: 'auto',
-  promptGuide: 'one continuous landscape shot of the referenced people in the described place, restrained natural motion, no cuts, no text'
+  promptGuide: 'one continuous close shot of the referenced person in the described place, restrained natural motion, no cuts, no camera moves, no text'
 } as const);
 
 export type MiniMaxH3SceneReference = {
   // Subject label used in the prompt binding ("Jan"), and the view the picture shows.
   subject: string;
-  view: 'face' | 'threequarter' | 'fullbody' | 'identity';
+  view: InlineSceneVideoReferenceView;
   // Uploaded ComfyUI input path (subfolder/name) readable by the loop lane.
   image: string;
 };
@@ -113,19 +117,27 @@ export function buildMiniMaxH3ReferenceScenePrompt(
     const tag = `<Picture ${index + 1}>`;
     const viewLabel = reference.view === 'face' ? 'face'
       : reference.view === 'threequarter' ? 'three-quarter view'
-      : reference.view === 'fullbody' ? 'full body and clothing'
+      : reference.view === 'waistup' ? 'clothing from the waist up'
       : 'identity';
     const list = bySubject.get(reference.subject) ?? [];
     list.push(`${tag} ${viewLabel}`);
     bySubject.set(reference.subject, list);
   });
+  const subjects = [...bySubject.keys()];
   const bindings = [...bySubject.entries()].map(([subject, pictures]) => `${subject} is the person in ${pictures.join(', ')}`);
+  // One-to-one by design (operator order, 2026-09-03): one named person, framed close,
+  // alone, and never mid-speech.
+  // One-to-one: a request can only carry one subject, and the sentences below read as
+  // that person alone. If a set ever arrives with more, the first is the scene's subject.
+  const only = subjects[0] ?? '';
   return [
-    bindings.length ? `Use the pictures for identity, hair, and clothing only: ${bindings.join('; ')}.` : '',
+    bindings.length ? `Use the pictures only as the identity of ${only}: ${bindings.join('; ')}.` : '',
     scenePrompt,
     continuity,
-    'Preserve every referenced identity exactly; no new people.',
-    'Ambient physical motion only: no talking, no lip or mouth movement, and no speech gestures.',
+    `${only} is the only person in the frame: no other people, no bystanders, no crowd, no silhouettes, and no reflections of anyone else.`,
+    `Framing: a close medium shot of ${only} from roughly the waist up, facing the camera and filling most of the frame; the camera stays close and never pulls back to a wide landscape.`,
+    'Keep the face unobstructed, sharp, and matching the reference pictures exactly.',
+    'Motion is quiet and physical only: no talking, no lip or mouth movement, no speech gestures, and no singing; the mouth stays closed.',
     MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.promptGuide + ', no black frames.'
   ].filter(Boolean).join(' ');
 }
@@ -202,7 +214,7 @@ export type InlineSceneVideoTemplate = (typeof INLINE_SCENE_VIDEO_TEMPLATES)[num
 export type InlineSceneVideoTemplateId = InlineSceneVideoTemplate['id'];
 export type InlineSceneVideoMode = InlineSceneVideoTemplate['mode'];
 
-export type InlineSceneVideoReferenceView = 'face' | 'threequarter' | 'fullbody' | 'identity';
+export type InlineSceneVideoReferenceView = 'face' | 'threequarter' | 'waistup' | 'identity';
 
 // One prepared reference picture on the loop lane (input `mullet/identity/refpack/<name>`).
 export type InlineSceneVideoReference = {
@@ -269,7 +281,7 @@ export type InlineSceneVideoMasterToggleAction = 'abort' | 'restore' | 'none';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const REFERENCE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}-(face|threequarter|fullbody|identity)-[0-9a-f]{1,16}\.png$/;
+const REFERENCE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}-(face|threequarter|waistup|identity)-[0-9a-f]{1,16}\.png$/;
 const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -362,7 +374,7 @@ export function normalizeInlineSceneVideoReference(value: unknown, profileFinger
   if (!isRecord(value)) throw new Error('inline-scene video reference is invalid');
   const { profileId, view, sha256, name } = value;
   if (typeof profileId !== 'string' || !PROFILE_ID_PATTERN.test(profileId)) throw new Error('inline-scene video reference profile is invalid');
-  if (view !== 'face' && view !== 'threequarter' && view !== 'fullbody' && view !== 'identity') {
+  if (view !== 'face' && view !== 'threequarter' && view !== 'waistup' && view !== 'identity') {
     throw new Error('inline-scene video reference view is invalid');
   }
   if (typeof sha256 !== 'string' || !SHA256_PATTERN.test(sha256)) throw new Error('inline-scene video reference hash is invalid');

@@ -80,9 +80,6 @@ const STORE_NAME = 'state';
 // media (operator order, 2026-09-03), so the store is keyed by the clip's request key
 // rather than holding a single active entry.
 const STORED_VIDEO_KEY_PREFIX = 'inline-scene-video:';
-// A conversation's transcript can run long; this bounds the store, oldest first.
-export const STORED_INLINE_SCENE_VIDEO_LIMIT = 80;
-
 function storageKey(requestKey: string): string {
   return STORED_VIDEO_KEY_PREFIX + requestKey;
 }

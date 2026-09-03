@@ -236,3 +236,15 @@ Follow-up once the clip path is accepted: delete the unused still path (`/api/sc
 `src/lib/server/comfy-inline-scene.ts`, the Krea/Qwen/Z-Image scene-still templates in
 `src/lib/inline-scene.ts` that only served the still) so the scene description no longer
 carries a still model template.
+
+## Next: delete the scene-still path (found 2026-09-03 while making MULLET one-to-one)
+
+Nothing POSTs `/api/scene` any more, but `generateInlineScene` still refuses to record a
+scene unless a *still* model is installed (`inlineScenePotentialDriverAvailable` /
+`inlineSceneDriverAvailable` in `src/routes/+page.svelte`). A still lane without the Qwen
+weights would therefore block the clip for a still that is never rendered. Remove, in one
+change with its own browser check: the `/api/scene` POST, `src/lib/server/comfy-inline-scene.ts`,
+the Qwen and Z-Image scene templates and their reference plans, the continuity-master
+upload path, the `duo`/`trio` members of `InlineSceneCast`, and the still-capability gates.
+The scene request keeps only what the clip needs: prompt, one cast identity, continuity
+clause, aspect ratio.

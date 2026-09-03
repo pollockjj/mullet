@@ -388,15 +388,28 @@ test('rejects forged source provenance unrelated to the supplied latest turn', (
   );
 });
 
-test('accepts one bounded direction, canonicalizes cast order, and rejects invalid selections', () => {
-  const reversed = JSON.stringify({ prompt: visualPrompt, subject_ids: ['servalan', 'jenna-stannis'] });
-  assert.deepEqual(parseInlineSceneResponse(reversed, candidates), {
+test('directs exactly one subject and rejects malformed or unusable directions', () => {
+  // One-to-one by design (operator order, 2026-09-03): whatever the director names, the
+  // scene is one character, in candidate order, alone in the frame.
+  const two = JSON.stringify({ prompt: visualPrompt, subject_ids: ['servalan', 'jenna-stannis'] });
+  assert.deepEqual(parseInlineSceneResponse(two, candidates), {
     prompt: visualPrompt,
-    subjectIds: ['jenna-stannis', 'servalan']
+    subjectIds: ['jenna-stannis']
   });
   assert.deepEqual(
-    parseInlineSceneResponse(`<think>hidden</think>\n\`\`\`json\n${reversed}\n\`\`\``, candidates),
-    { prompt: visualPrompt, subjectIds: ['jenna-stannis', 'servalan'] }
+    parseInlineSceneResponse(`<think>hidden</think>\n\`\`\`json\n${two}\n\`\`\``, candidates),
+    { prompt: visualPrompt, subjectIds: ['jenna-stannis'] }
+  );
+  assert.equal(
+    parseInlineSceneResponse(JSON.stringify({
+      prompt: visualPrompt,
+      subject_ids: ['jenna-stannis', 'cally', 'servalan', 'kerr-avon']
+    }), candidates).subjectIds.length,
+    1
+  );
+  assert.deepEqual(
+    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['Servalan'] }), candidates).subjectIds,
+    ['servalan']
   );
   assert.throws(() => parseInlineSceneResponse(visualPrompt, candidates), /one JSON object/);
   // Extra keys are ignored rather than failing the turn.
@@ -415,37 +428,27 @@ test('accepts one bounded direction, canonicalizes cast order, and rejects inval
     }), candidates),
     /reserved H3 reference tokens/
   );
-  // Observed 2026-09-02 00:03 on the served build: the director named the cast by
-  // display name, the strict parser threw "unknown subject" four times, and the turn
-  // ended with no scene. Names, aliases and IDs all resolve; nothing usable falls back to
-  // the first candidate; duplicates collapse; more than three keeps the first three.
-  assert.deepEqual(
-    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: [] }), candidates).subjectIds,
-    ['jenna-stannis']
-  );
-  assert.deepEqual(
-    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis', 'jenna-stannis'] }), candidates).subjectIds,
-    ['jenna-stannis']
-  );
-  assert.deepEqual(
-    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ['unknown'] }), candidates).subjectIds,
-    ['jenna-stannis']
-  );
-  assert.deepEqual(
-    parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: [candidates[1].displayName, 'Servalan'] }), candidates).subjectIds,
-    ['cally', 'servalan']
-  );
-  assert.equal(
-    parseInlineSceneResponse(JSON.stringify({
-      prompt: visualPrompt,
-      subject_ids: ['jenna-stannis', 'cally', 'servalan', 'kerr-avon']
-    }), candidates).subjectIds.length,
-    3
-  );
+  // Observed 2026-09-02 00:03 on the served build: the director named the cast by display
+  // name and the strict parser threw "unknown subject" four times. Names, aliases and IDs
+  // all resolve; nothing usable falls back to the first candidate.
+  for (const ids of [[], ['unknown'], ['jenna-stannis', 'jenna-stannis']]) {
+    assert.deepEqual(
+      parseInlineSceneResponse(JSON.stringify({ prompt: visualPrompt, subject_ids: ids }), candidates).subjectIds,
+      ['jenna-stannis']
+    );
+  }
   assert.deepEqual(
     parseInlineSceneResponse(`Here is the direction:\n${JSON.stringify({ prompt: visualPrompt, subject_ids: ['jenna-stannis'] })}`, candidates).subjectIds,
     ['jenna-stannis']
   );
+});
+
+test('the director is instructed to frame one person close, alone, and silent', () => {
+  const instructions = INLINE_SCENE_SYSTEM_PROMPT;
+  assert.match(instructions, /exactly one subject/);
+  assert.match(instructions, /medium close-up or waist-up/);
+  assert.match(instructions, /Never place another person, bystander, silhouette, or crowd/);
+  assert.match(instructions, /Never describe speech, dialogue, talking, singing/);
 });
 
 test('binds the scene result and image request to exact transcript and prompt hashes', () => {
@@ -545,202 +548,6 @@ test('bounds continuity provenance without embedding a recursive prior request',
   );
 });
 
-test('allocates master and identity references deterministically for one, two, and three subjects', () => {
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(qwenRequest(['jenna-stannis', 'cally', 'servalan'])).map((slot) => (
-      slot.kind === 'identity' ? [slot.picture, slot.identity.profileId, slot.newlyIntroduced] : [slot.picture, slot.kind]
-    )),
-    [[1, 'jenna-stannis', true], [2, 'cally', true], [3, 'servalan', true]]
-  );
-
-  const twoNewSubjects = qwenRequest(['jenna-stannis', 'cally', 'servalan'], continuityMaster);
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(twoNewSubjects).map((slot) => (
-      slot.kind === 'identity' ? [slot.picture, slot.identity.profileId, slot.newlyIntroduced] : [slot.picture, slot.kind]
-    )),
-    [[1, 'continuity_master'], [2, 'cally', true], [3, 'servalan', true]]
-  );
-
-  const sameTrioMaster = {
-    ...continuityMaster,
-    cast: ['jenna-stannis', 'cally', 'servalan'].map((profileId) => ({
-      profileId,
-      profileFingerprint: candidates.find(({ id }) => id === profileId).profileFingerprint
-    }))
-  };
-  const sameTrio = qwenRequest(['jenna-stannis', 'cally', 'servalan'], sameTrioMaster);
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(sameTrio).map((slot) => (
-      slot.kind === 'identity' ? [slot.picture, slot.identity.profileId, slot.newlyIntroduced] : [slot.picture, slot.kind]
-    )),
-    [[1, 'continuity_master'], [2, 'jenna-stannis', false], [3, 'cally', false]]
-  );
-  const prompt = buildInlineScenePrompt(sameTrio);
-  assert.match(prompt, /Picture 1 is the prior accepted scene master/);
-  assert.match(prompt, /Picture 2 is the exact identity reference for Jenna Stannis/);
-  assert.match(prompt, /Picture 3 is the exact identity reference for Cally/);
-  assert.doesNotMatch(prompt, /identity reference for Servalan/);
-
-  const unrelatedMaster = {
-    ...continuityMaster,
-    cast: [{ profileId: 'kerr-avon', profileFingerprint: candidates[3].profileFingerprint }]
-  };
-  assert.throws(
-    () => inlineSceneQwenReferencePlan(qwenRequest(['jenna-stannis', 'cally', 'servalan'], unrelatedMaster)),
-    /cannot introduce more than two subjects/
-  );
-
-  const replacementTrio = cast('cally', 'servalan', 'kerr-avon');
-  assert.equal(inlineSceneContinuityMasterEligible(replacementTrio, continuityMaster), false);
-  const freshReplacement = qwenRequest(['cally', 'servalan', 'kerr-avon']);
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(freshReplacement).map((slot) => [slot.picture, slot.kind, slot.identity.profileId]),
-    [[1, 'identity', 'cally'], [2, 'identity', 'servalan'], [3, 'identity', 'kerr-avon']]
-  );
-  assert.equal(inlineSceneContinuityMasterEligible(cast('cally', 'servalan'), continuityMaster), true);
-});
-
-test('uses free Qwen slots for stable body references and rejects cross-role SHA aliasing', () => {
-  const requestWithCast = (profileIds, selectedCast, continuity = undefined) => (
-    buildInlineSceneImageRequest(result(profileIds), {
-      modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-      cast: selectedCast,
-      ...(continuity ? { continuityMaster: continuity } : {}),
-      lora: null,
-      aspectRatio: '3:2',
-      megapixels: 0.5
-    })
-  );
-  const describe = (slot) => slot.kind === 'continuity_master'
-    ? [slot.picture, slot.kind]
-    : [slot.picture, slot.kind, slot.identity.profileId];
-
-  const solo = requestWithCast(['jenna-stannis'], castWithBodyReferences('jenna-stannis'));
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(solo).map(describe),
-    [[1, 'identity', 'jenna-stannis'], [2, 'body_wardrobe', 'jenna-stannis']]
-  );
-  assert.match(buildInlineScenePrompt(solo), /Picture 2 is the body and wardrobe reference for Jenna Stannis/);
-  const soloGraph = buildQwenImageEditSceneWorkflow(solo, 43);
-  assert.equal(soloGraph['4'].inputs.image, canonicalReference.subfolder + '/' + canonicalReference.name);
-  assert.equal(soloGraph['16'].inputs.image, jennaBodyReference.subfolder + '/' + jennaBodyReference.name);
-  assert.deepEqual(soloGraph['9'].inputs.image2, ['16', 0]);
-
-  const duo = requestWithCast(
-    ['jenna-stannis', 'cally'],
-    castWithBodyReferences('jenna-stannis', 'cally')
-  );
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(duo).map(describe),
-    [
-      [1, 'identity', 'jenna-stannis'],
-      [2, 'identity', 'cally'],
-      [3, 'body_wardrobe', 'jenna-stannis']
-    ]
-  );
-
-  const continuedSolo = requestWithCast(
-    ['jenna-stannis'],
-    castWithBodyReferences('jenna-stannis'),
-    continuityMaster
-  );
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(continuedSolo).map(describe),
-    [
-      [1, 'continuity_master'],
-      [2, 'identity', 'jenna-stannis'],
-      [3, 'body_wardrobe', 'jenna-stannis']
-    ]
-  );
-
-  const duplicateBody = requestWithCast(['jenna-stannis'], {
-    kind: 'solo',
-    identities: [{
-      ...identities['jenna-stannis'],
-      bodyReferenceImage: { ...jennaBodyReference, sha256: canonicalReference.sha256 }
-    }]
-  });
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(duplicateBody).map(describe),
-    [[1, 'identity', 'jenna-stannis']]
-  );
-  assert.throws(
-    () => requestWithCast(['jenna-stannis', 'cally'], {
-      kind: 'duo',
-      identities: [
-        identities['jenna-stannis'],
-        { ...identities.cally, bodyReferenceImage: { ...callyBodyReference, sha256: canonicalReference.sha256 } }
-      ]
-    }),
-    /reference shared by different identities/
-  );
-  const masterDuplicateBody = requestWithCast(['jenna-stannis'], {
-    kind: 'solo',
-    identities: [{
-      ...identities['jenna-stannis'],
-      bodyReferenceImage: { ...jennaBodyReference, sha256: continuityMaster.imageSha256 }
-    }]
-  }, continuityMaster);
-  assert.deepEqual(
-    inlineSceneQwenReferencePlan(masterDuplicateBody).map(describe),
-    [[1, 'continuity_master'], [2, 'identity', 'jenna-stannis']]
-  );
-  assert.notEqual(inlineSceneImageRequestKey(solo), inlineSceneImageRequestKey(qwenRequest(['jenna-stannis'])));
-
-  assert.throws(
-    () => normalizeInlineSceneImageRequest({
-      ...solo,
-      cast: {
-        kind: 'solo',
-        identities: [{
-          ...solo.cast.identities[0],
-          bodyReferenceImage: { ...jennaBodyReference, aspectRatio: '9:16' }
-        }]
-      }
-    }),
-    /body and wardrobe reference aspect ratio must be 3:4/
-  );
-  assert.throws(
-    () => normalizeInlineSceneImageRequest({
-      ...solo,
-      cast: {
-        kind: 'solo',
-        identities: [{
-          ...solo.cast.identities[0],
-          referenceImage: { ...canonicalReference, aspectRatio: '9:16' }
-        }]
-      }
-    }),
-    /identity reference aspect ratio must be 2:3/
-  );
-});
-
-test('builds a continuity graph only from a verified master and its exact selected identity slots', () => {
-  const request = qwenRequest(['jenna-stannis', 'cally', 'servalan'], continuityMaster);
-  const graph = buildQwenImageEditSceneWorkflow(request, 43, undefined, uploadedMaster);
-  assert.equal(graph['4'].inputs.image, `mullet/motion-inputs/${uploadedMaster.name}`);
-  assert.equal(graph['16'].inputs.image, 'mullet/identity/cally-v2.jpg');
-  assert.equal(graph['17'].inputs.image, 'mullet/identity/servalan-v1.png');
-  assert.deepEqual(graph['9'].inputs.image1, ['15', 0]);
-  assert.deepEqual(graph['9'].inputs.image2, ['16', 0]);
-  assert.deepEqual(graph['9'].inputs.image3, ['17', 0]);
-  assert.match(graph['9'].inputs.prompt, /Picture 1 is the prior accepted scene master/);
-  assert.doesNotMatch(graph['9'].inputs.prompt, /identity reference for Jenna Stannis/);
-  assert.throws(
-    () => buildQwenImageEditSceneWorkflow(request, 43),
-    /requires one uploaded master input/
-  );
-  assert.throws(
-    () => buildQwenImageEditSceneWorkflow(request, 43, undefined, { ...uploadedMaster, imageSha256: '8'.repeat(64) }),
-    /does not match continuity provenance/
-  );
-  assert.throws(
-    () => buildQwenImageEditSceneWorkflow(qwenRequest(['jenna-stannis']), 43, undefined, uploadedMaster),
-    /cannot use an unbound uploaded master input/
-  );
-});
-
-
 test('binds a Z-Image scene to the linked LoRA trigger and provenance', () => {
   const request = buildInlineSceneImageRequest(result(), {
     modelTemplate: INLINE_SCENE_TEMPLATE_ID,
@@ -770,80 +577,6 @@ test('binds a Z-Image scene to the linked LoRA trigger and provenance', () => {
   }), /Z-Image inline scenes require/);
 });
 
-
-test('builds explicit solo, duo, and trio Qwen graphs with stable one-to-one image slots', () => {
-  const capabilities = {
-    spec: INLINE_SCENE_CAPABILITIES_SPEC,
-    templates: [],
-    aspectRatios: [],
-    megapixels: [],
-    loras: []
-  };
-  const requests = [
-    buildInlineSceneImageRequest(result(['jenna-stannis']), {
-      modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-      cast: cast('jenna-stannis'),
-      lora: null,
-      aspectRatio: '3:2',
-      megapixels: 0.5
-    }),
-    buildInlineSceneImageRequest(result(['cally', 'jenna-stannis']), {
-      modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-      cast: cast('jenna-stannis', 'cally'),
-      lora: null,
-      aspectRatio: '3:2',
-      megapixels: 0.5
-    }),
-    buildInlineSceneImageRequest(result(['servalan', 'jenna-stannis', 'cally']), {
-      modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-      cast: cast('jenna-stannis', 'cally', 'servalan'),
-      lora: null,
-      aspectRatio: '3:2',
-      megapixels: 0.5
-    })
-  ];
-  assert.deepEqual(requests.map((request) => request.cast.kind), ['solo', 'duo', 'trio']);
-  const [graph, duoGraph, trioGraph] = requests.map((request) => buildQwenImageEditSceneWorkflow(request, 43, capabilities));
-  assert.equal(graph['1'].inputs.unet_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['2'].inputs.type, 'qwen_image');
-  assert.equal(graph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.deepEqual(graph['5'].inputs, {
-    image: ['4', 0], upscale_method: 'lanczos', width: 384, height: 576, crop: 'disabled'
-  });
-  assert.deepEqual(graph['15'].inputs, {
-    image: ['5', 0], left: 240, top: 0, right: 240, bottom: 0, feathering: 40
-  });
-  assert.equal(graph['8'].inputs.lora_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora);
-  assert.equal(graph['12'].inputs.steps, 4);
-  assert.equal(graph['12'].inputs.sampler_name, 'euler');
-  assert.deepEqual(graph['9'].inputs.image1, ['15', 0]);
-  assert.equal(Object.hasOwn(graph['9'].inputs, 'image2'), false);
-  assert.equal(Object.hasOwn(graph['9'].inputs, 'image3'), false);
-  assert.equal(graph['16'], undefined);
-  assert.equal(graph['17'], undefined);
-  assert.deepEqual(graph['11'].inputs.pixels, ['15', 0]);
-  assert.match(graph['9'].inputs.prompt, /outpaint Picture 1 into the requested wide scene/i);
-  assert.match(graph['9'].inputs.prompt, /Picture 1 is the exact identity reference for Jenna Stannis/);
-  assert.equal(graph['14'].inputs.filename_prefix, 'mullet/scene');
-
-  assert.equal(duoGraph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(duoGraph['16'].inputs.image, 'mullet/identity/cally-v2.jpg');
-  assert.deepEqual(duoGraph['9'].inputs.image1, ['15', 0]);
-  assert.deepEqual(duoGraph['9'].inputs.image2, ['16', 0]);
-  assert.equal(Object.hasOwn(duoGraph['9'].inputs, 'image3'), false);
-  assert.equal(duoGraph['17'], undefined);
-  assert.match(duoGraph['9'].inputs.prompt, /Picture 1 is the exact identity reference for Jenna Stannis/);
-  assert.match(duoGraph['9'].inputs.prompt, /Picture 2 is the exact identity reference for Cally/);
-
-  assert.equal(trioGraph['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-  assert.equal(trioGraph['16'].inputs.image, 'mullet/identity/cally-v2.jpg');
-  assert.equal(trioGraph['17'].inputs.image, 'mullet/identity/servalan-v1.png');
-  assert.deepEqual(trioGraph['9'].inputs.image1, ['15', 0]);
-  assert.deepEqual(trioGraph['9'].inputs.image2, ['16', 0]);
-  assert.deepEqual(trioGraph['9'].inputs.image3, ['17', 0]);
-  assert.deepEqual(trioGraph['10'].inputs.image3, ['17', 0]);
-  assert.match(trioGraph['9'].inputs.prompt, /Picture 3 is the exact identity reference for Servalan/);
-});
 
 test('builds a landscape Z-Image graph with the selected identity LoRA and exact trigger', () => {
   const request = buildInlineSceneImageRequest(result(), {

@@ -1,5 +1,5 @@
 // Reference packs for the MiniMax H3 scene clip. Every cast member contributes either
-// three Krea 2 turbo views (face, three-quarter, full body) rendered with the subject's
+// three Krea 2 turbo views (face, three-quarter, waist up) rendered with the subject's
 // Krea LoRA on the still lane, or, without a Krea LoRA, the identity photo already on the
 // still lane. Each reference is uploaded into the loop lane's
 // mullet/identity/refpack input namespace so the H3 graph can load it by name. Names are
@@ -14,7 +14,7 @@ import { trackPrompt, untrackPrompt } from './inflight.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type SceneReferenceView = 'face' | 'threequarter' | 'fullbody' | 'identity';
+export type SceneReferenceView = 'face' | 'threequarter' | 'waistup' | 'identity';
 
 export type SceneReferenceProfile = {
   id: string;
@@ -63,11 +63,13 @@ export const SCENE_REFERENCE_VIEWS: readonly {
       + 'natural light, plain background'
   },
   {
-    view: 'fullbody',
-    width: 640,
-    height: 1152,
-    text: 'photorealistic full-body standing photo, whole figure visible head to shoes, '
-      + 'relaxed contemporary summer weekend clothing, standing on a wooden cabin porch, natural light'
+    // Waist up, not full body: a full-figure reference pulls the generated shot back into
+    // a distant landscape, which is the opposite of a one-to-one scene.
+    view: 'waistup',
+    width: 832,
+    height: 1024,
+    text: 'photorealistic waist-up photo facing the camera, head and torso filling the frame, '
+      + 'relaxed contemporary clothing clearly visible, even natural light, plain background'
   }
 ]);
 
@@ -89,7 +91,7 @@ const UUID_PATTERN = /^[0-9a-f-]{36}$/i;
 const REFERENCE_IMAGE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:jpe?g|png|webp)$/i;
 const REFERENCE_SUBFOLDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 const PNG_SIGNATURE = Object.freeze([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const VIEW_NAMES: readonly SceneReferenceView[] = Object.freeze(['face', 'threequarter', 'fullbody', 'identity']);
+const VIEW_NAMES: readonly SceneReferenceView[] = Object.freeze(['face', 'threequarter', 'waistup', 'identity']);
 
 type PreparedReference = { view: SceneReferenceView; sha256: string; bytes: Uint8Array };
 type ResolvedReference = { view: SceneReferenceView; sha256: string };

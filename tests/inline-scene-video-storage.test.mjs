@@ -4,7 +4,6 @@ import test from 'node:test';
 
 import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
-  INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
@@ -90,8 +89,10 @@ const callyIdentity = Object.freeze({
   },
   bodyReferenceImage: null
 });
+// One-to-one by design (operator order, 2026-09-03): the director selects exactly one
+// subject, so a stored clip can only ever carry a solo cast. Cally stays as the foreign
+// subject a stored reference must never smuggle into that cast.
 const soloCast = Object.freeze({ kind: 'solo', identities: [jennaIdentity] });
-const duoCast = Object.freeze({ kind: 'duo', identities: [jennaIdentity, callyIdentity] });
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -109,26 +110,25 @@ function reference(identity, view, salt = 0) {
   };
 }
 
-function referencesFor(cast, views = ['face', 'threequarter', 'fullbody']) {
+function referencesFor(cast, views = ['face', 'threequarter', 'waistup']) {
   return cast.identities.flatMap((identity) => views.map((view) => reference(identity, view)));
 }
 
 function sceneRequest(cast = soloCast) {
-  const candidates = cast.identities.map(({ profileId }) => profileId === 'jenna' ? sceneCandidate : callyCandidate);
   const sidecar = buildInlineSceneRequest(
     conversationId,
     messages,
     transcriptSourceForMessages(conversationId, messages),
-    candidates
+    [sceneCandidate]
   );
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', {
     prompt,
     subjectIds: cast.identities.map(({ profileId }) => profileId)
   });
   return buildInlineSceneImageRequest(result, {
-    modelTemplate: cast.kind === 'solo' ? INLINE_SCENE_TEMPLATE_ID : INLINE_SCENE_QWEN_TEMPLATE_ID,
+    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
     cast,
-    lora: cast.kind === 'solo' ? sceneLora : null,
+    lora: sceneLora,
     aspectRatio: '16:9',
     megapixels: 1
   });
@@ -183,7 +183,7 @@ test('normalizes and byte-verifies the reference-conditioned silent H.264 MP4', 
   assert.deepEqual(normalized.request.source.references.map(({ name }) => name), [
     `jenna-face-${'d'.repeat(16)}.png`,
     `jenna-threequarter-${'d'.repeat(16)}.png`,
-    `jenna-fullbody-${'d'.repeat(16)}.png`
+    `jenna-waistup-${'d'.repeat(16)}.png`
   ]);
   assert.equal('inputImageSha256' in normalized, false);
   assert.equal('scenePromptId' in normalized.request.source, false);
@@ -191,16 +191,6 @@ test('normalizes and byte-verifies the reference-conditioned silent H.264 MP4', 
   const verified = await verifyStoredInlineSceneVideo(normalized);
   assert.equal(verified.video.type, 'video/mp4');
   assert.equal(verified.videoSha256, sha256(clipMp4Bytes));
-});
-
-test('persists a duo cast whose every member has at least one prepared reference', async () => {
-  const duoRequest = request(duoCast, [reference(callyIdentity, 'identity'), reference(jennaIdentity, 'face')]);
-  const normalized = normalizeStoredInlineSceneVideo(stored({}, duoRequest));
-  assert.equal(normalized.request.source.sceneRequest.cast.kind, 'duo');
-  assert.deepEqual(normalized.request.source.references.map(({ profileId }) => profileId), ['cally', 'jenna']);
-  assert.equal(normalized.referencesSha256, inlineSceneVideoReferencesSha256(duoRequest));
-  assert.notEqual(normalized.requestKey, inlineSceneVideoRequestKey(request()));
-  await verifyStoredInlineSceneVideo(normalized);
 });
 
 test('rejects mismatched source, key, template, timing, hashes, references, and blobs', async () => {
@@ -232,12 +222,8 @@ test('rejects mismatched source, key, template, timing, hashes, references, and 
     source: { ...valid.source, references: [...valid.source.references, reference(callyIdentity, 'face')] }
   };
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({}, foreign)), /does not belong to the scene cast/);
-  const duoRequest = request(duoCast);
-  const incomplete = {
-    ...duoRequest,
-    source: { ...duoRequest.source, references: duoRequest.source.references.filter(({ profileId }) => profileId === 'jenna') }
-  };
-  assert.throws(() => normalizeStoredInlineSceneVideo(stored({}, incomplete)), /missing references for cally/);
+  const empty = { ...valid, source: { ...valid.source, references: [] } };
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({}, empty)), /between 1 and 9 references/);
   const misnamed = {
     ...valid,
     source: {

@@ -814,7 +814,7 @@ its clip and object URL, the message list renders a card for every message that 
 one record per clip key instead of one active entry, reload restores every clip of the
 conversation and prunes anything that does not belong to it (never against an empty
 transcript), a new turn only moves the pointer instead of deleting the previous clip, and
-clearing the conversation still clears everything. Storage is bounded at 80 clips.
+clearing the conversation still clears everything. No clip cap: the operator did not ask for one and a clip is 147-330 KB.
 Candidate check as Kristi (`scratch/browser-check/cand-history/`, 07:03-07:09): ok=true;
 turn 1 clip at 118.2 s, turn 2 at 142.9 s; after reload the transcript held 2 cards and 2
 clips, both restored with zero generation requests, clip box 838x471. The check itself had

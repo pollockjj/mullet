@@ -181,7 +181,7 @@ test('sceneReferenceName keys the refpack entry on the profile fingerprint', () 
   assert.equal(SCENE_REFERENCE_SUBFOLDER, 'mullet/identity/refpack');
   assert.deepEqual(
     SCENE_REFERENCE_VIEWS.map(({ view, width, height }) => [view, width, height]),
-    [['face', 832, 1024], ['threequarter', 832, 1024], ['fullbody', 640, 1152]]
+    [['face', 832, 1024], ['threequarter', 832, 1024], ['waistup', 832, 1024]]
   );
 });
 
@@ -224,7 +224,10 @@ test('a cold LoRA profile probes the loop lane, renders three Krea views, then u
     assert.ok(prompt.endsWith('. No text, watermark, or extra people.'), prompt);
   });
   assert.equal(lanes.prompts[0].workflow['4'].inputs.text.startsWith('photorealistic neutral close-up portrait'), true);
-  assert.equal(lanes.prompts[2].workflow['4'].inputs.text.includes('wooden cabin porch'), true);
+  // The third view is waist up, not a full figure: a full-body reference pulls the clip
+  // back into a distant landscape.
+  assert.equal(lanes.prompts[2].workflow['4'].inputs.text.includes('waist-up photo facing the camera'), true);
+  assert.equal(lanes.prompts.some(({ workflow }) => workflow['4'].inputs.text.includes('head to shoes')), false);
 
   // The returned hashes are the hashes of the bytes the still lane produced; the names
   // carry the profile fingerprint, not the image hash.
@@ -306,8 +309,8 @@ test('a cached pack is re-confirmed on the lane and re-rendered when the lane lo
 test('a partially prepared pack renders and uploads only the missing view', async () => {
   const profile = janProfile('partial');
   const names = refpackNames(profile);
-  // face and fullbody are already on the loop lane; the three-quarter view is not.
-  const stored = new Map([[names[0], png(832, 1024, 0xb0)], [names[2], png(640, 1152, 0xb2)]]);
+  // face and waistup are already on the loop lane; the three-quarter view is not.
+  const stored = new Map([[names[0], png(832, 1024, 0xb0)], [names[2], png(832, 1024, 0xb2)]]);
   const lanes = createLanes({ stored });
 
   const references = await ensureSceneReferences(lanes.fetcher, STILL, LOOP, [profile]);
@@ -323,7 +326,7 @@ test('a partially prepared pack renders and uploads only the missing view', asyn
   assert.equal(lanes.loopViews().length, 4);
 
   // Emitted in view order regardless of which views were warm.
-  assert.deepEqual(references.map((reference) => reference.view), ['face', 'threequarter', 'fullbody']);
+  assert.deepEqual(references.map((reference) => reference.view), ['face', 'threequarter', 'waistup']);
   assert.deepEqual(references.map((reference) => reference.name), names);
   assert.deepEqual(references.map((reference) => reference.sha256), [
     sha256(stored.get(names[0])),

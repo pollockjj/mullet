@@ -114,11 +114,10 @@ const subjectLora = Object.freeze({
   modelHash: 'd'.repeat(64)
 });
 
-function cast(count) {
-  return {
-    kind: count === 1 ? 'solo' : count === 2 ? 'duo' : 'trio',
-    identities: identities.slice(0, count)
-  };
+// One-to-one by design (operator order, 2026-09-03): the director picks exactly one of
+// the candidates, so every scene request carries a solo cast.
+function cast(index = 0) {
+  return { kind: 'solo', identities: [identities[index]] };
 }
 
 function request() {
@@ -132,25 +131,26 @@ function request() {
   );
   return buildInlineSceneImageRequest(result, {
     modelTemplate: INLINE_SCENE_TEMPLATE_ID,
-    cast: cast(1),
+    cast: cast(),
     lora: subjectLora,
     aspectRatio: '3:2',
     megapixels: 0.5
   });
 }
 
-function qwenRequest(count = 1) {
+// The Qwen path is what a solo subject without a trained LoRA renders on.
+function qwenRequest(index = 0) {
   const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
   const turns = [{ role: 'user', content: 'What happens?' }, { role: 'assistant', content: 'The ship tilts.' }];
   const source = inlineSceneSourceForCompletedTurn(transcriptSourceForMessages(conversationId, turns));
   const result = createInlineSceneResult(
     buildInlineSceneRequest(conversationId, turns, source, candidates),
     'gemma-4-ortenzya',
-    { prompt: visualPrompt, subjectIds: candidates.slice(0, count).map(({ id }) => id) }
+    { prompt: visualPrompt, subjectIds: [candidates[index].id] }
   );
   return buildInlineSceneImageRequest(result, {
     modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-    cast: cast(count),
+    cast: cast(index),
     lora: null,
     aspectRatio: '3:2',
     megapixels: 0.5
@@ -158,8 +158,10 @@ function qwenRequest(count = 1) {
 }
 
 
+// The player's scene partner changed between turns: the previous Jenna scene is the
+// continuity master and Cally is the identity the edit newly introduces.
 function continuityRequest() {
-  const base = qwenRequest(3);
+  const base = qwenRequest(1);
   return {
     ...base,
     continuityMaster: {
@@ -296,56 +298,50 @@ test('queues the Z-Image LoRA scene without fetching a reference and verifies it
   assert.throws(() => validateInlineScenePng(png(800, 600), 864, 576), /dimensions/);
 });
 
-test('fetches and verifies every solo, duo, and trio Qwen reference before queueing exact image slots', async () => {
+test('fetches and verifies the solo Qwen reference before queueing its exact image slot', async () => {
   const available = capabilities();
   const bytes = png();
-  const referencePayloads = new Map([
-    [canonicalReference.name, referenceBytes],
-    [callyReference.name, callyReferenceBytes],
-    [servalanReference.name, servalanReferenceBytes]
-  ]);
-  for (const count of [1, 2, 3]) {
-    const observed = [];
-    const fetcher = async (url, init = {}) => {
-      const parsed = new URL(String(url));
-      const filename = parsed.searchParams.get('filename');
-      observed.push({ pathname: parsed.pathname, filename, init });
-      if (parsed.pathname === '/view' && referencePayloads.has(filename)) {
-        return new Response(referencePayloads.get(filename), { headers: { 'content-type': 'image/jpeg' } });
+  const referencePayloads = new Map([[canonicalReference.name, referenceBytes]]);
+  const observed = [];
+  const fetcher = async (url, init = {}) => {
+    const parsed = new URL(String(url));
+    const filename = parsed.searchParams.get('filename');
+    observed.push({ pathname: parsed.pathname, filename, init });
+    if (parsed.pathname === '/view' && referencePayloads.has(filename)) {
+      return new Response(referencePayloads.get(filename), { headers: { 'content-type': 'image/jpeg' } });
+    }
+    if (parsed.pathname === '/prompt') return Response.json({ prompt_id: promptId, node_errors: {} });
+    if (parsed.pathname === `/history/${promptId}`) return Response.json({
+      [promptId]: {
+        status: { completed: true, status_str: 'success' },
+        outputs: { '14': { images: [{ filename: 'scene_00001_.png', subfolder: 'mullet', type: 'output' }] } }
       }
-      if (parsed.pathname === '/prompt') return Response.json({ prompt_id: promptId, node_errors: {} });
-      if (parsed.pathname === `/history/${promptId}`) return Response.json({
-        [promptId]: {
-          status: { completed: true, status_str: 'success' },
-          outputs: { '14': { images: [{ filename: 'scene_00001_.png', subfolder: 'mullet', type: 'output' }] } }
-        }
-      });
-      if (parsed.pathname === '/view') return new Response(bytes, { headers: { 'content-type': 'image/png' } });
-      throw new Error(`unexpected ${parsed.pathname}`);
-    };
-    await runComfyInlineScene(fetcher, 'http://comfy', qwenRequest(count), available, 42);
-    const queued = JSON.parse(observed.find(({ pathname }) => pathname === '/prompt').init.body);
-    assert.deepEqual(
-      observed
-        .filter(({ pathname, filename }) => pathname === '/view' && referencePayloads.has(filename))
-        .map(({ filename }) => filename),
-      identities.slice(0, count).map(({ referenceImage }) => referenceImage.name)
-    );
-    assert.equal(queued.prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
-    assert.equal(queued.prompt['8'].inputs.lora_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora);
-    assert.equal(queued.prompt['12'].inputs.steps, 4);
-    assert.equal(queued.prompt['14'].inputs.filename_prefix, 'mullet/scene');
-    assert.equal(Object.hasOwn(queued.prompt['9'].inputs, 'image2'), count >= 2);
-    assert.equal(Object.hasOwn(queued.prompt['9'].inputs, 'image3'), count === 3);
-    if (count >= 2) assert.equal(queued.prompt['16'].inputs.image, 'mullet/identity/cally-v2.jpg');
-    if (count === 3) assert.equal(queued.prompt['17'].inputs.image, 'mullet/identity/servalan-v1.jpg');
-  }
+    });
+    if (parsed.pathname === '/view') return new Response(bytes, { headers: { 'content-type': 'image/png' } });
+    throw new Error(`unexpected ${parsed.pathname}`);
+  };
+  await runComfyInlineScene(fetcher, 'http://comfy', qwenRequest(), available, 42);
+  const queued = JSON.parse(observed.find(({ pathname }) => pathname === '/prompt').init.body);
+  assert.deepEqual(
+    observed
+      .filter(({ pathname, filename }) => pathname === '/view' && referencePayloads.has(filename))
+      .map(({ filename }) => filename),
+    [canonicalReference.name]
+  );
+  assert.equal(queued.prompt['4'].inputs.image, 'mullet/identity/jenna-stannis-v1.jpg');
+  assert.equal(queued.prompt['8'].inputs.lora_name, QWEN_IMAGE_EDIT_SCENE_TEMPLATE.modelFiles.lora);
+  assert.equal(queued.prompt['12'].inputs.steps, 4);
+  assert.equal(queued.prompt['14'].inputs.filename_prefix, 'mullet/scene');
+  // One subject means one occupied picture slot; nothing else is bound.
+  assert.equal(Object.hasOwn(queued.prompt['9'].inputs, 'image2'), false);
+  assert.equal(Object.hasOwn(queued.prompt['9'].inputs, 'image3'), false);
+  assert.equal(observed.some(({ filename }) => filename === callyReference.name), false);
 });
 
 
 test('fetches and verifies a selected body and wardrobe reference before queueing it in a free Qwen slot', async () => {
   const available = capabilities();
-  const base = qwenRequest(1);
+  const base = qwenRequest();
   const requestValue = {
     ...base,
     cast: {
@@ -505,16 +501,13 @@ test('validates continuity master bytes before a unique non-overwriting Comfy up
   );
 });
 
-test('queues continuity with the uploaded master and only the deterministic new identity references', async () => {
+test('queues continuity with the uploaded master and only the newly introduced identity reference', async () => {
   const available = capabilities();
   const requestValue = continuityRequest();
   const input = uploadedMaster(requestValue);
   const bytes = png();
   const observed = [];
-  const referencePayloads = new Map([
-    [callyReference.name, callyReferenceBytes],
-    [servalanReference.name, servalanReferenceBytes]
-  ]);
+  const referencePayloads = new Map([[callyReference.name, callyReferenceBytes]]);
   const fetcher = async (url, init = {}) => {
     const parsed = new URL(String(url));
     const filename = parsed.searchParams.get('filename');
@@ -537,13 +530,14 @@ test('queues continuity with the uploaded master and only the deterministic new 
   assert.ok(promptIndex > 0);
   assert.deepEqual(
     observed.slice(0, promptIndex).map(({ filename }) => filename),
-    [callyReference.name, servalanReference.name]
+    [callyReference.name]
   );
+  // The master already carries Jenna, so her identity photo is never re-fetched.
   assert.equal(observed.some(({ filename }) => filename === canonicalReference.name), false);
   const queued = JSON.parse(observed[promptIndex].init.body);
   assert.equal(queued.prompt['4'].inputs.image, `mullet/motion-inputs/${input.name}`);
   assert.equal(queued.prompt['16'].inputs.image, 'mullet/identity/cally-v2.jpg');
-  assert.equal(queued.prompt['17'].inputs.image, 'mullet/identity/servalan-v1.jpg');
+  assert.equal(Object.hasOwn(queued.prompt, '17'), false);
 
   const noQueueCalls = [];
   await assert.rejects(

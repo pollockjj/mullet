@@ -75,7 +75,7 @@ function reference(identity, view, salt = 0) {
   };
 }
 
-function referencesFor(cast, views = ['face', 'threequarter', 'fullbody']) {
+function referencesFor(cast, views = ['face', 'threequarter', 'waistup']) {
   return cast.identities.flatMap((identity) => views.map((view) => reference(identity, view)));
 }
 
@@ -390,9 +390,9 @@ test('compiled inline-scene-video route serves one JSON-driven MiniMax H3 refere
     assert.equal(queued.prompt['6'].inputs.width, 1024);
     assert.equal(queued.prompt['6'].inputs.height, 576);
     assert.equal(queued.prompt['6'].inputs.length, 73);
-    assert.equal(queued.prompt['6'].inputs.ref_image_size, 'match');
+    assert.equal(queued.prompt['6'].inputs.ref_image_size, 'max');
     assert.deepEqual(queued.prompt['6'].inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0], ref_image_2: ['22', 0] });
-    assert.match(queued.prompt['6'].inputs.prompt, /Jenna Stannis is the person in <Picture 1> face, <Picture 2> three-quarter view, <Picture 3> full body and clothing/);
+    assert.match(queued.prompt['6'].inputs.prompt, /Jenna Stannis is the person in <Picture 1> face, <Picture 2> three-quarter view, <Picture 3> clothing from the waist up/);
     referenceNames.forEach((name, index) => {
       assert.equal(queued.prompt[String(20 + index)].inputs.image, `mullet/identity/refpack/${name}`);
     });

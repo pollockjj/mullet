@@ -117,7 +117,7 @@ const trioCast = Object.freeze({
     bodyReferenceImage: null
   }))
 });
-const ALL_VIEWS = Object.freeze(['face', 'threequarter', 'fullbody', 'identity']);
+const ALL_VIEWS = Object.freeze(['face', 'threequarter', 'waistup', 'identity']);
 
 function castForCount(count) {
   const identities = trioCast.identities.slice(0, count);
@@ -165,7 +165,7 @@ function reference(profileId, view, salt = 0, profileFingerprint = fingerprintOf
   return { profileId, view, sha256, name: inlineSceneVideoReferenceName(profileId, view, profileFingerprint) };
 }
 
-function referencesFor(request, views = ['face', 'threequarter', 'fullbody']) {
+function referencesFor(request, views = ['face', 'threequarter', 'waistup']) {
   return request.cast.identities.flatMap(({ profileId }) => views.map((view) => reference(profileId, view)));
 }
 
@@ -173,13 +173,6 @@ function motionSource(request = sceneRequest(), references = referencesFor(reque
   return { conversationId, epoch, request, references };
 }
 
-function duoScene() {
-  return sceneRequest('16:9', { candidates: trioCandidates, cast: castForCount(2) });
-}
-
-function trioScene(aspectRatio = '16:9') {
-  return sceneRequest(aspectRatio, { candidates: trioCandidates, cast: castForCount(3) });
-}
 
 test('builds a single reference-to-video request bound to the scene request and its cast references', () => {
   const scene = sceneRequest();
@@ -222,7 +215,7 @@ test('offers exactly one scene-motion path: the MiniMax H3 reference clip', () =
   assert.equal(template.durationSeconds, 3);
   assert.equal(template.steps, 4);
   assert.equal(template.outputNode, '15');
-  assert.equal(template.refImageSize, 'match');
+  assert.equal(template.refImageSize, 'max');
   assert.equal(MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES, 9);
   assert.equal(INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER, 'mullet/identity/refpack');
   assert.equal(INLINE_SCENE_VIDEO_FPS, 24);
@@ -349,13 +342,12 @@ test('normalizes a reference only when its name is derived from its profile, vie
   );
 });
 
-test('rejects foreign, mis-fingerprinted, incomplete, duplicated, and over-count reference sets', () => {
+test('rejects foreign, mis-fingerprinted, duplicated, and out-of-range reference sets', () => {
   const solo = sceneRequest();
-  const duo = duoScene();
-  const trio = trioScene('3:2');
   const soloReferences = referencesFor(solo);
   const build = (request, references) => buildInlineSceneVideoRequest({ conversationId, epoch, request, references });
 
+  // One-to-one: the cast is one subject, and every picture must be that subject's.
   assert.throws(
     () => build(solo, [...soloReferences, reference('cally', 'face')]),
     /does not belong to the scene cast/
@@ -377,18 +369,6 @@ test('rejects foreign, mis-fingerprinted, incomplete, duplicated, and over-count
     /does not match its subject fingerprint/
   );
   assert.throws(
-    () => build(duo, referencesFor(solo)),
-    /missing references for cally/
-  );
-  assert.throws(
-    () => build(duo, [reference('cally', 'identity')]),
-    /missing references for jenna/
-  );
-  assert.throws(
-    () => build(trio, referencesFor(duo)),
-    /missing references for servalan/
-  );
-  assert.throws(
     () => build(solo, [soloReferences[0], soloReferences[0]]),
     /references are duplicated/
   );
@@ -402,21 +382,17 @@ test('rejects foreign, mis-fingerprinted, incomplete, duplicated, and over-count
   );
   assert.throws(() => build(solo, []), /between 1 and 9 references/);
   assert.throws(() => build(solo, 'none'), /between 1 and 9 references/);
-  const ten = [...referencesFor(trio), reference('servalan', 'identity')];
+  const ten = ALL_VIEWS.concat(ALL_VIEWS).concat(ALL_VIEWS).slice(0, 10)
+    .map((view, index) => reference(sceneCandidate.id, view, index));
   assert.equal(ten.length, 10);
-  assert.throws(() => build(trio, ten), /between 1 and 9 references/);
-  assert.equal(build(trio, referencesFor(trio)).source.references.length, 9);
+  assert.throws(() => build(solo, ten), /between 1 and 9 references/);
   assert.deepEqual(build(solo, [soloReferences[0]]).source.references, [soloReferences[0]]);
   const everyView = build(solo, referencesFor(solo, ALL_VIEWS));
   assert.deepEqual(everyView.source.references.map(({ view }) => view), ALL_VIEWS);
-  const duoRequest = build(duo, referencesFor(duo, ['identity']));
-  assert.deepEqual(duoRequest.source.references.map(({ profileId }) => profileId), ['jenna', 'cally']);
-  const interleaved = build(duo, [reference('cally', 'face'), reference('jenna', 'face'), reference('cally', 'fullbody')]);
-  assert.deepEqual(interleaved.source.references.map(({ name }) => name), [
-    `cally-face-${'f'.repeat(16)}.png`,
-    `jenna-face-${'d'.repeat(16)}.png`,
-    `cally-fullbody-${'f'.repeat(16)}.png`
-  ]);
+  assert.deepEqual(
+    build(solo, soloReferences).source.references.map(({ name }) => name),
+    soloReferences.map(({ name }) => name)
+  );
 });
 
 test('rejects provenance drift between the clip request and its scene', () => {
@@ -455,30 +431,31 @@ test('rejects provenance drift between the clip request and its scene', () => {
   );
 });
 
-test('binds every picture to its cast display name in connection order', () => {
-  const duo = duoScene();
-  const references = [
-    reference('jenna', 'face'),
-    reference('cally', 'identity'),
-    reference('jenna', 'fullbody')
-  ];
-  const request = buildInlineSceneVideoRequest({ conversationId, epoch, request: duo, references });
-  const bound = buildInlineSceneVideoPrompt(request);
+test('binds every picture to the one subject and demands a close, solitary, silent shot', () => {
+  const solo = buildInlineSceneVideoRequest(motionSource());
+  const bound = buildInlineSceneVideoPrompt(solo);
   assert.match(
     bound,
-    /^Use the pictures for identity, hair, and clothing only: Jenna Stannis is the person in <Picture 1> face, <Picture 3> full body and clothing; Cally is the person in <Picture 2> identity\. /
+    /^Use the pictures only as the identity of Jenna Stannis: Jenna Stannis is the person in <Picture 1> face, <Picture 2> three-quarter view, <Picture 3> clothing from the waist up\./
   );
-  assert.ok(bound.includes(duo.prompt));
-  assert.ok(bound.includes('Preserve every referenced identity exactly; no new people.'));
-  assert.ok(bound.includes('no talking, no lip or mouth movement'));
+  assert.ok(bound.includes(solo.source.sceneRequest.prompt));
+  // The three defects the operator named on 2026-09-03: a distant subject, other people
+  // in the frame, and speech where none belongs.
+  assert.ok(bound.includes('Jenna Stannis is the only person in the frame: no other people, no bystanders, no crowd, no silhouettes, and no reflections of anyone else.'));
+  assert.ok(bound.includes('a close medium shot of Jenna Stannis from roughly the waist up'));
+  assert.ok(bound.includes('never pulls back to a wide landscape'));
+  assert.ok(bound.includes('Keep the face unobstructed, sharp, and matching the reference pictures exactly.'));
+  assert.ok(bound.includes('no talking, no lip or mouth movement, no speech gestures, and no singing; the mouth stays closed'));
   assert.ok(bound.includes(MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.promptGuide));
   assert.ok(bound.endsWith('no black frames.'));
   assert.equal(bound.includes('<Picture 4>'), false);
-  const solo = buildInlineSceneVideoRequest(motionSource());
-  const soloPrompt = buildInlineSceneVideoPrompt(solo);
-  assert.match(soloPrompt, /Jenna Stannis is the person in <Picture 1> face, <Picture 2> three-quarter view, <Picture 3> full body and clothing\./);
-  assert.equal(soloPrompt.includes('<Subject'), false);
-  assert.equal(soloPrompt.includes('prior scene master'), false);
+  assert.equal(bound.includes('<Subject'), false);
+
+  const oneReference = buildInlineSceneVideoRequest(motionSource(sceneRequest(), [reference(sceneCandidate.id, 'face')]));
+  assert.match(
+    buildInlineSceneVideoPrompt(oneReference),
+    /identity of Jenna Stannis: Jenna Stannis is the person in <Picture 1> face\./
+  );
 });
 
 test('submits one MiniMaxH3ReferenceToVideo graph loading the refpack pictures by name', () => {
@@ -506,7 +483,7 @@ test('submits one MiniMaxH3ReferenceToVideo graph loading the refpack pictures b
   assert.equal(conditioning.inputs.width, 1024);
   assert.equal(conditioning.inputs.height, 576);
   assert.equal(conditioning.inputs.length, 73);
-  assert.equal(conditioning.inputs.ref_image_size, 'match');
+  assert.equal(conditioning.inputs.ref_image_size, 'max');
   assert.deepEqual(conditioning.inputs.ref_images, {
     ref_image_0: ['20', 0],
     ref_image_1: ['21', 0],
@@ -547,10 +524,17 @@ test('submits one MiniMaxH3ReferenceToVideo graph loading the refpack pictures b
   assert.equal(wideGraph['6'].inputs.width, 928);
   assert.equal(wideGraph['6'].inputs.height, 640);
   assert.equal(wideGraph['10'].inputs.noise_seed, 0);
-  const trioGraph = buildInlineSceneVideoWorkflow(buildInlineSceneVideoRequest(motionSource(trioScene())), 1);
-  assert.deepEqual(Object.keys(trioGraph['6'].inputs.ref_images), Array.from({ length: 9 }, (_, index) => `ref_image_${index}`));
-  assert.equal(trioGraph['28'].class_type, 'LoadImage');
-  assert.equal(trioGraph['28'].inputs.image, `mullet/identity/refpack/servalan-fullbody-${'9'.repeat(16)}.png`);
+  // Up to nine pictures of the one subject still load in connection order.
+  // A reference name carries profile, view and fingerprint, so one subject has as many
+  // pictures as there are views; each loads in connection order.
+  const everyView = ALL_VIEWS.map((view) => reference(sceneCandidate.id, view));
+  const deepGraph = buildInlineSceneVideoWorkflow(buildInlineSceneVideoRequest(motionSource(sceneRequest(), everyView)), 1);
+  assert.deepEqual(
+    Object.keys(deepGraph['6'].inputs.ref_images),
+    ALL_VIEWS.map((_, index) => `ref_image_${index}`)
+  );
+  assert.equal(deepGraph[String(20 + ALL_VIEWS.length - 1)].class_type, 'LoadImage');
+  assert.equal(deepGraph[String(20 + ALL_VIEWS.length - 1)].inputs.image, `mullet/identity/refpack/${everyView.at(-1).name}`);
   assert.throws(() => buildInlineSceneVideoWorkflow(request, -1), /seed is invalid/);
   assert.throws(() => buildInlineSceneVideoWorkflow(request, 1.5), /seed is invalid/);
 });
@@ -666,25 +650,25 @@ test('accepts only a canonical finite encoded-duration header', () => {
 });
 
 test('reference scene graph nests the pictures under ref_images and names them in order', async () => {
-  const { buildMiniMaxH3ReferenceSceneWorkflow, buildMiniMaxH3ReferenceScenePrompt } = await import('../src/lib/inline-scene-video.ts');
+  const { buildMiniMaxH3ReferenceSceneWorkflow, buildMiniMaxH3ReferenceScenePrompt, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE: template } = await import('../src/lib/inline-scene-video.ts');
   const references = [
-    { subject: 'Jan', view: 'face', image: 'mullet/identity/refpack/jan-pollock-face.png' },
-    { subject: 'Jan', view: 'fullbody', image: 'mullet/identity/refpack/jan-pollock-fullbody.png' },
-    { subject: 'Kristi', view: 'identity', image: 'mullet/identity/cabin-kristi-v1.png' }
+    { subject: 'Jan', view: 'face', image: 'mullet/identity/refpack/jan-pollock-face-493aecb2.png' },
+    { subject: 'Jan', view: 'waistup', image: 'mullet/identity/refpack/jan-pollock-waistup-493aecb2.png' }
   ];
-  const prompt = buildMiniMaxH3ReferenceScenePrompt('They sit on the porch steps.', 'Jan: grey shirt.', references);
-  assert.match(prompt, /Jan is the person in <Picture 1> face, <Picture 2> full body and clothing; Kristi is the person in <Picture 3> identity/);
-  const graph = buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1024, height: 576, frames: 73, fps: 24, seed: 7 });
+  const built = buildMiniMaxH3ReferenceScenePrompt('She sets a mug on the counter.', 'grey shirt.', references);
+  assert.match(built, /^Use the pictures only as the identity of Jan: Jan is the person in <Picture 1> face, <Picture 2> clothing from the waist up\./);
+  assert.ok(built.includes('Jan is the only person in the frame'));
+  const graph = buildMiniMaxH3ReferenceSceneWorkflow({ prompt: built, references, width: 1024, height: 576, frames: 73, fps: 24, seed: 7 });
   const node = graph['6'];
   assert.equal(node.class_type, 'MiniMaxH3ReferenceToVideo');
-  assert.deepEqual(node.inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0], ref_image_2: ['22', 0] });
-  assert.equal(node.inputs.ref_image_size, 'match');
-  assert.equal(graph['1'].inputs.unet_name, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.modelFiles.unet);
-  assert.equal(graph['16'].inputs.lora_name, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.modelFiles.turboLora);
-  assert.equal(graph['22'].inputs.image, 'mullet/identity/cabin-kristi-v1.png');
-  assert.equal(Object.keys(graph).filter((id) => graph[id].class_type === 'LoadImage').length, 3);
-  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references: [], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /between 1 and 9/);
-  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1000, height: 576, frames: 73, fps: 24, seed: 7 }), /multiples of 32/);
-  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1024, height: 576, frames: 72, fps: 24, seed: 7 }), /5 \+ 17k/);
-  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references: [{ subject: 'X', view: 'face', image: '../etc/passwd.png' }], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /mullet input namespace/);
+  assert.deepEqual(node.inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0] });
+  assert.equal(node.inputs.ref_image_size, 'max');
+  assert.equal(graph['1'].inputs.unet_name, template.modelFiles.unet);
+  assert.equal(graph['16'].inputs.lora_name, template.modelFiles.turboLora);
+  assert.equal(graph['21'].inputs.image, references[1].image);
+  assert.equal(Object.keys(graph).filter((id) => graph[id].class_type === 'LoadImage').length, 2);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt: built, references: [], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /between 1 and 9/);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt: built, references, width: 1000, height: 576, frames: 73, fps: 24, seed: 7 }), /multiples of 32/);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt: built, references, width: 1024, height: 576, frames: 72, fps: 24, seed: 7 }), /5 \+ 17k/);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt: built, references: [{ subject: 'X', view: 'face', image: '../etc/passwd.png' }], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /mullet input namespace/);
 });
