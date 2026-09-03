@@ -697,3 +697,14 @@ Google's Gemma 4 recommendations). My first pass copied SillyTavern's sampler pr
 the operator rejected that and it was reverted before deploy. Candidate smoke on 8782: chat
 stream 200 from LM Studio, page data maxTokens 262144 / defaultMaxTokens 65536. Deployed
 2c355e2 at 21:28:35 CDT with both lanes idle; served healthz and page data confirmed.
+
+21:38-21:45 CDT, H3 reference-to-video probe on firestorm:8189 (prompt e57f9955, own prompt
+ID, queued behind one ComfyUI web-client job): `MiniMaxH3ReferenceToVideo` with the three
+cabin identity photos as `ref_images` (API form `"ref_images": {"ref_image_0": [...]}`;
+flat keys pass validation and fail at execute), unet minimax_h3_ref2va_pruned_int8_convrot,
+LoRA minimax_h3_ref2v_turbo_4step_v0.1, sigma shift 6/3, euler/simple 4 steps, 1024x576,
+73 frames, ref_image_size match: success in 61.4 s of ComfyUI, output
+`mullet/probe-r2v_00001_.mp4` (678 KB), sent to the operator. Today's chain to scene motion
+is still 37 s + loop 56 s; a reference clip lands the scene animated in one 61 s pass.
+Next: nine Krea references (three views per subject, rendered on 8188) into one clip to
+measure the cost of the full reference budget, then build the path.
