@@ -186,11 +186,11 @@
                     "joy": "Use the supplied Angela reference as the sole identity source. Preserve the exact same adult woman, facial structure, brown eyes, nose, mouth, teeth, age, skin tone, and long straight dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a natural, joyful smile. Dress her in relaxed contemporary summer weekend clothing and place her beside a sunlit window inside a rustic log cabin, with natural timber and green forest behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech.",
                     "neutral": "Use the supplied Angela reference as the sole identity source. Preserve the exact same adult woman, facial structure, brown eyes, nose, mouth, age, skin tone, and long straight dark-brown hairstyle. Create a photorealistic head-and-chest portrait with a relaxed, natural expression. Dress her in relaxed contemporary summer weekend clothing and place her beside a sunlit window inside a rustic log cabin, with natural timber and green forest behind her. Preserve identity; do not substitute, beautify, rejuvenate, or reshape her. No text, watermark, extra people, or speech."
                   },
-                  "model_template": "z-image-turbo-v1",
+                  "model_template": "krea2-turbo-lora-v1",
                   "subject_lora": {
-                    "name": "zimage/angela3_000001500.safetensors",
+                    "name": "angelapollock-krea2-v2-attn.safetensors",
                     "trigger": "angelapollock",
-                    "sha256": "a0c7ab07b11bf1661906a5309b8763c175b4d62d80461c9a9b4f6a3c24e51328"
+                    "sha256": "ca901818454e401e4d28ab4319602be9e101c1e61f342dfef982bcb28668acaf"
                   },
                   "reference_image": {
                     "name": "cabin-angela-v1.png",

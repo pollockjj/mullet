@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on d65c792 (Krea for Jan/Kristi on every solo scene, stills on 8188 / H3 loops on 8189, chat-context fix), verified over two turns | SERVED-SHA: d65c7925ba157d480fd43828160cdee7d3bfa35e | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: angela-krea (LoRA angelapollock-krea2-v2-attn appeared 20:40 CDT; profile switched, candidate check pending) | STATE: d65c792 served, READY FOR OPERATOR | SERVED-SHA: d65c7925ba157d480fd43828160cdee7d3bfa35e | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -642,3 +642,11 @@ loop 118.9 s. Turn 2: response 14.1 s, portrait 20.4 s (3.7 s of Krea, warm), sc
 65.2 s, scene loop 122.3 s; Continuity current; reload restored all four with zero
 requests. All four second-turn images and loops came from Krea and H3 on their own lanes.
 READY FOR OPERATOR.
+
+20:40 CDT: the lane monitor reported `angelapollock-krea2-v2-attn.safetensors` on both
+lanes (operator said Angela would follow Jan and Kristi once her LoRA was ready).
+Header hash from `/view_metadata/loras`: ca901818454e401e4d28ab4319602be9e101c1e61f342dfef982bcb28668acaf
+(network dim 64). Card, lorebook, and scenario test now put Angela on `krea2-turbo-lora-v1`
+with that LoRA, same trigger `angelapollock` and seed; the Z-Image LoRA is no longer
+referenced by the cabin scenario. Suite 216 pass, svelte-check 0 errors. Next: candidate
+check as Angela over two turns on 8782, deploy, served check.

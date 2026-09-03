@@ -272,11 +272,11 @@ test('ships the private cabin lore with three byte-exact references and latest Z
     }],
     ['angela-pollock', {
       name: 'cabin-angela-v1.png',
-      modelTemplate: PORTRAIT_TEMPLATE_ID,
+      modelTemplate: PORTRAIT_KREA_TEMPLATE_ID,
       lora: {
-        name: 'zimage/angela3_000001500.safetensors',
+        name: 'angelapollock-krea2-v2-attn.safetensors',
         trigger: 'angelapollock',
-        sha256: 'a0c7ab07b11bf1661906a5309b8763c175b4d62d80461c9a9b4f6a3c24e51328'
+        sha256: 'ca901818454e401e4d28ab4319602be9e101c1e61f342dfef982bcb28668acaf'
       },
       sha256: '73615e29527ff93f93f4371e614decbc66dfb07d35b1f420cfe5f4d4ef40fcf3',
       width: 1024,
@@ -286,8 +286,8 @@ test('ships the private cabin lore with three byte-exact references and latest Z
   for (const profile of packaged.portraitCast.profiles) {
     const expected = references.get(profile.id);
     assert.ok(expected, `unexpected cabin portrait profile ${profile.id}`);
-    // Jan and Kristi moved to Krea 2 on 2026-09-02 (operator order); Angela's Krea LoRA
-    // is not ready yet, so she stays on Z-Image.
+    // Jan and Kristi moved to Krea 2 on 2026-09-02 (operator order); Angela followed the
+    // same evening once angelapollock-krea2-v2-attn appeared on the lane.
     assert.equal(profile.modelTemplate, expected.modelTemplate);
     assert.deepEqual(profile.subjectLora, expected.lora);
     assert.match(profile.subject, new RegExp(`^${profile.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`));
