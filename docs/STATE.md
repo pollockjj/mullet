@@ -1,4 +1,4 @@
-QUEUE-ITEM: h3-reference-scene (candidate passed both turns; deploying) | STATE: reference-scene clip replaces the scene still; candidate ok at 23:09 CDT | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: h3-reference-scene (9520f72 cache hardening queued behind the operator's lane use) | STATE: READY FOR OPERATOR on 9768667 (scene is one H3 reference clip, no still), verified over two turns | SERVED-SHA: 9768667789e11fcf778c188e0f1c1f79c4c10207 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -771,3 +771,14 @@ name, and a cache hit reported a picture as prepared without re-checking the sha
 It now holds `{sha256, byteLength}` keyed by the reference name and re-confirms every
 cached view on the loop lane before use, re-rendering only what the lane has lost; a test
 covers the re-confirm and the lane-cleaned case. Suite 252 pass, svelte-check 0 errors.
+
+Served 9768667, two-turn check through the real origin, cabin as Jan
+(`scratch/browser-check/loop-9768667/`, 23:15-23:20 CDT): ok=true. Turn 1: label 1.8 s,
+portrait 7.6 s, caption 7.3 s, portrait loop 57.9 s, scene clip 109.9 s. Turn 2: response
+30.2 s, portrait 37.3 s, portrait loop 88.4 s, scene clip 140.4 s; Continuity current;
+reload restored portrait, portrait loop and scene clip with zero generation requests; the
+only non-2xx were the proxy-root favicon 502s. Steady state confirmed: the packs were
+already on the lane from the candidate run, so the lanes ran two portraits (5.6 s, 3.7 s)
+and two clips (50.6 s with 3 references, 51.3 s with 9) and rendered no references at all.
+Against the still path on the same scenario (2c355e2: 127 s and 163 s), the scene lands
+17-25 s earlier and one ComfyUI stage per turn is gone. READY FOR OPERATOR.
