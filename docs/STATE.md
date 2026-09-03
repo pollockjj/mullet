@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on 751190a (Jan, Kristi, and Angela on Krea 2 turbo with their LoRAs; stills on 8188, H3 loops on 8189), verified over two turns as Angela | SERVED-SHA: 751190a54ee1dbafa37c453ae97df7c91b725f77 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: h3-reference-to-video (operator proposal 21:05 CDT: skip the scene still, feed up to 9 Krea references into H3; probing MiniMaxH3ReferenceToVideo on 8189) | STATE: 2c355e2 served 21:28 CDT (65536 response / 262144 context / HF samplers); served browser check pending | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -679,3 +679,21 @@ restored all four with zero requests. All four Angela stills came from Krea with
 LoRA; all four loops from H3 on 8189 (43.8-55.7 s each). The only non-2xx responses were
 two `GET /favicon.ico` 502s at the proxy root, outside the `/mullet` base and unchanged
 from before. READY FOR OPERATOR: the whole cabin cast is on Krea.
+
+21:05-21:28 CDT, chat parameters (operator: "why is the max response tokens 8k"). Findings:
+the 8096 default and 128000 ceiling were set by the previous agent at b03e806 (2026-08-27)
+as "SillyTavern-aligned" without reading SillyTavern; MULLET sent only max_tokens and a
+hard-coded temperature 0.85; and after the operator's LM Studio restart the loaded id became
+`gemma-4-ortenzya-q6`, so the context lookup fell back to 32768. The operator's SillyTavern
+(~/SillyTavern, port 7598, text-completion "generic" to LM Studio) runs this model at
+response length 65536 with the context slider unlocked; the model's n_ctx is 262144.
+Applied in 2c355e2: DEFAULT_RESPONSE_TOKENS 65536, MAX_RESPONSE_TOKENS 262144, context
+fallback 262144, model lookup tolerant of a quant suffix, response-limit storage key bumped
+so a previously saved 8096 no longer sticks, sampler fields sent only when the plist sets
+them. Plist: MODEL_ID gemma-4-ortenzya-q6, MODEL_DEFAULT_TOKENS 65536, MODEL_MAX_TOKENS
+262144, MODEL_TEMPERATURE 1.0, MODEL_TOP_P 0.95, MODEL_TOP_K 64 per the Hugging Face card
+(llmfan46/gemma-4-Ortenzya-The-Creative-Wordsmith-31B-it-uncensored-heretic-GGUF defers to
+Google's Gemma 4 recommendations). My first pass copied SillyTavern's sampler preset instead;
+the operator rejected that and it was reverted before deploy. Candidate smoke on 8782: chat
+stream 200 from LM Studio, page data maxTokens 262144 / defaultMaxTokens 65536. Deployed
+2c355e2 at 21:28:35 CDT with both lanes idle; served healthz and page data confirmed.
