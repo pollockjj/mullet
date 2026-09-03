@@ -133,11 +133,12 @@ const PORTRAIT_VIDEO = `(() => { const v = document.querySelector('.portrait vid
 const SCENE_IMAGE = `(() => { const i = document.querySelector('.scene-card img'); return i && i.complete && i.naturalWidth > 0; })()`;
 // Decoded AND actually laid out: a card that collapses to a sliver still decodes, so the
 // rendered box is part of the assertion.
-const SCENE_VIDEO = `(() => { const v = document.querySelector('.scene-card video');
+const LAST_SCENE_VIDEO = `[...document.querySelectorAll('.scene-card video')].at(-1)`;
+const SCENE_VIDEO = `(() => { const v = ${LAST_SCENE_VIDEO};
   if (!v || v.readyState < 2 || !(v.videoWidth > 0)) return false;
   const box = v.getBoundingClientRect();
   return box.width >= 200 && box.height >= 120; })()`;
-const SCENE_GEOMETRY = `(() => { const v = document.querySelector('.scene-card video');
+const SCENE_GEOMETRY = `(() => { const v = ${LAST_SCENE_VIDEO};
   const box = v ? v.getBoundingClientRect() : null;
   return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null; })()`;
 const EXPRESSION_LABEL = `(() => { const m = document.querySelector('[aria-label="Media"]')?.textContent ?? '';
@@ -381,7 +382,7 @@ async function main() {
         record.turn = {};
         const previous = await page.evaluate(`(() => ({
           portrait: document.querySelector('.portrait img')?.src ?? '',
-          sceneVideo: document.querySelector('.scene-card video')?.currentSrc ?? ''
+          sceneVideo: [...document.querySelectorAll('.scene-card video')].at(-1)?.currentSrc ?? ''
         }))()`);
         record.turn.typed = await page.evaluate(`(() => {
           const area = document.querySelector('textarea[aria-label="Message"]');
@@ -403,7 +404,9 @@ async function main() {
               { timeoutMs: 300_000, pollMs: 500, label: 'second response finalized' }
             );
           } catch (error) { turnRecord.stages.response = error.message; }
-          const newSrc = (selector, attribute, before) => `(() => { const n = document.querySelector(${JSON.stringify(selector)});
+          // `.scene-card video` matches every response's clip, so the newest one is the
+          // element to watch; the portrait panel still holds a single image.
+          const newSrc = (selector, attribute, before) => `(() => { const n = ${JSON.stringify(selector)} === '.scene-card video' ? ${LAST_SCENE_VIDEO} : document.querySelector(${JSON.stringify(selector)});
             return n && (n.${attribute} || '') !== ${JSON.stringify(before)} && ${attribute === 'src' ? 'n.complete && n.naturalWidth > 0' : 'n.readyState >= 2 && n.videoWidth > 0'}; })()`;
           const since = sentAt;
           const captionsBefore = page.requests.filter((request) => request.method === 'POST' && pathOf(request.url) === '/api/sidecar/caption').length;
@@ -446,8 +449,7 @@ async function main() {
         portraitVideo: await page.evaluate(PORTRAIT_VIDEO),
         sceneImage: await page.evaluate(SCENE_IMAGE),
         sceneVideoBox: await page.evaluate(SCENE_GEOMETRY),
-        // One scene card only: the clip belongs to the newest finalized response, and
-        // older turns must not keep a stale one.
+        // Every finalized response keeps its own clip, so a two-turn run restores two.
         sceneCards: await page.evaluate(`document.querySelectorAll('.scene-card').length`),
         sceneVideos: await page.evaluate(`document.querySelectorAll('.scene-card video').length`),
         sceneVideo: await page.evaluate(SCENE_VIDEO),
@@ -460,6 +462,12 @@ async function main() {
       };
       for (const item of ['portraitImage', 'portraitVideo', 'sceneVideo']) {
         if (!record.reload[item]) record.stages[`reload:${item}`] = `${item} not restored within ${settleMs} ms of reload`;
+      }
+      // The transcript keeps a clip per finalized response: one for the opening turn and
+      // one for each --turn sent, all of them restored by the reload.
+      const expectedClips = argValue('turn') ? 2 : 1;
+      if (record.reload.sceneVideos !== expectedClips) {
+        record.stages['reload:sceneHistory'] = `expected ${expectedClips} scene clip(s) in the transcript after reload, found ${record.reload.sceneVideos}`;
       }
       if (record.reload.generationRequests.length > 0) {
         record.stages['reload:regeneration'] = `${record.reload.generationRequests.length} generation request(s) submitted after reload: ` +

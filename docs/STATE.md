@@ -1,4 +1,4 @@
-QUEUE-ITEM: scene-clip-history (operator 2026-09-03: every response keeps its own clip in the transcript, as SillyTavern does) | STATE: card-height fix verified, deploying | SERVED-SHA: 9520f72431222a56122f08cfd711b3f4c541bc64 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: scene-clip-history (candidate passed; deploying) | STATE: every response keeps its own clip in the transcript; card-height fix served as 6b3b945 | SERVED-SHA: 6b3b945831ab9935a3a3bd6c5136995caa600fba | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -804,3 +804,20 @@ Operator order in the same turn: every text response must generate its own clip 
 older clips must stay in the chat history, exactly as SillyTavern keeps per-message media.
 Today MULLET stores one active clip and renders one card at the newest finalized response.
 Next: per-message clip storage and rendering.
+
+07:00-07:09 CDT, operator order: "each new text response generates a new video and all the
+old videos stay in the history of chat just like SillyTavern does it today." MULLET kept a
+single active clip and rendered one card at the newest finalized response. Now the
+transcript keeps a clip per finalized response: `inlineSceneClips` maps a message index to
+its clip and object URL, the message list renders a card for every message that has one
+(the newest is the live element, earlier ones are plain looping players), IndexedDB stores
+one record per clip key instead of one active entry, reload restores every clip of the
+conversation and prunes anything that does not belong to it (never against an empty
+transcript), a new turn only moves the pointer instead of deleting the previous clip, and
+clearing the conversation still clears everything. Storage is bounded at 80 clips.
+Candidate check as Kristi (`scratch/browser-check/cand-history/`, 07:03-07:09): ok=true;
+turn 1 clip at 118.2 s, turn 2 at 142.9 s; after reload the transcript held 2 cards and 2
+clips, both restored with zero generation requests, clip box 838x471. The check itself had
+been watching `.scene-card video` as a single element and hung for 900 s on the first
+card's src once a second card existed; every scene assertion now targets the newest card,
+and the reload assertion requires one clip per finalized response.

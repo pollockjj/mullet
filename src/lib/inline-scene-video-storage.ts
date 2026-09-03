@@ -51,6 +51,7 @@ type StoredInlineSceneVideoEnvelope = {
 
 export type InlineSceneVideoWriteReceipt = {
   writeId: string;
+  requestKey: string;
   previousRaw: unknown | null;
 };
 
@@ -75,7 +76,16 @@ export type InlineSceneVideoRestoreOperations = {
 
 const DATABASE_NAME = 'mullet-inline-scene-videos';
 const STORE_NAME = 'state';
-const ACTIVE_VIDEO_KEY = 'active-inline-scene-video';
+// Every finalized response keeps its own clip, the way SillyTavern keeps per-message
+// media (operator order, 2026-09-03), so the store is keyed by the clip's request key
+// rather than holding a single active entry.
+const STORED_VIDEO_KEY_PREFIX = 'inline-scene-video:';
+// A conversation's transcript can run long; this bounds the store, oldest first.
+export const STORED_INLINE_SCENE_VIDEO_LIMIT = 80;
+
+function storageKey(requestKey: string): string {
+  return STORED_VIDEO_KEY_PREFIX + requestKey;
+}
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
@@ -267,15 +277,68 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function loadStoredInlineSceneVideo(): Promise<unknown | null> {
+export async function loadStoredInlineSceneVideo(requestKey: string): Promise<unknown | null> {
   const database = await openDatabase();
   try {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readonly');
-      const request = transaction.objectStore(STORE_NAME).get(ACTIVE_VIDEO_KEY);
+      const request = transaction.objectStore(STORE_NAME).get(storageKey(requestKey));
       request.onsuccess = () => resolve(request.result ?? null);
       request.onerror = () => reject(request.error ?? new Error('IndexedDB inline-scene video read failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video read aborted'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+// Every clip held for this browser profile, newest first by generation time. Entries that
+// are not recognizable envelopes come back as-is so the caller can discard them.
+export async function loadAllStoredInlineSceneVideos(): Promise<unknown[]> {
+  const database = await openDatabase();
+  try {
+    return await new Promise<unknown[]>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const keysRequest = store.getAllKeys();
+      const valuesRequest = store.getAll();
+      transaction.oncomplete = () => {
+        const keys = (keysRequest.result ?? []) as IDBValidKey[];
+        const values = (valuesRequest.result ?? []) as unknown[];
+        resolve(values.filter((_, index) => typeof keys[index] === 'string' && (keys[index] as string).startsWith(STORED_VIDEO_KEY_PREFIX)));
+      };
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video listing failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video listing aborted'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+// Drops every clip whose request key is not in `keep`: other conversations, superseded
+// turns, and anything past the cap.
+export async function pruneStoredInlineSceneVideos(keep: ReadonlySet<string>): Promise<void> {
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const keysRequest = store.getAllKeys();
+      keysRequest.onsuccess = () => {
+        for (const key of (keysRequest.result ?? []) as IDBValidKey[]) {
+          if (typeof key !== 'string') continue;
+          if (!key.startsWith(STORED_VIDEO_KEY_PREFIX)) {
+            // Legacy single-entry state from before per-message history.
+            store.delete(key);
+            continue;
+          }
+          if (!keep.has(key.slice(STORED_VIDEO_KEY_PREFIX.length))) store.delete(key);
+        }
+      };
+      keysRequest.onerror = () => reject(keysRequest.error ?? new Error('IndexedDB inline-scene video prune listing failed'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video prune failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video prune aborted'));
     });
   } finally {
     database.close();
@@ -298,17 +361,18 @@ export async function saveStoredInlineSceneVideo(
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(ACTIVE_VIDEO_KEY);
+      const key = storageKey(normalized.requestKey);
+      const request = store.get(key);
       request.onsuccess = () => {
         previousRaw = request.result ?? null;
-        store.put(envelope, ACTIVE_VIDEO_KEY);
+        store.put(envelope, key);
       };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB inline-scene video previous-state read failed'));
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video write failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video write aborted'));
     });
-    return { writeId, previousRaw };
+    return { writeId, requestKey: normalized.requestKey, previousRaw };
   } finally {
     database.close();
   }
@@ -316,12 +380,14 @@ export async function saveStoredInlineSceneVideo(
 
 export async function rollbackStoredInlineSceneVideoWrite(receipt: InlineSceneVideoWriteReceipt): Promise<void> {
   if (!receipt.writeId || receipt.writeId.length > 200) throw new Error('inline-scene video write ID is invalid');
+  if (typeof receipt.requestKey !== 'string' || receipt.requestKey.length < 1) throw new Error('inline-scene video write key is invalid');
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(ACTIVE_VIDEO_KEY);
+      const key = storageKey(receipt.requestKey);
+      const request = store.get(key);
       request.onsuccess = () => {
         const candidate = request.result;
         if (
@@ -329,8 +395,8 @@ export async function rollbackStoredInlineSceneVideoWrite(receipt: InlineSceneVi
           && candidate.spec === STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC
           && candidate.writeId === receipt.writeId
         ) {
-          if (receipt.previousRaw === null) store.delete(ACTIVE_VIDEO_KEY);
-          else store.put(receipt.previousRaw, ACTIVE_VIDEO_KEY);
+          if (receipt.previousRaw === null) store.delete(key);
+          else store.put(receipt.previousRaw, key);
         }
       };
       request.onerror = () => reject(request.error ?? new Error('IndexedDB inline-scene video rollback read failed'));
@@ -343,12 +409,13 @@ export async function rollbackStoredInlineSceneVideoWrite(receipt: InlineSceneVi
   }
 }
 
+// Conversation reset and unrecoverable state both drop every clip.
 export async function clearStoredInlineSceneVideo(): Promise<void> {
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
-      transaction.objectStore(STORE_NAME).delete(ACTIVE_VIDEO_KEY);
+      transaction.objectStore(STORE_NAME).clear();
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video delete failed'));
       transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video delete aborted'));

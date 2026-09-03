@@ -93,12 +93,16 @@
     StoredInlineSceneVideoIntegrityError,
     clearStoredInlineSceneVideo,
     commitStoredInlineSceneVideo,
+    loadAllStoredInlineSceneVideos,
     loadStoredInlineSceneVideo,
+    pruneStoredInlineSceneVideos,
     normalizeStoredInlineSceneVideo,
     restoreStoredInlineSceneVideo,
     rollbackStoredInlineSceneVideoWrite,
     runStoredInlineSceneVideoExclusive,
     saveStoredInlineSceneVideo,
+    unwrapStoredInlineSceneVideo,
+    verifyStoredInlineSceneVideo,
     type StoredInlineSceneVideo
   } from '$lib/inline-scene-video-storage';
   import {
@@ -402,6 +406,9 @@
   let inlineSceneVideoRequest: InlineSceneVideoRequest | null = null;
   let generatedInlineSceneVideo: StoredInlineSceneVideo | null = null;
   let generatedInlineSceneVideoUrl = '';
+  // The transcript keeps a clip per finalized response, the way SillyTavern keeps
+  // per-message media (operator order, 2026-09-03), keyed by that message's index.
+  let inlineSceneClips = new Map<number, { video: StoredInlineSceneVideo; url: string; failed: boolean }>();
   let inlineSceneVideoElement: HTMLVideoElement | null = null;
   let inlineSceneVideoPlaybackState: PlaybackState = 'idle';
   let inlineSceneVideoPlaybackError = '';
@@ -975,7 +982,7 @@
     inlineSceneVideoController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
-    if (generatedInlineSceneVideoUrl) URL.revokeObjectURL(generatedInlineSceneVideoUrl);
+    for (const { url } of inlineSceneClips.values()) URL.revokeObjectURL(url);
   });
 
   function restorePortraitSettings() {
@@ -1679,18 +1686,53 @@
     attemptInlineSceneVideoPlayback(element);
   }
 
+  function inlineSceneClipMessageIndex(video: StoredInlineSceneVideo): number {
+    return video.request.source.sceneRequest.source.messageIndex;
+  }
+
+  // Drops the pointer to the newest clip. The transcript's clips are untouched: they
+  // belong to their own messages and outlive every later turn.
   function removeInstalledInlineSceneVideo() {
     inlineSceneVideoElement?.pause();
     resetInlineSceneVideoPlayback();
-    if (generatedInlineSceneVideoUrl) URL.revokeObjectURL(generatedInlineSceneVideoUrl);
     generatedInlineSceneVideoUrl = '';
     generatedInlineSceneVideo = null;
   }
 
-  function installGeneratedInlineSceneVideo(video: StoredInlineSceneVideo) {
+  function rememberInlineSceneClip(video: StoredInlineSceneVideo): string {
+    const index = inlineSceneClipMessageIndex(video);
+    const previous = inlineSceneClips.get(index);
+    if (previous) {
+      if (previous.video.requestKey === video.requestKey) return previous.url;
+      URL.revokeObjectURL(previous.url);
+    }
+    const url = URL.createObjectURL(video.video);
+    inlineSceneClips.set(index, { video, url, failed: false });
+    inlineSceneClips = inlineSceneClips;
+    return url;
+  }
+
+  function failInlineSceneClip(messageIndex: number) {
+    const entry = inlineSceneClips.get(messageIndex);
+    if (!entry || entry.failed) return;
+    inlineSceneClips.set(messageIndex, { ...entry, failed: true });
+    inlineSceneClips = inlineSceneClips;
+    if (generatedInlineSceneVideo && inlineSceneClipMessageIndex(generatedInlineSceneVideo) === messageIndex) {
+      inlineSceneVideoError = 'The scene clip could not be played.';
+    }
+  }
+
+  function forgetInlineSceneClips() {
+    for (const { url } of inlineSceneClips.values()) URL.revokeObjectURL(url);
+    inlineSceneClips = new Map();
     removeInstalledInlineSceneVideo();
+  }
+
+  function installGeneratedInlineSceneVideo(video: StoredInlineSceneVideo) {
+    inlineSceneVideoElement?.pause();
+    resetInlineSceneVideoPlayback();
     generatedInlineSceneVideo = video;
-    generatedInlineSceneVideoUrl = URL.createObjectURL(video.video);
+    generatedInlineSceneVideoUrl = rememberInlineSceneClip(video);
     resetInlineSceneVideoPlayback('starting');
   }
 
@@ -1760,6 +1802,7 @@
       await restoreGeneratedInlineScene();
       await loadInlineSceneGenerator();
       await tick();
+      await restoreInlineSceneClipHistory();
       await restoreGeneratedInlineSceneVideo();
     });
   }
@@ -1823,7 +1866,7 @@
     inlineSceneVideoRestorationPending = false;
     inlineSceneMotionEnabled = false;
     localStorage.setItem(inlineSceneMotionEnabledStorageKey, 'false');
-    removeInstalledInlineSceneVideo();
+    forgetInlineSceneClips();
     inlineSceneVideoError = cause instanceof Error ? cause.message : 'Inline-scene motion persistence failed.';
   }
 
@@ -1851,11 +1894,10 @@
   }
 
   function invalidateInlineSceneVideoForNewStaticScene() {
+    // Only the pointer to the newest clip moves on. Earlier responses keep theirs, in the
+    // transcript and in storage.
     suspendInlineSceneVideoForStaticChange();
     removeInstalledInlineSceneVideo();
-    if (inlineSceneVideoPersistenceAvailable) {
-      void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
-    }
   }
 
   function inlineSceneVideoSourceIsCurrent(
@@ -1880,6 +1922,37 @@
     return Boolean(liveRequest && inlineSceneVideoRequestKey(liveRequest) === key);
   }
 
+  // Reload restores every clip the conversation produced, not just the newest, and drops
+  // whatever no longer belongs to it.
+  async function restoreInlineSceneClipHistory() {
+    if (!inlineSceneVideoPersistenceAvailable) return;
+    beginInlineSceneVideoPersistenceOperation();
+    try {
+      const stored = await runStoredInlineSceneVideoExclusive(loadAllStoredInlineSceneVideos);
+      const keep = new Set<string>();
+      for (const entry of stored) {
+        let verified: StoredInlineSceneVideo;
+        try {
+          verified = await verifyStoredInlineSceneVideo(unwrapStoredInlineSceneVideo(entry));
+        } catch {
+          continue;
+        }
+        if (verified.conversationId !== conversationId) continue;
+        const index = inlineSceneClipMessageIndex(verified);
+        if (index < 0 || index >= messages.length) continue;
+        keep.add(verified.requestKey);
+        rememberInlineSceneClip(verified);
+      }
+      // Never prune against an empty transcript: that would be a restore ordering bug
+      // erasing the conversation's clips.
+      if (messages.length > 0) await runStoredInlineSceneVideoExclusive(() => pruneStoredInlineSceneVideos(keep));
+    } catch (cause) {
+      disableInlineSceneVideoPersistence(cause);
+    } finally {
+      endInlineSceneVideoPersistenceOperation();
+    }
+  }
+
   async function restoreGeneratedInlineSceneVideo() {
     const selectedRequest = currentInlineSceneVideoRequest(
       generatedInlineScene,
@@ -1896,7 +1969,7 @@
     try {
       await restoreStoredInlineSceneVideo({
         exclusive: runStoredInlineSceneVideoExclusive,
-        load: loadStoredInlineSceneVideo,
+        load: () => loadStoredInlineSceneVideo(key),
         discardInvalid: clearStoredInlineSceneVideo,
         isCurrent: () => inlineSceneVideoSourceIsCurrent(generation, selectedRequest, key),
         accepts: (video) => video.requestKey === key,
@@ -2181,7 +2254,7 @@
     inlineSceneVideoBusy = false;
     inlineSceneVideoError = '';
     lastInlineSceneVideoAttemptKey = '';
-    removeInstalledInlineSceneVideo();
+    forgetInlineSceneClips();
     if (inlineSceneVideoPersistenceAvailable) {
       void clearInlineSceneVideoAtGeneration(inlineSceneVideoGeneration);
     }
@@ -2647,7 +2720,7 @@
     inlineSceneVideoBusy = false;
     inlineSceneVideoError = '';
     lastInlineSceneVideoAttemptKey = '';
-    removeInstalledInlineSceneVideo();
+    forgetInlineSceneClips();
     removeInstalledInlineScene();
     if (inlineSceneVideoPersistenceAvailable) {
       beginInlineSceneVideoPersistenceOperation();
@@ -4966,40 +5039,59 @@
             <article class:assistant={message.role === 'assistant'}>
               <span class="speaker">{message.role === 'user' ? 'You' : false ? 'Assistant' : activeCard?.data.name ?? data.model}</span>
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
-              {#if true && inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
+              {#if inlineScenesEnabled && (inlineSceneClips.has(messageIndex) || finalizedInlineSceneSource?.messageIndex === messageIndex)}
+                {@const clip = inlineSceneClips.get(messageIndex) ?? null}
+                {@const isCurrentTurn = finalizedInlineSceneSource?.messageIndex === messageIndex}
                 <figure
-                  class:stale={Boolean(generatedInlineSceneVideo) && (!inlineSceneCurrent || !inlineSceneVideoCurrent)}
+                  class:stale={Boolean(clip) && isCurrentTurn && !inlineSceneVideoCurrent}
                   class="scene-card"
-                  aria-busy={inlineSceneBusy || inlineSceneVideoBusy}
-                  style:--scene-ratio={generatedInlineSceneVideo ? generatedInlineSceneVideo.width + ' / ' + generatedInlineSceneVideo.height : '16 / 9'}
+                  aria-busy={isCurrentTurn && (inlineSceneBusy || inlineSceneVideoBusy)}
+                  style:--scene-ratio={clip ? clip.video.width + ' / ' + clip.video.height : '16 / 9'}
                 >
                   <div class="scene-frame">
-                    {#if !inlineSceneVideoVisible}
-                    <div class:error-state={Boolean(inlineSceneError || inlineSceneVideoError)} class="scene-placeholder">
-                      <span>{inlineSceneError || inlineSceneVideoError ? 'Scene unavailable' : inlineSceneBusy ? 'Directing and preparing references…' : inlineSceneVideoBusy ? 'Rendering the scene clip…' : 'Waiting for scene generation'}</span>
-                    </div>
-                    {/if}
-                    {#if inlineSceneVideoMounted}
-                    <video
-                      class="scene-motion"
-                      class:playback-confirmed={inlineSceneVideoVisible}
-                      bind:this={inlineSceneVideoElement}
-                      src={generatedInlineSceneVideoUrl}
-                      preload="auto"
-                      muted
-                      loop
-                      controls
-                      playsinline
-                      on:canplay={handleInlineSceneVideoCanPlay}
-                      on:timeupdate={handleInlineSceneVideoTimeUpdate}
-                      on:error={handleInlineSceneVideoDecodeError}
-                      aria-label="Generated landscape motion for this finalized response"
-                    ></video>
+                    {#if clip && !clip.failed}
+                      {#if isCurrentTurn}
+                        <video
+                          class="scene-motion playback-confirmed"
+                          bind:this={inlineSceneVideoElement}
+                          src={clip.url}
+                          preload="auto"
+                          autoplay
+                          muted
+                          loop
+                          controls
+                          playsinline
+                          on:canplay={handleInlineSceneVideoCanPlay}
+                          on:timeupdate={handleInlineSceneVideoTimeUpdate}
+                          on:error={() => failInlineSceneClip(messageIndex)}
+                          aria-label="Generated scene clip for this response"
+                        ></video>
+                      {:else}
+                        <video
+                          class="scene-motion playback-confirmed"
+                          src={clip.url}
+                          preload="metadata"
+                          autoplay
+                          muted
+                          loop
+                          controls
+                          playsinline
+                          on:error={() => failInlineSceneClip(messageIndex)}
+                          aria-label="Generated scene clip for an earlier response"
+                        ></video>
+                      {/if}
+                    {:else}
+                      <div
+                        class:error-state={Boolean(clip?.failed || (isCurrentTurn && (inlineSceneError || inlineSceneVideoError)))}
+                        class="scene-placeholder"
+                      >
+                        <span>{clip?.failed ? 'Scene clip could not be played' : isCurrentTurn && (inlineSceneError || inlineSceneVideoError) ? 'Scene unavailable' : isCurrentTurn && inlineSceneBusy ? 'Directing and preparing references…' : isCurrentTurn && inlineSceneVideoBusy ? 'Rendering the scene clip…' : 'Waiting for scene generation'}</span>
+                      </div>
                     {/if}
                   </div>
                   <figcaption>
-                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? 'Current response · MiniMax H3 reference clip · silent' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion' : inlineSceneVideoBusy ? 'Rendering the scene clip from the cast references' : inlineSceneBusy ? 'Gemma sidecar → scene direction and references' : inlineSceneVideoError ? 'Scene clip unavailable' : inlineSceneError ? 'Scene direction unavailable' : inlineSceneCurrent ? 'Current response · scene clip pending' : inlineSceneApplies ? 'Stale settings · replacement pending' : 'Scene pending'}</span>
-                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.source.references.length} references · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s</small>{:else if generatedInlineScene}<small>{generatedInlineScene.references.length} references · {generatedInlineScene.request.aspectRatio}</small>{/if}
+                    <span>{clip ? (isCurrentTurn ? 'This response · MiniMax H3 reference clip · silent' : 'Earlier response · MiniMax H3 reference clip · silent') : isCurrentTurn && inlineSceneVideoBusy ? 'Rendering the scene clip from the cast references' : isCurrentTurn && inlineSceneBusy ? 'Gemma sidecar → scene direction and references' : isCurrentTurn && inlineSceneVideoError ? 'Scene clip unavailable' : isCurrentTurn && inlineSceneError ? 'Scene direction unavailable' : 'Scene pending'}</span>
+                    {#if clip}<small>{clip.video.width}×{clip.video.height} · {clip.video.request.source.references.length} references · {clip.video.durationSeconds.toFixed(3)} s</small>{/if}
                   </figcaption>
                 </figure>
               {/if}
