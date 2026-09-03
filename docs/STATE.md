@@ -1,4 +1,4 @@
-QUEUE-ITEM: served check of the media layout + chat fix | STATE: f212642 served with stills on 8188 and H3 loops on 8189; check armed on hammerhead:1234 returning | SERVED-SHA: f212642b48a12a73fb66fc6e9a7a9a76a174cac1 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on f212642 (Krea for Jan/Kristi, stills on 8188 / H3 loops on 8189, chat-context fix), verified over two turns | SERVED-SHA: f212642b48a12a73fb66fc6e9a7a9a76a174cac1 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -600,3 +600,15 @@ budget. Pinned by a test named after the failure. Deploying from the verified bu
 without a browser candidate check because chat itself is the thing that is broken and
 the check needs chat; the served two-turn check is armed to run as soon as the model
 server is back.
+
+Served f212642, media layout, two-turn check through the real origin, cabin scenario
+as Jan (`scratch/browser-check/loop-f212642-media/`, 20:04 CDT, model server back at
+20:04): ok=true. Turn 1: label 4.3 s, Krea portrait 8.8 s (4.5 s of ComfyUI, warm),
+caption 7.0 s, Krea scene still 36.4 s (4.0 s of ComfyUI, warm on 8188), portrait loop
+53.4 s (44.3 s of H3, warm on 8189), scene loop 110.5 s (73 s, queued behind the
+portrait loop). Turn 2: response 28.2 s (chat works with the model list lacking
+n_ctx: the fallback context size was used), portrait 34.3 s, portrait loop 80.3 s, scene
+still 93.4 s, scene loop 150.4 s; Continuity current on both turns; reload restored all
+four with zero requests. Against the by-pipeline layout served this morning on the same
+scenario (portrait 8.6 s only when Krea happened to be resident, scene 64-96 s, portrait
+loop 72-76 s, scene loop 134-196 s), every item lands sooner. READY FOR OPERATOR.

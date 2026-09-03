@@ -56,12 +56,16 @@ portrait's caption (operator-ordered chain).
 
 | Stage | Click-to-visible from the starter click | What sets it |
 | --- | --- | --- |
-| [0] label | 1.3 s | classifier |
-| [1] portrait | 27 s | Qwen 4-step, cold every turn (H3 evicts it), ~25 s of ComfyUI |
+| [0] label | 4 s | classifier on the shared chat model |
+| [1] portrait | 9 s (Krea, cabin) / 27 s (Qwen, Blake) | 4 s of ComfyUI warm on 8188 now that no H3 runs there; Qwen edit is ~25 s of ComfyUI |
 | caption | 2-8 s round trip | vision call on the chat model |
-| [3] scene still | 80 s at 1 MP | waits for the caption (~30 s), then 40 s of Qwen; 0.5 MP measures 15.5 s of ComfyUI |
-| [2] portrait loop | 95 s | 56 frames, 37 s warm / 48 s cold, queued behind the still |
-| [4] scene loop | 155 s | 73 frames, ~75-85 s, queued behind the scene still |
+| [3] scene still | 36 s | waits for the caption, then 4 s of Krea warm on 8188 (0.5 MP) |
+| [2] portrait loop | 53 s | 56 frames, ~44 s of H3 warm on 8189 |
+| [4] scene loop | 110 s | 73 frames, ~73 s of H3, queued behind the portrait loop on 8189 |
+
+Measured 2026-09-02 20:04 on the served f212642 with stills on 8188 and H3 loops on
+8189, the layout the operator ordered benchmarked and that won every stage (table in
+`docs/STATE.md`).
 
 Budget: each number above plus 25% is the alarm line; a run past it is investigated,
 not tolerated. These are hardware numbers (25 GB cards, H3 never resident), not targets:
