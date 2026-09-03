@@ -194,3 +194,21 @@ quote banks - until the operator accepts.
 4. Options are additive. A default change never removes the previous option.
 5. Blocked on operator judgment means I stop and say so. It does not mean I start
    something I can grade myself.
+
+## Candidate build and deploy recipe (as run on 2026-09-02)
+
+1. `BASE_PATH=/mullet BUILD_OUTPUT_DIR=<scratch dir> npm run build`. Without `BASE_PATH`
+   the build serves at the root, `/mullet/healthz` returns the 404 page, and the browser
+   check fails with "never became interactive".
+2. Start the candidate on 8782 with the served plist's environment plus `PORT=8782`,
+   `ORIGIN=http://127.0.0.1:8782`, `BUILD_SHA`/`PUBLIC_BUILD_SHA` set to the commit; wait
+   for `/mullet/healthz` to report that revision.
+3. `node tools/browser-check.mjs --url http://127.0.0.1:8782/mullet/ --scenario Cabin
+   --starter <name> --generate loop --turn "<second turn>" --out scratch/browser-check/<dir>`
+   only while hammerhead:1234 answers `/v1/models` and both lanes' `/queue` are empty.
+4. On `ok: true`, and again only with both lanes empty: copy the build to
+   `scratch/releases/<sha>-mullet`, save `scratch/deploy/rollback-<prev>-before-<new>.plist`,
+   replace the previous sha in `scratch/deploy/com.pollockjj.mullet.plist` (three places),
+   `launchctl unload` then `load` that plist, wait for the served `/mullet/healthz` revision.
+5. Re-run the same browser check against the real origin; record both results in
+   `docs/STATE.md`; kill the candidate server and any `mullet-cdp-` Chrome.
