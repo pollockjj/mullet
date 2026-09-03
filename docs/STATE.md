@@ -1,4 +1,4 @@
-QUEUE-ITEM: reference-plumbing (the clips never used the references; fixed, verifying) | STATE: 804c298 served with one-to-one framing but reference-less clips | SERVED-SHA: 804c298 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on f847d06 (references reach H3; one subject, close, alone, silent; clip per response), verified over two turns | SERVED-SHA: f847d0606433cc30ba20b52e7041d117b108bf5e | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -881,3 +881,11 @@ the fix), reload restored both clips with no generation requests. The clip stage
 149 s on turn 1 and 158 s on turn 2 against ~119 s before, because reference tokens ride
 through every sampling step - that is the price of the subject actually being in the shot.
 A frame pulled from the candidate's own clip shows the referenced subject, alone, waist-up.
+
+Served f847d06 at 08:05:15 CDT; two-turn check through the real origin, cabin as Jan
+(`scratch/browser-check/loop-f847d06/`, 08:05-08:10): ok=true. Turn 1: label 3.3 s,
+portrait 9.1 s, caption 7.1 s, portrait loop 68.4 s, scene clip 143.5 s. Turn 2: response
+25.6 s, portrait 32.5 s, portrait loop 83.8 s, scene clip 157.9 s; Continuity current;
+reload restored every clip with zero generation requests; only the proxy-root favicon
+502s. The served clips carry the dotted reference inputs and a frame pulled from the
+served clip shows the referenced subject. READY FOR OPERATOR.
