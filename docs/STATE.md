@@ -1,4 +1,4 @@
-QUEUE-ITEM: angela-krea (751190a served 20:44 CDT; served two-turn check running) | STATE: 751190a served (all three cabin subjects on Krea) | SERVED-SHA: 751190a54ee1dbafa37c453ae97df7c91b725f77 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on 751190a (Jan, Kristi, and Angela on Krea 2 turbo with their LoRAs; stills on 8188, H3 loops on 8189), verified over two turns as Angela | SERVED-SHA: 751190a54ee1dbafa37c453ae97df7c91b725f77 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -668,3 +668,14 @@ lanes empty, but the operator's Jan session was active 13 s earlier: the hold I 
 wait for three quiet minutes stopped the wrong process (the task wrapper shell, not the
 chain), so the served server restarted between two of their turns. The served two-turn
 check as Angela is running now.
+
+Served 751190a, two-turn check through the real origin, cabin as Angela
+(`scratch/browser-check/loop-751190a/`, 20:44-20:48 CDT, lanes otherwise idle): ok=true.
+Turn 1: label 2.3 s, portrait 8.8 s (5.4 s of Krea with angelapollock-krea2-v2-attn),
+caption 8.9 s, scene still 37.3 s (3.7 s of Krea), portrait loop 54.4 s, scene loop
+110.4 s. Turn 2: response 18.1 s, portrait 24.6 s (3.7 s of Krea), scene still 47.1 s
+(3.8 s of Krea), portrait loop 69.2 s, scene loop 126.2 s; Continuity current; reload
+restored all four with zero requests. All four Angela stills came from Krea with her
+LoRA; all four loops from H3 on 8189 (43.8-55.7 s each). The only non-2xx responses were
+two `GET /favicon.ico` 502s at the proxy root, outside the `/mullet` base and unchanged
+from before. READY FOR OPERATOR: the whole cabin cast is on Krea.
