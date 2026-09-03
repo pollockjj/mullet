@@ -135,7 +135,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         throw new Error('active lorebooks may contain at most 20000 entries');
       }
       if (books.length) {
-        const modelContextTokens = await getModelContextTokens(fetch, runtime.modelBaseUrl, runtime.modelId, request.signal);
+        const modelContextTokens = await getModelContextTokens(fetch, runtime.modelBaseUrl, runtime.modelId, request.signal, runtime.contextTokensFallback);
         const loreSettings = resolveLorebookSettings(
           body.lorebookSettings,
           lorePromptContextTokens(modelContextTokens, tokenLimit)

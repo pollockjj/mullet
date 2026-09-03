@@ -33,6 +33,12 @@ export const runtime = {
   sceneVideoComfyBaseUrl: lane(env.SCENE_VIDEO_COMFY_BASE_URL ?? env.SCENE_COMFY_BASE_URL ?? env.VIDEO_COMFY_BASE_URL),
   maxTokens,
   defaultMaxTokens,
+  // Context size to assume when the model server does not expose one (MODEL_CONTEXT_TOKENS);
+  // defaults to 32768, which every model served here so far exceeds.
+  contextTokensFallback: (() => {
+    const parsed = Number.parseInt(env.MODEL_CONTEXT_TOKENS ?? '32768', 10);
+    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 32_768;
+  })(),
   temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : 0.85,
   revision: env.BUILD_SHA ?? env.PUBLIC_BUILD_SHA ?? 'development'
 };

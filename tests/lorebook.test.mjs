@@ -618,3 +618,15 @@ test('runs imported regex in a killable worker with a hard timeout', async () =>
     await sandbox.dispose();
   }
 });
+
+// Observed 2026-09-02 after a model-server restart: the model list no longer carried
+// meta.n_ctx and every chat message failed with "model metadata does not expose n_ctx".
+test('context size falls back to the configured value and accepts other field names', async () => {
+  const noMeta = async () => new Response(JSON.stringify({ data: [{ id: 'gemma' }] }), { status: 200 });
+  await assert.rejects(() => getModelContextTokens(noMeta, 'http://model:1235/v1', 'gemma'), /does not expose n_ctx/);
+  assert.equal(await getModelContextTokens(noMeta, 'http://model:1236/v1', 'gemma', undefined, 32_768), 32_768);
+  const lmStudio = async () => new Response(JSON.stringify({ data: [{ id: 'gemma', max_context_length: 131072 }] }), { status: 200 });
+  assert.equal(await getModelContextTokens(lmStudio, 'http://model:1237/v1', 'gemma', undefined, 32_768), 131_072);
+  const ollamaShape = async () => new Response(JSON.stringify({ models: [{ name: 'gemma', context_length: 65536 }], data: [] }), { status: 200 });
+  assert.equal(await getModelContextTokens(ollamaShape, 'http://model:1238/v1', 'gemma', undefined, 32_768), 65_536);
+});
