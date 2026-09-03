@@ -1,7 +1,7 @@
 // Reference packs for the MiniMax H3 scene clip. Every cast member contributes either
 // three Krea 2 turbo views (face, three-quarter, full body) rendered with the subject's
 // Krea LoRA on the still lane, or, without a Krea LoRA, the identity photo already on the
-// still lane. Each reference is cached under scratch/ and uploaded into the loop lane's
+// still lane. Each reference is uploaded into the loop lane's
 // mullet/identity/refpack input namespace so the H3 graph can load it by name. Names are
 // keyed on the subject's profile fingerprint, so a pack that is already on the loop lane
 // is found by name and never rendered again.
@@ -78,7 +78,8 @@ const POLL_INTERVAL_MS = 250;
 const MAX_PROFILES = 3;
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
 const MIN_REFERENCE_BYTES = 33;
-// Three casts' worth of rendered views; the disk cache is the durable copy.
+// Three casts' worth of prepared views. Only metadata is held: the loop lane's input
+// namespace is the durable copy, and a cached entry is re-confirmed there before use.
 const MEMORY_CACHE_LIMIT = MAX_PROFILES * SCENE_REFERENCE_VIEWS.length * 3;
 const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -91,7 +92,8 @@ const PNG_SIGNATURE = Object.freeze([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0
 const VIEW_NAMES: readonly SceneReferenceView[] = Object.freeze(['face', 'threequarter', 'fullbody', 'identity']);
 
 type PreparedReference = { view: SceneReferenceView; sha256: string; bytes: Uint8Array };
-type CachedReference = { sha256: string; bytes: Uint8Array };
+type ResolvedReference = { view: SceneReferenceView; sha256: string };
+type CachedReference = { sha256: string; byteLength: number };
 type OutputImage = { filename: string; subfolder: string; type: 'output' };
 
 const memoryCache = new Map<string, CachedReference>();
@@ -423,7 +425,7 @@ async function loopLaneReference(
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (!isPng(bytes)) return null;
-  return { sha256: await sha256Hex(bytes), bytes };
+  return { sha256: await sha256Hex(bytes), byteLength: bytes.byteLength };
 }
 
 async function loopLaneHasReference(
@@ -491,19 +493,26 @@ export async function ensureSceneReferences(
       : ['identity'];
     // Names are deterministic, so the loop lane is asked first: a pack prepared in an
     // earlier session or turn costs one GET per view and no rendering at all.
-    const prepared: PreparedReference[] = [];
+    const prepared: ResolvedReference[] = [];
     const missing: SceneReferenceView[] = [];
     for (const view of views) {
       signal?.throwIfAborted();
       const name = sceneReferenceName(profile.id, view, profile.fingerprint);
-      const key = `${profile.fingerprint}:${view}`;
-      const cached = memoryCache.get(key) ?? await loopLaneReference(fetcher, loopLaneBaseUrl, name, signal);
+      // The name is the cache key: it already carries the profile, the view, and the
+      // subject's fingerprint, so two profiles can never share an entry.
+      const known = memoryCache.get(name);
+      // A cached entry is still confirmed on the lane, which MULLET does not own: its
+      // input namespace can be cleaned or the service restarted between turns.
+      const cached = known && await loopLaneHasReference(fetcher, loopLaneBaseUrl, name, known.byteLength, signal)
+        ? known
+        : await loopLaneReference(fetcher, loopLaneBaseUrl, name, signal);
       if (!cached) {
+        memoryCache.delete(name);
         missing.push(view);
         continue;
       }
-      remember(key, cached);
-      prepared.push({ view, sha256: cached.sha256, bytes: cached.bytes });
+      remember(name, cached);
+      prepared.push({ view, sha256: cached.sha256 });
     }
     if (missing.length > 0) {
       const rendered = lora
@@ -518,8 +527,11 @@ export async function ensureSceneReferences(
           item.bytes,
           signal
         );
-        remember(`${profile.fingerprint}:${item.view}`, { sha256: item.sha256, bytes: item.bytes });
-        prepared.push(item);
+        remember(
+          sceneReferenceName(profile.id, item.view, profile.fingerprint),
+          { sha256: item.sha256, byteLength: item.bytes.byteLength }
+        );
+        prepared.push({ view: item.view, sha256: item.sha256 });
       }
     }
     // Emit in view order so the prompt tags read face, three-quarter, full body per subject.

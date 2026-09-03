@@ -162,6 +162,7 @@ function createLanes(options = {}) {
     uploads,
     stored,
     cancels: () => requests.filter((entry) => entry.method === 'POST' && /\/api\/jobs\/[^/]+\/cancel$/.test(entry.url)),
+    forget: (name) => stored.delete(name),
     stillRequests: () => requests.filter((entry) => entry.url.startsWith(`${STILL}/`)),
     loopViews: () => requests.filter((entry) => entry.method === 'GET' && entry.url.startsWith(`${LOOP}/view?`))
   };
@@ -201,12 +202,13 @@ test('a cold LoRA profile probes the loop lane, renders three Krea views, then u
 
   const references = await ensureSceneReferences(lanes.fetcher, STILL, LOOP, [profile]);
 
-  // Every view is asked for by name on the loop lane before anything is rendered.
-  assert.deepEqual(lanes.loopViews().slice(0, 3).map((entry) => entry.query), names.map(loopProbe));
-  assert.ok(
-    lanes.loopViews().slice(0, 3).every((entry) => lanes.requests.indexOf(entry) < lanes.requests.indexOf(lanes.requests.find((item) => item.url === `${STILL}/prompt`))),
-    'the loop lane is probed before the still lane is asked to render'
-  );
+  // Every view is asked for by name on the loop lane before anything is rendered: the
+  // first three requests of the whole run are the three misses.
+  assert.deepEqual(lanes.requests.slice(0, 3).map((entry) => entry.query), names.map(loopProbe));
+  assert.deepEqual(lanes.requests.slice(0, 3).map((entry) => `${entry.method} ${new URL(entry.url).origin}`),
+    [`GET ${LOOP}`, `GET ${LOOP}`, `GET ${LOOP}`]);
+  // 3 misses plus one verification GET per upload.
+  assert.equal(lanes.loopViews().length, 6);
 
   assert.equal(lanes.prompts.length, 3);
   lanes.prompts.forEach((entry, index) => {
@@ -270,6 +272,34 @@ test('a pack already on the loop lane renders nothing and uploads nothing', asyn
     sha256: sha256(stored.get(names[index])),
     name: names[index]
   })));
+  assert.deepEqual(inflightPromptIds(), []);
+});
+
+test('a cached pack is re-confirmed on the lane and re-rendered when the lane loses it', async () => {
+  const profile = janProfile('recheck');
+  const names = refpackNames(profile);
+  const stored = new Map(names.map((name, index) => [name, png(832, 1024, 0xb0 + index)]));
+  const lanes = createLanes({ stored });
+
+  const first = await ensureSceneReferences(lanes.fetcher, STILL, LOOP, [profile]);
+  assert.equal(lanes.prompts.length, 0);
+  const firstProbes = lanes.loopViews().length;
+  assert.equal(firstProbes, names.length);
+
+  // Second call, same process: the in-memory entry is still confirmed against the lane,
+  // which MULLET does not own, before it is reported as prepared.
+  const second = await ensureSceneReferences(lanes.fetcher, STILL, LOOP, [profile]);
+  assert.deepEqual(second, first);
+  assert.equal(lanes.prompts.length, 0, 'a confirmed pack is never re-rendered');
+  assert.equal(lanes.uploads.length, 0);
+  assert.equal(lanes.loopViews().length, firstProbes + names.length, 'every cached view is re-confirmed');
+
+  // The lane's input namespace is cleaned between turns: the pack is rebuilt, not trusted.
+  lanes.forget(names[1]);
+  const third = await ensureSceneReferences(lanes.fetcher, STILL, LOOP, [profile]);
+  assert.equal(lanes.prompts.length, 1, 'only the view the lane lost is re-rendered');
+  assert.deepEqual(lanes.uploads.map(({ name }) => name), [names[1]]);
+  assert.deepEqual(third.map(({ name }) => name), names);
   assert.deepEqual(inflightPromptIds(), []);
 });
 

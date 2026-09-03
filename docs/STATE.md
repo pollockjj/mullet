@@ -762,3 +762,12 @@ draining the request body, which reset the client's next keep-alive request (rou
 the reference presence probe used HEAD, which ComfyUI does not answer consistently; the
 reference-pack module cached to disk, which the shared-tenancy rule forbids in a comfy-*
 module; and its cancel path did not match the single-prompt cancellation shape.
+
+23:15 CDT: deployed 9768667 (reference clip, no scene still) with both lanes quiet; served
+healthz confirmed and the served two-turn check started. Follow-up in the same session,
+from a review of the reference module: the in-process cache held full PNG bytes (up to
+540 MB across 27 entries), was keyed on `<fingerprint>:<view>` rather than the reference
+name, and a cache hit reported a picture as prepared without re-checking the shared lane.
+It now holds `{sha256, byteLength}` keyed by the reference name and re-confirms every
+cached view on the loop lane before use, re-rendering only what the lane has lost; a test
+covers the re-confirm and the lane-cleaned case. Suite 252 pass, svelte-check 0 errors.

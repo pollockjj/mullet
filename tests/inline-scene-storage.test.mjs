@@ -6,10 +6,13 @@ import {
   INLINE_SCENE_IMAGE_REQUEST_SPEC,
   INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
-  createInlineSceneContinuityMaster,
   inlineSceneImageRequestKey,
   inlineSceneSourceForScenarioOpening
 } from '../src/lib/inline-scene.ts';
+import {
+  MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES,
+  inlineSceneVideoReferenceName
+} from '../src/lib/inline-scene-video.ts';
 import {
   STORED_INLINE_SCENE_ENVELOPE_SPEC,
   STORED_INLINE_SCENE_SPEC,
@@ -38,17 +41,43 @@ const candidate = Object.freeze({
   profileFingerprint: '1234abcd'
 });
 
-const soloCast = Object.freeze({
-  kind: 'solo',
-  identities: Object.freeze([Object.freeze({
-    profileId: candidate.id,
-    profileFingerprint: candidate.profileFingerprint,
-    displayName: candidate.displayName,
-    subject: 'Jenna Stannis, an adult blonde woman aboard the Liberator',
-    referenceImage: canonicalReference,
-    bodyReferenceImage: null
-  })])
+const secondCandidate = Object.freeze({
+  id: 'cally',
+  displayName: 'Cally',
+  aliases: Object.freeze(['Cally']),
+  profileFingerprint: 'beef5678'
 });
+
+const jennaIdentity = Object.freeze({
+  profileId: candidate.id,
+  profileFingerprint: candidate.profileFingerprint,
+  displayName: candidate.displayName,
+  subject: 'Jenna Stannis, an adult blonde woman aboard the Liberator',
+  referenceImage: canonicalReference,
+  bodyReferenceImage: null
+});
+
+const callyIdentity = Object.freeze({
+  profileId: secondCandidate.id,
+  profileFingerprint: secondCandidate.profileFingerprint,
+  displayName: secondCandidate.displayName,
+  subject: 'Cally, an adult dark-haired Auron woman aboard the Liberator',
+  referenceImage: Object.freeze({
+    name: 'cally-v1.jpg',
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: 'e'.repeat(64),
+    width: 400,
+    height: 600,
+    aspectRatio: '2:3'
+  }),
+  bodyReferenceImage: null
+});
+
+const soloCast = Object.freeze({ kind: 'solo', identities: Object.freeze([jennaIdentity]) });
+const duoCast = Object.freeze({ kind: 'duo', identities: Object.freeze([jennaIdentity, callyIdentity]) });
+
+const SCENE_VIEWS = Object.freeze(['face', 'threequarter', 'fullbody']);
 
 function request(overrides = {}) {
   return {
@@ -77,6 +106,10 @@ function request(overrides = {}) {
   };
 }
 
+function duoRequest() {
+  return request({ modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID, cast: duoCast, lora: null });
+}
+
 function openingRequest() {
   const sceneRequest = request();
   const opening = [{
@@ -96,19 +129,32 @@ function openingRequest() {
   return sceneRequest;
 }
 
-function png(width = 864, height = 576) {
-  const bytes = new Uint8Array(24);
-  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
-  const view = new DataView(bytes.buffer);
-  view.setUint32(16, width, false);
-  view.setUint32(20, height, false);
-  return bytes;
+// A prepared reference picture on the loop lane: the name is bound to the subject's
+// profile fingerprint, the sha256 is the hash of the prepared PNG itself.
+function reference(profileId, view, { salt = 0, profileFingerprint } = {}) {
+  const identity = [jennaIdentity, callyIdentity].find((entry) => entry.profileId === profileId);
+  const fingerprint = profileFingerprint ?? identity?.profileFingerprint;
+  if (typeof fingerprint !== 'string') throw new Error(`no fixture fingerprint for ${profileId}`);
+  return {
+    profileId,
+    view,
+    sha256: createHash('sha256').update(`${profileId}:${view}:${salt}`).digest('hex'),
+    name: inlineSceneVideoReferenceName(profileId, view, fingerprint)
+  };
+}
+
+function referencesFor(sceneRequest, views = SCENE_VIEWS) {
+  return sceneRequest.cast.identities.flatMap(({ profileId }) => views.map((view) => reference(profileId, view)));
+}
+
+// The stored hash is sha256 over the ordered reference hashes joined with newlines.
+function referencesSha256(references) {
+  return createHash('sha256').update(references.map(({ sha256 }) => sha256).join('\n')).digest('hex');
 }
 
 function stored(overrides = {}, sceneRequest = request()) {
-  const imageBytes = png();
   sceneRequest.source.promptSha256 = `sha256:${createHash('sha256').update(sceneRequest.prompt).digest('hex')}`;
+  const references = overrides.references ?? referencesFor(sceneRequest);
   return {
     spec: STORED_INLINE_SCENE_SPEC,
     conversationId: sceneRequest.source.conversationId,
@@ -116,31 +162,37 @@ function stored(overrides = {}, sceneRequest = request()) {
     requestKey: inlineSceneImageRequestKey(sceneRequest),
     request: sceneRequest,
     modelTemplate: sceneRequest.modelTemplate,
-    promptId: '33333333-3333-4333-8333-333333333333',
-    seed: 42,
-    width: 864,
-    height: 576,
     generatedAt: 17,
-    imageSha256: createHash('sha256').update(imageBytes).digest('hex'),
-    image: new Blob([imageBytes], { type: 'image/png' }),
-    continuityMasterImage: null,
+    references,
+    referencesSha256: referencesSha256(references),
     ...overrides
   };
 }
 
-test('normalizes and byte-verifies a provenance-bound inline PNG', async () => {
-  const scene = normalizeStoredInlineScene(stored());
-  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v6');
-  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v6');
+test('normalizes a scene description plus its prepared reference pack', async () => {
+  const record = stored();
+  const scene = normalizeStoredInlineScene(record);
+  assert.equal(STORED_INLINE_SCENE_SPEC, 'mullet_stored_inline_scene_v7');
+  assert.equal(STORED_INLINE_SCENE_ENVELOPE_SPEC, 'mullet_stored_inline_scene_envelope_v7');
   assert.equal(scene.requestKey, inlineSceneImageRequestKey(scene.request));
+  assert.equal(scene.conversationId, scene.request.source.conversationId);
+  assert.equal(scene.modelTemplate, scene.request.modelTemplate);
+  assert.equal(scene.generatedAt, 17);
   assert.deepEqual(scene.request.cast, soloCast);
   assert.equal(scene.request.lora.path, 'zimage/jenna6.safetensors');
-  assert.equal(scene.continuityMasterImage, null);
-  assert.equal((await verifyStoredInlineScene(scene)).image.type, 'image/png');
+  assert.deepEqual(scene.references, record.references);
+  assert.equal(scene.references[0].name, `jenna-stannis-face-${candidate.profileFingerprint}.png`);
+  assert.equal(scene.referencesSha256, referencesSha256(record.references));
+  // The still is gone: nothing about a rendered image survives in the record.
+  for (const absent of ['image', 'promptId', 'seed', 'width', 'height', 'imageSha256', 'continuityMasterImage']) {
+    assert.equal(absent in scene, false, `${absent} must not be stored`);
+  }
+  assert.deepEqual(await verifyStoredInlineScene(scene), scene);
+  assert.deepEqual(normalizeStoredInlineScene(JSON.parse(JSON.stringify(scene))), scene);
   assert.equal(JSON.stringify(scene).includes('transcript'), false);
 });
 
-test('preserves a Qwen reference-edit solo cast in the v6 envelope', async () => {
+test('preserves a Qwen reference-edit solo cast in the v7 envelope', async () => {
   const qwenRequest = request({
     modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
     lora: null
@@ -150,65 +202,30 @@ test('preserves a Qwen reference-edit solo cast in the v6 envelope', async () =>
   assert.equal(scene.request.cast.kind, 'solo');
   assert.deepEqual(scene.request.cast.identities[0].referenceImage, canonicalReference);
   assert.equal(scene.request.lora, null);
+  assert.equal(scene.references.length, 3);
   await verifyStoredInlineScene(scene);
 });
 
+test('carries one reference pack per cast member, up to nine pictures', async () => {
+  const duo = normalizeStoredInlineScene(stored({}, duoRequest()));
+  assert.equal(duo.references.length, 6);
+  assert.deepEqual([...new Set(duo.references.map(({ profileId }) => profileId))], ['jenna-stannis', 'cally']);
+  await verifyStoredInlineScene(duo);
 
-test('persists and verifies exactly one flat continuity-master PNG without recursive scene state', async () => {
-  const priorRequest = request({
-    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-    lora: null
-  });
-  stored({}, priorRequest);
-  const masterBytes = png();
-  const continuityMaster = createInlineSceneContinuityMaster(priorRequest, {
-    promptId: '44444444-4444-4444-8444-444444444444',
-    seed: 73,
-    generatedAt: 19,
-    imageSha256: createHash('sha256').update(masterBytes).digest('hex')
-  });
-  const continuedRequest = request({
-    modelTemplate: INLINE_SCENE_QWEN_TEMPLATE_ID,
-    continuityMaster,
-    lora: null
-  });
-  const scene = normalizeStoredInlineScene(stored({
-    continuityMasterImage: new Blob([masterBytes], { type: 'image/png' })
-  }, continuedRequest));
-  const verified = await verifyStoredInlineScene(scene);
-  assert.equal(verified.continuityMasterImage?.type, 'image/png');
-  assert.equal(verified.request.continuityMaster?.imageSha256, continuityMaster.imageSha256);
-  assert.equal('scene' in verified.request.continuityMaster, false);
-  assert.equal('request' in verified.request.continuityMaster, false);
-
+  const tenReferences = [
+    ...referencesFor(duoRequest(), SCENE_VIEWS),
+    ...referencesFor(duoRequest(), ['identity']),
+    ...[0, 1].map((salt) => reference('cally', 'identity', { salt: salt + 2 }))
+  ];
+  assert.equal(tenReferences.length, MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES + 1);
   assert.throws(
-    () => normalizeStoredInlineScene(stored({}, continuedRequest)),
-    /continuity master image is invalid/
+    () => normalizeStoredInlineScene(stored({ references: tenReferences }, duoRequest())),
+    /between 1 and 9 references/
   );
-  assert.throws(
-    () => normalizeStoredInlineScene(stored({
-      continuityMasterImage: new Blob([masterBytes], { type: 'image/png' })
-    }, priorRequest)),
-    /unexpected continuity master image/
-  );
-
-  const tampered = masterBytes.slice();
-  tampered[8] = 1;
-  await assert.rejects(
-    verifyStoredInlineScene(stored({
-      continuityMasterImage: new Blob([tampered], { type: 'image/png' })
-    }, continuedRequest)),
-    /continuity master hash does not match/
-  );
-  await assert.rejects(
-    verifyStoredInlineScene(stored({
-      continuityMasterImage: new Blob([png(800, 576)], { type: 'image/png' })
-    }, continuedRequest)),
-    /PNG dimensions/
-  );
+  assert.throws(() => normalizeStoredInlineScene(stored({ references: [] })), /references are invalid/);
 });
 
-test('preserves scenario-opening identity through static-scene persistence', async () => {
+test('preserves scenario-opening identity through reference-pack persistence', async () => {
   const completed = stored();
   const opening = normalizeStoredInlineScene(stored({}, openingRequest()));
   assert.equal(opening.request.source.sourceKind, 'scenario_opening');
@@ -219,11 +236,48 @@ test('preserves scenario-opening identity through static-scene persistence', asy
   await verifyStoredInlineScene(opening);
 });
 
-test('rejects mismatched keys, dimensions, bytes, and hashes', async () => {
+test('rejects a mismatched request key and a reference hash that does not cover the pack', async () => {
   assert.throws(() => normalizeStoredInlineScene(stored({ requestKey: 'wrong' })), /request key/);
-  assert.throws(() => normalizeStoredInlineScene(stored({ width: 800 })), /dimensions/);
-  await assert.rejects(verifyStoredInlineScene(stored({ imageSha256: 'c'.repeat(64) })), /hash does not match/);
-  await assert.rejects(verifyStoredInlineScene(stored({ image: new Blob([new Uint8Array(24)], { type: 'image/png' }) })), /PNG header/);
+  assert.throws(() => normalizeStoredInlineScene(stored({ referencesSha256: 'c'.repeat(64) })), /hash does not match/);
+  assert.throws(() => normalizeStoredInlineScene(stored({ referencesSha256: 'not-a-hash' })), /reference hash is invalid/);
+  // Repointing one picture without rewriting the hash is the same rejection.
+  const references = referencesFor(request());
+  assert.throws(
+    () => normalizeStoredInlineScene(stored({
+      references: [reference('jenna-stannis', 'face', { salt: 9 }), ...references.slice(1)],
+      referencesSha256: referencesSha256(references)
+    })),
+    /hash does not match/
+  );
+  await assert.rejects(verifyStoredInlineScene(stored({ referencesSha256: 'c'.repeat(64) })), /hash does not match/);
+});
+
+test('rejects a reference naming a profile outside the cast', () => {
+  assert.throws(
+    () => normalizeStoredInlineScene(stored({
+      references: [...referencesFor(request()), reference('cally', 'face')]
+    })),
+    /does not belong to the scene cast/
+  );
+});
+
+test('rejects a cast member with no reference', () => {
+  const duo = duoRequest();
+  assert.throws(
+    () => normalizeStoredInlineScene(stored({
+      references: SCENE_VIEWS.map((view) => reference('jenna-stannis', view))
+    }, duo)),
+    /missing references for cally/
+  );
+});
+
+test('rejects a reference name that is not bound to its subject fingerprint', () => {
+  assert.throws(
+    () => normalizeStoredInlineScene(stored({
+      references: [reference('jenna-stannis', 'face', { profileFingerprint: 'deadbeef' })]
+    })),
+    /does not match its subject fingerprint/
+  );
 });
 
 test('unwraps writer envelopes and rejects malformed writer ownership', () => {
@@ -255,18 +309,20 @@ test('rolls back a writer that becomes stale before installation', async () => {
 test('restores only accepted current source inside the lock', async () => {
   let lockHeld = false;
   let installedWhileLocked = false;
+  const record = stored();
   const restored = await restoreStoredInlineScene({
     exclusive: async (operation) => {
       lockHeld = true;
       try { return await operation(); } finally { lockHeld = false; }
     },
-    load: async () => stored(),
+    load: async () => record,
     discardInvalid: async () => assert.fail('valid restore was discarded'),
     isCurrent: () => true,
     accepts: () => true,
     install: () => { installedWhileLocked = lockHeld; }
   });
-  assert.equal(restored?.promptId, '33333333-3333-4333-8333-333333333333');
+  assert.equal(restored?.referencesSha256, record.referencesSha256);
+  assert.deepEqual(restored?.references, record.references);
   assert.equal(installedWhileLocked, true);
 
   let installed = false;
@@ -282,7 +338,7 @@ test('restores only accepted current source inside the lock', async () => {
   assert.equal(installed, false);
 });
 
-test('discards corrupt bytes inside the original restore lock', async () => {
+test('discards an unverifiable reference pack inside the original restore lock', async () => {
   let lockHeld = false;
   let discardedWhileLocked = false;
   await assert.rejects(
@@ -291,7 +347,7 @@ test('discards corrupt bytes inside the original restore lock', async () => {
         lockHeld = true;
         try { return await operation(); } finally { lockHeld = false; }
       },
-      load: async () => stored({ imageSha256: 'c'.repeat(64) }),
+      load: async () => stored({ referencesSha256: 'c'.repeat(64) }),
       discardInvalid: async () => { discardedWhileLocked = lockHeld; },
       isCurrent: () => true,
       accepts: () => true,
@@ -302,7 +358,7 @@ test('discards corrupt bytes inside the original restore lock', async () => {
   assert.equal(discardedWhileLocked, true);
 });
 
-test('silently discards obsolete v1 through v5 scenes inside the restore lock', async () => {
+test('silently discards obsolete v1 through v6 scenes inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_v1',
     'mullet_stored_inline_scene_envelope_v1',
@@ -313,7 +369,9 @@ test('silently discards obsolete v1 through v5 scenes inside the restore lock', 
     'mullet_stored_inline_scene_v4',
     'mullet_stored_inline_scene_envelope_v4',
     'mullet_stored_inline_scene_v5',
-    'mullet_stored_inline_scene_envelope_v5'
+    'mullet_stored_inline_scene_envelope_v5',
+    'mullet_stored_inline_scene_v6',
+    'mullet_stored_inline_scene_envelope_v6'
   ]) {
     let lockHeld = false;
     let discardedWhileLocked = false;
