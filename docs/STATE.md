@@ -1,4 +1,4 @@
-QUEUE-ITEM: scene-clip-history (candidate passed; deploying) | STATE: every response keeps its own clip in the transcript; card-height fix served as 6b3b945 | SERVED-SHA: 6b3b945831ab9935a3a3bd6c5136995caa600fba | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on 963fa8f (scene clip per response kept in the transcript, restored on reload), verified over two turns | SERVED-SHA: 963fa8fc7b7260a4a9a9028f7c7ea742aea9a80a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -821,3 +821,12 @@ clips, both restored with zero generation requests, clip box 838x471. The check 
 been watching `.scene-card video` as a single element and hung for 900 s on the first
 card's src once a second card existed; every scene assertion now targets the newest card,
 and the reload assertion requires one clip per finalized response.
+
+Served 963fa8f at 07:11:08 CDT; two-turn check through the real origin, cabin as Jan
+(`scratch/browser-check/loop-963fa8f/`, 07:11-07:16): ok=true. Turn 1: label 2.8 s,
+portrait 8.8 s, caption 7.0 s, portrait loop 59.9 s, scene clip 112.9 s. Turn 2: response
+41.7 s, portrait 52.4 s, portrait loop 104.9 s, scene clip 156.0 s; Continuity current;
+after reload the transcript held both responses' clips, restored with zero generation
+requests; only the proxy-root favicon 502s. READY FOR OPERATOR.
+Also served earlier this morning: 6b3b945, the scene-card frame that fixed the collapsed
+card (served check ok at 06:52, `scratch/browser-check/loop-6b3b945/`).
