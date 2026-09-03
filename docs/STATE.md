@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: d65c792 served (LoRA on every solo scene); served two-turn check running | SERVED-SHA: d65c7925ba157d480fd43828160cdee7d3bfa35e | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on d65c792 (Krea for Jan/Kristi on every solo scene, stills on 8188 / H3 loops on 8189, chat-context fix), verified over two turns | SERVED-SHA: d65c7925ba157d480fd43828160cdee7d3bfa35e | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -632,3 +632,13 @@ continuity master: a multi-subject scene has no LoRA path in either family and u
 Qwen with the identity reference photos, as it always has. Solo scenes of Jan or Kristi use Krea on every turn
 now. Stacking two Krea LoRAs for a Jan+Kristi duo is possible in ComfyUI but is a
 quality call the operator has not made; not built.
+
+Served d65c792, two-turn check through the real origin, cabin scenario as Jan
+(`scratch/browser-check/loop-d65c792/`, 20:20 CDT): ok=true. Turn 1: label 2.8 s,
+portrait 18.5 s (15.2 s of Krea, cold because the previous run's trio scene had put Qwen
+on 8188), caption 6.9 s, scene still 42.9 s (3.6 s of Krea), portrait loop 62.9 s, scene
+loop 118.9 s. Turn 2: response 14.1 s, portrait 20.4 s (3.7 s of Krea, warm), scene still
+49.2 s (3.7 s of Krea: the second solo scene now stays on the LoRA), portrait loop
+65.2 s, scene loop 122.3 s; Continuity current; reload restored all four with zero
+requests. All four second-turn images and loops came from Krea and H3 on their own lanes.
+READY FOR OPERATOR.
