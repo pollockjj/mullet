@@ -1,4 +1,4 @@
-QUEUE-ITEM: chat-context fix + served check of the media layout | STATE: f212642 deploying; served check armed on the model server returning | SERVED-SHA: f57c7ef (media layout) -> f212642 pending | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: served check of the media layout + chat fix | STATE: f212642 served with stills on 8188 and H3 loops on 8189; check armed on hammerhead:1234 returning | SERVED-SHA: f212642b48a12a73fb66fc6e9a7a9a76a174cac1 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
