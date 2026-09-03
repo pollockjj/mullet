@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on f212642 (Krea for Jan/Kristi, stills on 8188 / H3 loops on 8189, chat-context fix), verified over two turns | SERVED-SHA: f212642b48a12a73fb66fc6e9a7a9a76a174cac1 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: LoRA subjects keep their LoRA on every scene | STATE: committed, candidate check chained; served f212642 READY FOR OPERATOR | SERVED-SHA: f212642b48a12a73fb66fc6e9a7a9a76a174cac1 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -612,3 +612,13 @@ still 93.4 s, scene loop 150.4 s; Continuity current on both turns; reload resto
 four with zero requests. Against the by-pipeline layout served this morning on the same
 scenario (portrait 8.6 s only when Krea happened to be resident, scene 64-96 s, portrait
 loop 72-76 s, scene loop 134-196 s), every item lands sooner. READY FOR OPERATOR.
+
+Found in the served two-turn check: the second scene of a turn sequence for a LoRA
+subject (Jan) was rendered by Qwen Image Edit with the first scene as Picture 1
+(mullet-inline-scene 401a046b on 8188, 29.2 s), because the cast driver only chose the
+LoRA path when no continuity master existed. That drops the trained Krea face on every
+scene after the first and pulls Qwen onto the stills lane, evicting Krea (the next
+portrait is cold again). Decision under the goal policy: a subject with a trained LoRA
+is rendered by that LoRA on every solo scene; the image master is not used for LoRA
+scenes (location continuity comes from the director's prompt and the caption clause).
+The operator can overrule if the Qwen-edited second scene is preferred.

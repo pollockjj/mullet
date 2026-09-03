@@ -1393,7 +1393,12 @@
     continuityMaster: InlineSceneContinuityMaster | null,
     stillMode: InlineSceneStillMode
   ): InlineSceneImageDriver {
-    if (cast.kind === 'solo' && !continuityMaster) {
+    // A subject with a trained LoRA is rendered by that LoRA on every solo scene, including
+    // the second scene in a location: the alternative (a Qwen edit of the previous scene
+    // as Picture 1) drops the trained face and evicts the still model from its lane.
+    // Location continuity for these scenes comes from the director's prompt and the
+    // caption clause, not from an image master.
+    if (cast.kind === 'solo') {
       const [identity] = cast.identities;
       const profile = profiles.find((candidate) => (
         candidate.id === identity.profileId
@@ -2402,6 +2407,11 @@
         }
       }
       const driver = inlineSceneDriverForCast(cast, selectedProfiles, continuityMaster, selectedStillMode);
+      if (driver.lora) {
+        // LoRA scenes take no image master (see inlineSceneDriverForCast).
+        continuityMaster = null;
+        continuityMasterImage = null;
+      }
       if (!inlineSceneDriverAvailable(selectedCapabilities, driver)) {
         const capability = selectedCapabilities.templates.find(
           ({ template }) => template.id === driver.modelTemplate
