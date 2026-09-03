@@ -1,4 +1,4 @@
-QUEUE-ITEM: LoRA subjects keep their LoRA on every scene | STATE: committed, candidate check chained; served f212642 READY FOR OPERATOR | SERVED-SHA: f212642b48a12a73fb66fc6e9a7a9a76a174cac1 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: d65c792 served (LoRA on every solo scene); served two-turn check running | SERVED-SHA: d65c7925ba157d480fd43828160cdee7d3bfa35e | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -622,3 +622,12 @@ portrait is cold again). Decision under the goal policy: a subject with a traine
 is rendered by that LoRA on every solo scene; the image master is not used for LoRA
 scenes (location continuity comes from the director's prompt and the caption clause).
 The operator can overrule if the Qwen-edited second scene is preferred.
+
+d65c792 candidate two-turn check (`scratch/browser-check/candidate-lora/`): ok=true;
+deployed at 20:19 CDT; rollback `scratch/deploy/rollback-f212642-before-d65c792.plist`.
+The second-turn scene in that run still went to Qwen (8f707fda, 35.1 s) because the
+director cast it as a duo (two visible subjects), not because of the continuity master:
+a multi-subject scene has no LoRA path in either family and uses Qwen with the identity
+reference photos, as it always has. Solo scenes of Jan or Kristi use Krea on every turn
+now. Stacking two Krea LoRAs for a Jan+Kristi duo is possible in ComfyUI but is a
+quality call the operator has not made; not built.
