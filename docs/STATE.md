@@ -718,3 +718,10 @@ still 102.9 s, scene loop 162.9 s; Continuity current; reload restored all four 
 requests; only the proxy-root favicon 502s. READY FOR OPERATOR for the chat parameters.
 Krea reference pack (three views per subject, 832x1024 / 640x1152) rendered on 8188 in
 5.5-7.9 s each except one 53 s cold reload; files in the session scratchpad.
+
+22:0x CDT, nine-reference probe (prompt a00de83f, own ID): the nine Krea references were
+uploaded to the loop lane's `mullet/identity/refpack/` in 1.0 s and one 1024x576, 73-frame,
+4-step clip from all nine rendered in 50.7 s of ComfyUI (`mullet/probe-r2v-9_00001_.mp4`,
+747 KB, sent to the operator). Reference count barely moves the cost at `match` size: the
+three-reference run was 61.4 s including the ref2va weight load. Decision (GOAL policy,
+operator proposal 21:05): the scene path becomes reference-to-video with no scene still.
