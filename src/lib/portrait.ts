@@ -674,7 +674,7 @@ export type Krea2TurboImageWorkflowSettings = {
   height: number;
   seed: number;
   lora: string | null;
-  filenamePrefix: 'mullet/portrait' | 'mullet/scene';
+  filenamePrefix: 'mullet/portrait' | 'mullet/scene' | 'mullet/refpack';
 };
 
 // The operator's own Krea graph: model-only LoRA, no sampling shift node, plain
@@ -690,7 +690,9 @@ export function buildKrea2TurboImageWorkflow(
     throw new Error(`Krea dimensions must be divisible by ${template.multiple}`);
   }
   if (settings.lora !== null && !isKreaLoraName(settings.lora)) throw new Error('Krea LoRA path is invalid');
-  if (settings.filenamePrefix !== 'mullet/portrait' && settings.filenamePrefix !== 'mullet/scene') {
+  if (settings.filenamePrefix !== 'mullet/portrait'
+    && settings.filenamePrefix !== 'mullet/scene'
+    && settings.filenamePrefix !== 'mullet/refpack') {
     throw new Error('Krea filename prefix is invalid');
   }
   const prompt = textField(settings.prompt, 'Krea prompt', 1, 2000);

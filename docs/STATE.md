@@ -1,4 +1,4 @@
-QUEUE-ITEM: h3-reference-scene (code complete in the working tree: v7 clip request, /api/scene/references, client without a still; candidate check queued behind the operator's 41-job Qwen batch on 8189) | STATE: 2c355e2 served, READY FOR OPERATOR | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: h3-reference-scene (candidate passed both turns; deploying) | STATE: reference-scene clip replaces the scene still; candidate ok at 23:09 CDT | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -743,3 +743,22 @@ keeps its own FL2V). The media panel's scene card shows only the clip. Browser c
 longer waits for a scene still and requires portrait image, portrait loop, and scene clip
 on reload. Expected cost per turn: ~5 s of Krea per new subject once, then ~50-60 s of H3
 per clip instead of still 37 s + loop 56 s.
+
+23:04-23:09 CDT, reference-scene candidate on 8782 (build of 1465fdb plus the working
+tree), cabin as Jan, two turns (`scratch/browser-check/cand-refscene/`): ok=true, no scene
+still anywhere in the run. Turn 1 (solo): label 1.8 s, portrait 6.1 s, caption 7.4 s,
+portrait loop 50.9 s, scene clip 101.9 s; the pack for Jan cost three Krea renders on 8188
+(5.5-6.2 s each) and the clip was 50.6 s of H3 with 3 references. Turn 2 (trio): response
+17.6 s, portrait 24.2 s, portrait loop 74.9 s, scene clip 145.8 s; six more renders for
+Kristi and Angela (5.5-7.8 s each) and one clip of 51.2 s with all 9 references. Continuity
+current; reload restored portrait, portrait loop and scene clip with zero generation
+requests; no 5xx. The delivered graph cites `<Picture 1..9>` bound to display names and
+loads `mullet/identity/refpack/<profile>-<view>-<fingerprint>.png`; the pack on the lane is
+the Krea LoRA output for each subject (verified by fetching one back).
+Against the served still path (2c355e2, same scenario): scene visible at 127 s turn 1 and
+163 s turn 2, so the clip is 25 s and 17 s earlier and drops one ComfyUI stage per turn.
+Defects found and fixed while building it: the scene-video route replied 413 without
+draining the request body, which reset the client's next keep-alive request (route test);
+the reference presence probe used HEAD, which ComfyUI does not answer consistently; the
+reference-pack module cached to disk, which the shared-tenancy rule forbids in a comfy-*
+module; and its cancel path did not match the single-prompt cancellation shape.

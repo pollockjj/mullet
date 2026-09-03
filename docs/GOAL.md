@@ -17,18 +17,20 @@ finalized response
   └─ [0] expression label          classifier, no canonical-chat write
      └─ [1] EXPRESSION STILL       ref: immutable identity portrait (Qwen Edit 4-step / Z-Image LoRA)
         └─ [2] EXPRESSION LOOP     FL2VA 4-step, first=last=the still, silent, 2 s, 576x1024
-        └─ [3] SCENE STILL         identity refs + this turn's still captioned into the prompt
-           └─ [4] SCENE MOTION     FL2VA 4-step loop of the accepted scene still, silent, 3 s, 1024x576
+        └─ [3] SCENE CLIP          Ref2VA 4-step from the cast's reference pack (up to nine
+                                   Krea pictures), this turn's caption in the prompt,
+                                   silent, 3 s, 1024x576. No scene still.
 ```
 
 Then two consecutive turns in one location hold identity, wardrobe, and setting.
 
 The consistency contract is the caption chain the operator ordered on 2026-09-01: the
 scenario's subject, attire and setting go into the expression prompt; the produced still
-is captioned; that caption, and nothing older, goes verbatim into this turn's scene still
-prompt and scene loop prompt. Whether the accepted still also helps as an extra image
-reference to the scene still is a candidate to pair-test under the decision policy, not
-part of the contract.
+is captioned; that caption, and nothing older, goes verbatim into this turn's scene clip
+prompt. Identity, wardrobe and body come from the cast's reference pack (operator order,
+2026-09-02): three Krea views per LoRA subject, or the identity photo for a
+reference-driven subject, prepared once on the loop lane and named after the subject's
+profile fingerprint, so every turn cites the same pictures as `<Picture N>`.
 
 Done is: the operator ran the served build, saw all five stages work, and said so.
 Nothing else is done. Deploy + browser check produces `READY FOR OPERATOR`, never `done`.
@@ -59,9 +61,12 @@ portrait's caption (operator-ordered chain).
 | [0] label | 4 s | classifier on the shared chat model |
 | [1] portrait | 9 s (Krea, cabin) / 27 s (Qwen, Blake) | 4 s of ComfyUI warm on 8188 now that no H3 runs there; Qwen edit is ~25 s of ComfyUI |
 | caption | 2-8 s round trip | vision call on the chat model |
-| [3] scene still | 36 s | waits for the caption, then 4 s of Krea warm on 8188 (0.5 MP) |
 | [2] portrait loop | 53 s | 56 frames, ~44 s of H3 warm on 8189 |
-| [4] scene loop | 110 s | 73 frames, ~73 s of H3, queued behind the portrait loop on 8189 |
+| [3] scene clip | 102 s first turn / 146 s with a new trio | 5-8 s of Krea per new reference view on 8188 (one time per subject), then ~51 s of H3 on 8189 behind the portrait loop |
+
+The scene clip replaced the scene still plus its loop on 2026-09-02: measured on the
+candidate, one 9-reference clip is 51 s of ComfyUI against 4 s of still plus 73 s of loop,
+and a repeat turn with the same cast renders no references at all.
 
 Measured 2026-09-02 20:04 on the served f212642 with stills on 8188 and H3 loops on
 8189, the layout the operator ordered benchmarked and that won every stage (table in

@@ -1,13 +1,19 @@
 import {
-  inlineSceneDimensionsForTemplate,
   inlineSceneImageRequestKey,
   normalizeInlineSceneImageRequest,
   type InlineSceneImageRequest,
   type InlineSceneModelTemplate
 } from './inline-scene.ts';
+import {
+  buildInlineSceneVideoRequest,
+  inlineSceneVideoReferencesSha256,
+  normalizeInlineSceneVideoReference,
+  type InlineSceneVideoReference
+} from './inline-scene-video.ts';
 
-export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v6' as const;
-export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v6' as const;
+// v7: the scene is a description plus the prepared reference set; there is no still.
+export const STORED_INLINE_SCENE_SPEC = 'mullet_stored_inline_scene_v7' as const;
+export const STORED_INLINE_SCENE_ENVELOPE_SPEC = 'mullet_stored_inline_scene_envelope_v7' as const;
 
 export class StoredInlineSceneIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -23,14 +29,9 @@ export type StoredInlineScene = {
   requestKey: string;
   request: InlineSceneImageRequest;
   modelTemplate: InlineSceneModelTemplate;
-  promptId: string;
-  seed: number;
-  width: number;
-  height: number;
   generatedAt: number;
-  imageSha256: string;
-  image: Blob;
-  continuityMasterImage: Blob | null;
+  references: InlineSceneVideoReference[];
+  referencesSha256: string;
 };
 
 type StoredInlineSceneEnvelope = {
@@ -65,6 +66,8 @@ const ACTIVE_SCENE_KEY = 'active-inline-scene';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const OBSOLETE_INLINE_SCENE_SPECS = new Set([
+  'mullet_stored_inline_scene_v6',
+  'mullet_stored_inline_scene_envelope_v6',
   'mullet_stored_inline_scene_v1',
   'mullet_stored_inline_scene_envelope_v1',
   'mullet_stored_inline_scene_v2',
@@ -102,29 +105,20 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
   if (value.modelTemplate !== request.modelTemplate) {
     throw new Error('stored inline-scene template is invalid');
   }
-  if (typeof value.promptId !== 'string' || !UUID_PATTERN.test(value.promptId)) throw new Error('stored inline-scene prompt ID is invalid');
-  const expected = inlineSceneDimensionsForTemplate(
-    request.modelTemplate,
-    request.aspectRatio,
-    request.megapixels
-  );
-  const width = safeInteger(value.width, 'stored inline-scene width', 16, 2048);
-  const height = safeInteger(value.height, 'stored inline-scene height', 16, 2048);
-  if (width !== expected.width || height !== expected.height) throw new Error('stored inline-scene dimensions are invalid');
-  if (typeof value.imageSha256 !== 'string' || !SHA256_PATTERN.test(value.imageSha256)) throw new Error('stored inline-scene image hash is invalid');
-  if (!(value.image instanceof Blob) || value.image.type !== 'image/png' || value.image.size < 24 || value.image.size > 20 * 1024 * 1024) {
-    throw new Error('stored inline-scene image is invalid');
+  if (!Array.isArray(value.references) || value.references.length < 1) throw new Error('stored inline-scene references are invalid');
+  const references = value.references.map((reference: unknown) => normalizeInlineSceneVideoReference(reference));
+  if (typeof value.referencesSha256 !== 'string' || !SHA256_PATTERN.test(value.referencesSha256)) {
+    throw new Error('stored inline-scene reference hash is invalid');
   }
-  const continuityMasterImage = value.continuityMasterImage;
-  if (request.continuityMaster) {
-    if (
-      !(continuityMasterImage instanceof Blob)
-      || continuityMasterImage.type !== 'image/png'
-      || continuityMasterImage.size < 24
-      || continuityMasterImage.size > 20 * 1024 * 1024
-    ) throw new Error('stored inline-scene continuity master image is invalid');
-  } else if (continuityMasterImage !== null) {
-    throw new Error('stored inline-scene has an unexpected continuity master image');
+  // The video request normalizer enforces that the references cover exactly the cast.
+  const videoRequest = buildInlineSceneVideoRequest({
+    conversationId: request.source.conversationId,
+    epoch: value.epoch,
+    request,
+    references
+  });
+  if (inlineSceneVideoReferencesSha256(videoRequest) !== value.referencesSha256) {
+    throw new Error('stored inline-scene reference hash does not match its references');
   }
   return {
     spec: STORED_INLINE_SCENE_SPEC,
@@ -133,14 +127,9 @@ export function normalizeStoredInlineScene(value: unknown): StoredInlineScene {
     requestKey,
     request,
     modelTemplate: request.modelTemplate,
-    promptId: value.promptId,
-    seed: safeInteger(value.seed, 'stored inline-scene seed', 0, Number.MAX_SAFE_INTEGER),
-    width,
-    height,
     generatedAt: safeInteger(value.generatedAt, 'stored inline-scene timestamp', 1, Number.MAX_SAFE_INTEGER),
-    imageSha256: value.imageSha256,
-    image: value.image,
-    continuityMasterImage: request.continuityMaster ? continuityMasterImage as Blob : null
+    references,
+    referencesSha256: value.referencesSha256
   };
 }
 
@@ -154,38 +143,9 @@ export function unwrapStoredInlineScene(value: unknown): unknown | null {
   return value.scene;
 }
 
-function validatePngHeader(bytes: Uint8Array, width: number, height: number): void {
-  if (
-    bytes.byteLength < 24
-    || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47
-    || bytes[4] !== 0x0d || bytes[5] !== 0x0a || bytes[6] !== 0x1a || bytes[7] !== 0x0a
-    || bytes[12] !== 0x49 || bytes[13] !== 0x48 || bytes[14] !== 0x44 || bytes[15] !== 0x52
-  ) throw new Error('stored inline-scene image has an invalid PNG header');
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint32(16, false) !== width || view.getUint32(20, false) !== height) {
-    throw new Error('stored inline-scene PNG dimensions are invalid');
-  }
-}
-
-async function blobSha256(blob: Blob): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 export async function verifyStoredInlineScene(value: unknown): Promise<StoredInlineScene> {
-  const scene = normalizeStoredInlineScene(value);
-  const bytes = new Uint8Array(await scene.image.arrayBuffer());
-  validatePngHeader(bytes, scene.width, scene.height);
-  if (await blobSha256(scene.image) !== scene.imageSha256) throw new Error('stored inline-scene image hash does not match its bytes');
-  if (scene.request.continuityMaster && scene.continuityMasterImage) {
-    const master = scene.request.continuityMaster;
-    const masterBytes = new Uint8Array(await scene.continuityMasterImage.arrayBuffer());
-    validatePngHeader(masterBytes, master.width, master.height);
-    if (await blobSha256(scene.continuityMasterImage) !== master.imageSha256) {
-      throw new Error('stored inline-scene continuity master hash does not match its bytes');
-    }
-  }
-  return scene;
+  // No bytes are stored with the scene any more; normalization is the whole verification.
+  return normalizeStoredInlineScene(value);
 }
 
 export async function runStoredInlineSceneExclusive<T>(operation: () => Promise<T>): Promise<T> {

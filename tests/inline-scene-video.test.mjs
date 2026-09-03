@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
@@ -8,14 +9,22 @@ import {
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
   createInlineSceneResult,
-  inlineSceneDimensions,
-  inlineSceneImageRequestKey,
-  inlineSceneSourceForScenarioOpening
+  inlineSceneImageRequestKey
 } from '../src/lib/inline-scene.ts';
 import {
+  INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
   INLINE_SCENE_VIDEO_DIMENSIONS,
   INLINE_SCENE_VIDEO_DURATION_SECONDS,
-  MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS,
+  INLINE_SCENE_VIDEO_FPS,
+  INLINE_SCENE_VIDEO_FRAMES,
+  INLINE_SCENE_VIDEO_MODE,
+  INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER,
+  INLINE_SCENE_VIDEO_REQUEST_SPEC,
+  INLINE_SCENE_VIDEO_TEMPLATE_ID,
+  INLINE_SCENE_VIDEO_TEMPLATES,
+  MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES,
+  MINIMAX_H3_REFERENCE_SCENE_TEMPLATE,
+  MINIMAX_H3_SCENE_DIMENSIONS,
   buildInlineSceneVideoPrompt,
   buildInlineSceneVideoRequest,
   buildInlineSceneVideoWorkflow,
@@ -23,8 +32,15 @@ import {
   inlineSceneVideoDecodeFailureTransition,
   inlineSceneVideoDimensions,
   inlineSceneVideoMasterToggleAction,
+  inlineSceneVideoOutputNode,
   inlineSceneVideoReconciliationAllowed,
+  inlineSceneVideoReferenceName,
+  inlineSceneVideoReferencesSha256,
   inlineSceneVideoRequestKey,
+  inlineSceneVideoSourceRequestSha256,
+  inlineSceneVideoTemplateAvailable,
+  normalizeInlineSceneVideoCapabilities,
+  normalizeInlineSceneVideoReference,
   normalizeInlineSceneVideoRequest,
   parseInlineSceneVideoIntegerHeader,
   parseInlineSceneVideoNumberHeader
@@ -32,7 +48,6 @@ import {
 
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const epoch = '11111111-1111-4111-8111-111111111111';
-const promptId = '22222222-2222-4222-8222-222222222222';
 const messages = [
   { role: 'user', content: 'What is happening on the flight deck?' },
   { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
@@ -65,15 +80,7 @@ const soloCast = Object.freeze({
       height: 600,
       aspectRatio: '2:3'
     },
-    bodyReferenceImage: {
-      name: 'jenna-stannis-body-v1.png',
-      subfolder: 'mullet/identity',
-      type: 'input',
-      sha256: '4'.repeat(64),
-      width: 512,
-      height: 768,
-      aspectRatio: '2:3'
-    }
+    bodyReferenceImage: null
   }]
 });
 const trioCandidates = Object.freeze([
@@ -107,17 +114,10 @@ const trioCast = Object.freeze({
       height: 600,
       aspectRatio: '2:3'
     },
-    bodyReferenceImage: {
-      name: `${candidate.id}-body.png`,
-      subfolder: 'mullet/identity',
-      type: 'input',
-      sha256: String(index + 4).repeat(64),
-      width: 512,
-      height: 768,
-      aspectRatio: '2:3'
-    }
+    bodyReferenceImage: null
   }))
 });
+const ALL_VIEWS = Object.freeze(['face', 'threequarter', 'fullbody', 'identity']);
 
 function castForCount(count) {
   const identities = trioCast.identities.slice(0, count);
@@ -127,34 +127,9 @@ function castForCount(count) {
   };
 }
 
-function continuityMasterFor(cast) {
-  return {
-    requestKey: `sha256:${'8'.repeat(64)}`,
-    promptId: '44444444-4444-4444-8444-444444444444',
-    seed: 41,
-    generatedAt: 123456788,
-    width: 1328,
-    height: 752,
-    imageSha256: '7'.repeat(64),
-    cast: cast.identities.map(({ profileId, profileFingerprint }) => ({ profileId, profileFingerprint }))
-  };
-}
-
-function priorMasterInput(master) {
-  return {
-    name: 'scene-motion-prior-55555555-5555-4555-8555-555555555555.png',
-    subfolder: 'mullet/motion-inputs',
-    type: 'input',
-    imageSha256: master.imageSha256,
-    width: master.width,
-    height: master.height
-  };
-}
-
-function staticScene(
+function sceneRequest(
   aspectRatio = '16:9',
-  megapixels = 1,
-  { candidates = [sceneCandidate], cast = soloCast, continuityMaster } = {}
+  { candidates = [sceneCandidate], cast = soloCast, megapixels = 1 } = {}
 ) {
   const sidecarRequest = buildInlineSceneRequest(
     conversationId,
@@ -164,99 +139,454 @@ function staticScene(
   );
   const result = createInlineSceneResult(sidecarRequest, 'gemma-4-ortenzya', {
     prompt,
-    subjectIds: candidates.map(({ id }) => id)
+    subjectIds: cast.identities.map(({ profileId }) => profileId)
   });
-  const usesQwen = cast.kind !== 'solo' || Boolean(continuityMaster);
-  const request = buildInlineSceneImageRequest(result, {
+  const usesQwen = cast.kind !== 'solo';
+  return buildInlineSceneImageRequest(result, {
     modelTemplate: usesQwen ? INLINE_SCENE_QWEN_TEMPLATE_ID : INLINE_SCENE_TEMPLATE_ID,
     cast,
-    ...(continuityMaster ? { continuityMaster } : {}),
     lora: usesQwen ? null : sceneLora,
     aspectRatio,
     megapixels
   });
-  const dimensions = inlineSceneDimensions(aspectRatio, megapixels);
-  return {
-    conversationId,
-    epoch,
-    requestKey: inlineSceneImageRequestKey(request),
-    request,
-    promptId,
-    seed: 42,
-    width: dimensions.width,
-    height: dimensions.height,
-    generatedAt: 123456789,
-    imageSha256: 'a'.repeat(64)
-  };
 }
 
-function openingStaticScene(aspectRatio = '16:9', megapixels = 1) {
-  const opening = [{
-    role: 'assistant',
-    content: 'Jenna steadies herself beside the Liberator flight console as the ship emerges from hyperspace.'
-  }];
-  const source = inlineSceneSourceForScenarioOpening(conversationId, opening, {
-    scenarioId: 'blakes-7-after-false-control',
-    scenarioVersion: '3.0',
-    starterId: 'jenna',
-    expectedGreeting: opening[0].content
-  });
-  const result = createInlineSceneResult({
-    spec: 'mullet_inline_scene_request_v3',
-    kind: 'inline_scene',
-    source,
-    turns: opening,
-    candidates: [sceneCandidate]
-  }, 'gemma-4-ortenzya', {
-    prompt,
-    subjectIds: [sceneCandidate.id]
-  });
-  const request = buildInlineSceneImageRequest(result, {
-    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
-    cast: soloCast,
-    lora: sceneLora,
-    aspectRatio,
-    megapixels
-  });
-  const dimensions = inlineSceneDimensions(aspectRatio, megapixels);
-  return {
-    conversationId,
-    epoch,
-    requestKey: inlineSceneImageRequestKey(request),
-    request,
-    promptId,
-    seed: 42,
-    width: dimensions.width,
-    height: dimensions.height,
-    generatedAt: 123456789,
-    imageSha256: 'a'.repeat(64)
-  };
+function fingerprintOf(profileId) {
+  const identity = trioCast.identities.find((entry) => entry.profileId === profileId);
+  if (!identity) throw new Error(`no fixture identity for ${profileId}`);
+  return identity.profileFingerprint;
 }
 
+// A prepared reference on the loop lane: named by profile, view, and the first sixteen
+// hex characters of the subject's profile fingerprint, exactly as /api/scene/references
+// names it. sha256 is the hash of the prepared PNG itself, which the name does not carry.
+function reference(profileId, view, salt = 0, profileFingerprint = fingerprintOf(profileId)) {
+  const sha256 = createHash('sha256').update(`${profileId}:${view}:${salt}`).digest('hex');
+  return { profileId, view, sha256, name: inlineSceneVideoReferenceName(profileId, view, profileFingerprint) };
+}
 
-test('binds scenario-opening identity into the motion request key', () => {
-  const completed = buildInlineSceneVideoRequest(staticScene());
-  const opening = buildInlineSceneVideoRequest(openingStaticScene());
-  assert.equal(opening.source.sceneRequest.source.sourceKind, 'scenario_opening');
-  assert.equal(opening.source.sceneRequest.source.scenarioId, 'blakes-7-after-false-control');
-  assert.equal(opening.source.sceneRequest.source.scenarioVersion, '3.0');
-  assert.equal(opening.source.sceneRequest.source.starterId, 'jenna');
-  assert.notEqual(inlineSceneVideoRequestKey(opening), inlineSceneVideoRequestKey(completed));
+function referencesFor(request, views = ['face', 'threequarter', 'fullbody']) {
+  return request.cast.identities.flatMap(({ profileId }) => views.map((view) => reference(profileId, view)));
+}
+
+function motionSource(request = sceneRequest(), references = referencesFor(request)) {
+  return { conversationId, epoch, request, references };
+}
+
+function duoScene() {
+  return sceneRequest('16:9', { candidates: trioCandidates, cast: castForCount(2) });
+}
+
+function trioScene(aspectRatio = '16:9') {
+  return sceneRequest(aspectRatio, { candidates: trioCandidates, cast: castForCount(3) });
+}
+
+test('builds a single reference-to-video request bound to the scene request and its cast references', () => {
+  const scene = sceneRequest();
+  const references = referencesFor(scene);
+  const request = buildInlineSceneVideoRequest({ conversationId, epoch, request: scene, references });
+  assert.equal(INLINE_SCENE_VIDEO_REQUEST_SPEC, 'mullet_inline_scene_video_request_v7');
+  assert.equal(request.spec, INLINE_SCENE_VIDEO_REQUEST_SPEC);
+  assert.equal(request.modelTemplate, 'minimax-h3-ref2va-scene-v1');
+  assert.equal(request.modelTemplate, INLINE_SCENE_VIDEO_TEMPLATE_ID);
+  assert.equal(request.mode, 'ref2v');
+  assert.equal(request.mode, INLINE_SCENE_VIDEO_MODE);
+  assert.equal(request.aspectRatio, '16:9');
+  assert.equal(request.durationSeconds, 3);
+  assert.equal(request.durationSeconds, INLINE_SCENE_VIDEO_DURATION_SECONDS);
+  assert.equal(request.source.conversationId, conversationId);
+  assert.equal(request.source.epoch, epoch);
+  assert.equal(request.source.sceneRequestKey, inlineSceneImageRequestKey(scene));
+  assert.deepEqual(request.source.sceneRequest, scene);
+  assert.deepEqual(request.source.references, references);
+  assert.notEqual(request.source.references, references);
+  assert.equal(request.source.references[0].name, `jenna-face-${'d'.repeat(16)}.png`);
+  assert.deepEqual(normalizeInlineSceneVideoRequest(request), request);
+  assert.deepEqual(normalizeInlineSceneVideoRequest(JSON.parse(JSON.stringify(request))), request);
+  assert.equal('sceneImageSha256' in request.source, false);
+  assert.equal('scenePromptId' in request.source, false);
+  assert.equal('priorMaster' in request.source, false);
+});
+
+test('offers exactly one scene-motion path: the MiniMax H3 reference clip', () => {
+  assert.deepEqual(INLINE_SCENE_VIDEO_TEMPLATES.map(({ id }) => id), ['minimax-h3-ref2va-scene-v1']);
+  const template = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE;
+  assert.equal(template.id, INLINE_SCENE_VIDEO_TEMPLATE_ID);
+  assert.equal(template.mode, 'ref2v');
+  assert.equal(template.modelFamily, 'minimax-h3-ref2va');
+  assert.equal(template.modelFiles.unet, 'minimax_h3_ref2va_pruned_int8_convrot.safetensors');
+  assert.equal(template.modelFiles.turboLora, 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors');
+  assert.equal(template.dimensions, MINIMAX_H3_SCENE_DIMENSIONS);
+  assert.equal(template.frames, 73);
+  assert.equal(template.frames, INLINE_SCENE_VIDEO_FRAMES);
+  assert.equal(template.durationSeconds, 3);
+  assert.equal(template.steps, 4);
+  assert.equal(template.outputNode, '15');
+  assert.equal(template.refImageSize, 'match');
+  assert.equal(MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES, 9);
+  assert.equal(INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER, 'mullet/identity/refpack');
+  assert.equal(INLINE_SCENE_VIDEO_FPS, 24);
+  assert.equal(template.requiredNodes.includes('MiniMaxH3ReferenceToVideo'), true);
+  assert.equal(template.requiredNodes.includes('MiniMaxH3ImageToVideo'), false);
+  const serialized = JSON.stringify(template);
+  assert.equal(serialized.includes('fl2v'), false);
+  assert.equal(serialized.includes('ltx'), false);
+  for (const { width, height } of MINIMAX_H3_SCENE_DIMENSIONS) {
+    assert.equal(width % template.multiple, 0);
+    assert.equal(height % template.multiple, 0);
+    assert.ok(width * height <= template.maxPixels);
+  }
+});
+
+test('derives clip dimensions per aspect ratio from the H3 scene table', () => {
+  for (const { aspectRatio, width, height } of MINIMAX_H3_SCENE_DIMENSIONS) {
+    assert.deepEqual(inlineSceneVideoDimensions(aspectRatio), { width, height, frames: 73, fps: 24 });
+  }
+  assert.deepEqual(inlineSceneVideoDimensions('16:9'), { width: 1024, height: 576, frames: 73, fps: 24 });
+  assert.deepEqual(inlineSceneVideoDimensions('3:2'), { width: 928, height: 640, frames: 73, fps: 24 });
+  assert.throws(() => inlineSceneVideoDimensions('9:16'), /aspect ratio/);
+  assert.throws(() => inlineSceneVideoDimensions('16:9', 'minimax-h3-fl2va-scene-loop-v1'), /model template/);
+  for (const scene of [sceneRequest('3:2'), sceneRequest('4:3'), sceneRequest('5:4')]) {
+    const request = buildInlineSceneVideoRequest(motionSource(scene));
+    assert.equal(request.aspectRatio, scene.aspectRatio);
+  }
+});
+
+test('request key carries the ordered reference names and the hashes cover the reference set', () => {
+  const scene = sceneRequest();
+  const references = referencesFor(scene);
+  const request = buildInlineSceneVideoRequest({ conversationId, epoch, request: scene, references });
+  const key = inlineSceneVideoRequestKey(request);
+  // The scene request key is itself unit-separated, so the clip key is compared whole.
+  assert.equal(key, [
+    conversationId,
+    epoch,
+    inlineSceneImageRequestKey(scene),
+    ...references.map(({ name }) => name),
+    'minimax-h3-ref2va-scene-v1',
+    'ref2v',
+    '16:9',
+    '3'
+  ].join('\u001f'));
+
+  const reordered = buildInlineSceneVideoRequest({ conversationId, epoch, request: scene, references: [...references].reverse() });
+  assert.notEqual(inlineSceneVideoRequestKey(reordered), key);
+  const fewer = buildInlineSceneVideoRequest({ conversationId, epoch, request: scene, references: references.slice(0, 1) });
+  assert.notEqual(inlineSceneVideoRequestKey(fewer), key);
+  const otherView = buildInlineSceneVideoRequest({
+    conversationId,
+    epoch,
+    request: scene,
+    references: [reference(sceneCandidate.id, 'identity'), ...references.slice(1)]
+  });
+  assert.notEqual(inlineSceneVideoRequestKey(otherView), key);
+
+  const expectedReferencesSha256 = createHash('sha256')
+    .update(references.map(({ sha256 }) => sha256).join('\n'))
+    .digest('hex');
+  assert.equal(inlineSceneVideoReferencesSha256(request), expectedReferencesSha256);
+  assert.equal(inlineSceneVideoReferencesSha256(normalizeInlineSceneVideoRequest(request)), expectedReferencesSha256);
+  assert.notEqual(inlineSceneVideoReferencesSha256(reordered), expectedReferencesSha256);
+  assert.notEqual(inlineSceneVideoReferencesSha256(fewer), expectedReferencesSha256);
+  // The same picture names with re-prepared bytes: the name-based key holds, the
+  // provenance hash over the image bytes moves.
+  const reprepared = buildInlineSceneVideoRequest({
+    conversationId,
+    epoch,
+    request: scene,
+    references: [reference(sceneCandidate.id, 'face', 1), ...references.slice(1)]
+  });
+  assert.notEqual(inlineSceneVideoReferencesSha256(reprepared), expectedReferencesSha256);
+  assert.equal(
+    inlineSceneVideoSourceRequestSha256(request),
+    createHash('sha256').update(inlineSceneImageRequestKey(scene)).digest('hex')
+  );
+  assert.equal(inlineSceneVideoSourceRequestSha256(reordered), inlineSceneVideoSourceRequestSha256(request));
+});
+
+test('normalizes a reference only when its name is derived from its profile, view, and subject fingerprint', () => {
+  const fingerprint = fingerprintOf('cally');
+  const good = reference('cally', 'threequarter');
+  assert.equal(good.name, `cally-threequarter-${'f'.repeat(16)}.png`);
+  assert.equal(inlineSceneVideoReferenceName('jenna-stannis', 'identity', '1234abcd'), 'jenna-stannis-identity-1234abcd.png');
+  assert.equal(inlineSceneVideoReferenceName('jenna-stannis', 'face', 'a'.repeat(64)), `jenna-stannis-face-${'a'.repeat(16)}.png`);
+  assert.deepEqual(normalizeInlineSceneVideoReference(good), good);
+  assert.deepEqual(normalizeInlineSceneVideoReference(good, fingerprint), good);
+  assert.deepEqual(normalizeInlineSceneVideoReference({ ...good, extra: 'ignored' }, fingerprint), good);
+  const short = { ...good, name: 'cally-threequarter-1234abcd.png' };
+  assert.deepEqual(normalizeInlineSceneVideoReference(short, '1234abcd'), short);
+  assert.throws(() => normalizeInlineSceneVideoReference(null), /reference is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference([good]), /reference is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference({ ...good, profileId: 'Cally' }), /profile is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference({ ...good, profileId: '-cally' }), /profile is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference({ ...good, profileId: 'c'.repeat(65) }), /profile is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference({ ...good, view: 'portrait' }), /view is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference({ ...good, sha256: good.sha256.toUpperCase() }), /hash is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoReference({ ...good, sha256: good.sha256.slice(0, 63) }), /hash is invalid/);
+  for (const name of [
+    `cally-face-${'f'.repeat(16)}.png`,
+    `jenna-threequarter-${'f'.repeat(16)}.png`,
+    `cally-threequarter-${'f'.repeat(17)}.png`,
+    `cally-threequarter-${'F'.repeat(16)}.png`,
+    'cally-threequarter-.png',
+    `cally-threequarter-${'f'.repeat(16)}.jpg`,
+    `../cally-threequarter-${'f'.repeat(16)}.png`,
+    `mullet/identity/refpack/${good.name}`,
+    'other',
+    ''
+  ]) {
+    assert.throws(() => normalizeInlineSceneVideoReference({ ...good, name }), /does not match its profile and view/);
+    assert.throws(() => normalizeInlineSceneVideoReference({ ...good, name }, fingerprint), /does not match its profile and view/);
+  }
+  assert.throws(() => normalizeInlineSceneVideoReference(good, fingerprintOf('jenna')), /does not match its subject fingerprint/);
   assert.throws(
-    () => normalizeInlineSceneVideoRequest({
-      ...opening,
-      source: {
-        ...opening.source,
-        sceneRequest: {
-          ...opening.source.sceneRequest,
-          source: { ...opening.source.sceneRequest.source, starterId: 'cally' }
-        }
-      }
-    }),
-    /source provenance/
+    () => normalizeInlineSceneVideoReference({ ...good, name: `cally-threequarter-${'f'.repeat(8)}.png` }, fingerprint),
+    /does not match its subject fingerprint/
+  );
+  assert.throws(
+    () => normalizeInlineSceneVideoReference({ ...good, name: `cally-threequarter-${'f'.repeat(15)}.png` }, fingerprint),
+    /does not match its subject fingerprint/
   );
 });
 
+test('rejects foreign, mis-fingerprinted, incomplete, duplicated, and over-count reference sets', () => {
+  const solo = sceneRequest();
+  const duo = duoScene();
+  const trio = trioScene('3:2');
+  const soloReferences = referencesFor(solo);
+  const build = (request, references) => buildInlineSceneVideoRequest({ conversationId, epoch, request, references });
+
+  assert.throws(
+    () => build(solo, [...soloReferences, reference('cally', 'face')]),
+    /does not belong to the scene cast/
+  );
+  assert.throws(
+    () => build(solo, [reference('cally', 'face')]),
+    /does not belong to the scene cast/
+  );
+  assert.throws(
+    () => build(solo, [{ ...soloReferences[0], profileId: 'kerr-avon' }]),
+    /does not belong to the scene cast/
+  );
+  assert.throws(
+    () => build(solo, [reference('jenna', 'face', 0, fingerprintOf('cally'))]),
+    /does not match its subject fingerprint/
+  );
+  assert.throws(
+    () => build(solo, [reference('jenna', 'face', 0, 'd'.repeat(8))]),
+    /does not match its subject fingerprint/
+  );
+  assert.throws(
+    () => build(duo, referencesFor(solo)),
+    /missing references for cally/
+  );
+  assert.throws(
+    () => build(duo, [reference('cally', 'identity')]),
+    /missing references for jenna/
+  );
+  assert.throws(
+    () => build(trio, referencesFor(duo)),
+    /missing references for servalan/
+  );
+  assert.throws(
+    () => build(solo, [soloReferences[0], soloReferences[0]]),
+    /references are duplicated/
+  );
+  assert.throws(
+    () => build(solo, [soloReferences[0], { ...soloReferences[0], sha256: 'a'.repeat(64) }]),
+    /references are duplicated/
+  );
+  assert.throws(
+    () => build(solo, [{ ...soloReferences[0], name: 'other' }]),
+    /does not match its profile and view/
+  );
+  assert.throws(() => build(solo, []), /between 1 and 9 references/);
+  assert.throws(() => build(solo, 'none'), /between 1 and 9 references/);
+  const ten = [...referencesFor(trio), reference('servalan', 'identity')];
+  assert.equal(ten.length, 10);
+  assert.throws(() => build(trio, ten), /between 1 and 9 references/);
+  assert.equal(build(trio, referencesFor(trio)).source.references.length, 9);
+  assert.deepEqual(build(solo, [soloReferences[0]]).source.references, [soloReferences[0]]);
+  const everyView = build(solo, referencesFor(solo, ALL_VIEWS));
+  assert.deepEqual(everyView.source.references.map(({ view }) => view), ALL_VIEWS);
+  const duoRequest = build(duo, referencesFor(duo, ['identity']));
+  assert.deepEqual(duoRequest.source.references.map(({ profileId }) => profileId), ['jenna', 'cally']);
+  const interleaved = build(duo, [reference('cally', 'face'), reference('jenna', 'face'), reference('cally', 'fullbody')]);
+  assert.deepEqual(interleaved.source.references.map(({ name }) => name), [
+    `cally-face-${'f'.repeat(16)}.png`,
+    `jenna-face-${'d'.repeat(16)}.png`,
+    `cally-fullbody-${'f'.repeat(16)}.png`
+  ]);
+});
+
+test('rejects provenance drift between the clip request and its scene', () => {
+  const request = buildInlineSceneVideoRequest(motionSource());
+  const withSource = (source) => ({ ...request, source: { ...request.source, ...source } });
+  assert.throws(() => normalizeInlineSceneVideoRequest(null), /must be an object/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, spec: 'mullet_inline_scene_video_request_v6' }), /request spec/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, modelTemplate: 'minimax-h3-fl2va-scene-loop-v1' }), /model template/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, mode: 'flf2v_loop' }), /mode/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, mode: 'ref2va' }), /mode/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, source: null }), /source is invalid/);
+  assert.throws(() => normalizeInlineSceneVideoRequest(withSource({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source provenance/);
+  assert.throws(() => normalizeInlineSceneVideoRequest(withSource({ epoch: 'not-a-uuid' })), /source provenance/);
+  assert.throws(() => normalizeInlineSceneVideoRequest(withSource({ sceneRequestKey: 'wrong' })), /source provenance/);
+  assert.throws(() => normalizeInlineSceneVideoRequest(withSource({ sceneRequest: { ...request.source.sceneRequest, prompt: prompt + ' Extra.' } })), /prompt hash|source provenance/);
+  assert.throws(() => normalizeInlineSceneVideoRequest(withSource({ sceneRequest: null })), /inline-scene image request spec/);
+  assert.throws(() => normalizeInlineSceneVideoRequest(withSource({ references: null })), /between 1 and 9 references/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, aspectRatio: '3:2' }), /aspect ratio does not match/);
+  assert.throws(() => normalizeInlineSceneVideoRequest({ ...request, durationSeconds: 5 }), /duration/);
+  assert.throws(() => buildInlineSceneVideoRequest({ ...motionSource(), epoch: '' }), /source provenance/);
+  assert.throws(
+    () => buildInlineSceneVideoRequest({ ...motionSource(), conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' }),
+    /source provenance/
+  );
+  // A cast whose fingerprint changed invalidates the references prepared for it.
+  const rekeyed = {
+    ...request.source.sceneRequest,
+    cast: {
+      kind: 'solo',
+      identities: [{ ...request.source.sceneRequest.cast.identities[0], profileFingerprint: 'a'.repeat(64) }]
+    }
+  };
+  assert.throws(
+    () => normalizeInlineSceneVideoRequest(withSource({ sceneRequest: rekeyed, sceneRequestKey: inlineSceneImageRequestKey(rekeyed) })),
+    /does not match its subject fingerprint/
+  );
+});
+
+test('binds every picture to its cast display name in connection order', () => {
+  const duo = duoScene();
+  const references = [
+    reference('jenna', 'face'),
+    reference('cally', 'identity'),
+    reference('jenna', 'fullbody')
+  ];
+  const request = buildInlineSceneVideoRequest({ conversationId, epoch, request: duo, references });
+  const bound = buildInlineSceneVideoPrompt(request);
+  assert.match(
+    bound,
+    /^Use the pictures for identity, hair, and clothing only: Jenna Stannis is the person in <Picture 1> face, <Picture 3> full body and clothing; Cally is the person in <Picture 2> identity\. /
+  );
+  assert.ok(bound.includes(duo.prompt));
+  assert.ok(bound.includes('Preserve every referenced identity exactly; no new people.'));
+  assert.ok(bound.includes('no talking, no lip or mouth movement'));
+  assert.ok(bound.includes(MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.promptGuide));
+  assert.ok(bound.endsWith('no black frames.'));
+  assert.equal(bound.includes('<Picture 4>'), false);
+  const solo = buildInlineSceneVideoRequest(motionSource());
+  const soloPrompt = buildInlineSceneVideoPrompt(solo);
+  assert.match(soloPrompt, /Jenna Stannis is the person in <Picture 1> face, <Picture 2> three-quarter view, <Picture 3> full body and clothing\./);
+  assert.equal(soloPrompt.includes('<Subject'), false);
+  assert.equal(soloPrompt.includes('prior scene master'), false);
+});
+
+test('submits one MiniMaxH3ReferenceToVideo graph loading the refpack pictures by name', () => {
+  const scene = sceneRequest();
+  const references = referencesFor(scene);
+  const request = buildInlineSceneVideoRequest({ conversationId, epoch, request: scene, references });
+  const graph = buildInlineSceneVideoWorkflow(request, 7);
+  const template = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE;
+  assert.deepEqual(
+    Object.keys(graph).sort((left, right) => Number(left) - Number(right)),
+    ['1', '2', '3', '4', '6', '7', '8', '9', '10', '11', '12', '14', '15', '16', '18', '20', '21', '22']
+  );
+  assert.equal(graph['1'].class_type, 'UNETLoader');
+  assert.equal(graph['1'].inputs.unet_name, template.modelFiles.unet);
+  assert.equal(graph['2'].inputs.clip_name, template.modelFiles.clip);
+  assert.equal(graph['2'].inputs.type, 'minimax');
+  assert.equal(graph['3'].inputs.vae_name, template.modelFiles.videoVae);
+  assert.equal(graph['4'].inputs.vae_name, template.modelFiles.audioVae);
+  const conditioning = graph['6'];
+  assert.equal(conditioning.class_type, 'MiniMaxH3ReferenceToVideo');
+  assert.deepEqual(conditioning.inputs.clip, ['2', 0]);
+  assert.deepEqual(conditioning.inputs.vae, ['3', 0]);
+  assert.deepEqual(conditioning.inputs.audio_vae, ['4', 0]);
+  assert.equal(conditioning.inputs.prompt, buildInlineSceneVideoPrompt(request));
+  assert.equal(conditioning.inputs.width, 1024);
+  assert.equal(conditioning.inputs.height, 576);
+  assert.equal(conditioning.inputs.length, 73);
+  assert.equal(conditioning.inputs.ref_image_size, 'match');
+  assert.deepEqual(conditioning.inputs.ref_images, {
+    ref_image_0: ['20', 0],
+    ref_image_1: ['21', 0],
+    ref_image_2: ['22', 0]
+  });
+  assert.equal(Object.keys(conditioning.inputs).some((key) => key.startsWith('ref_images.')), false);
+  references.forEach((entry, index) => {
+    const node = graph[String(20 + index)];
+    assert.equal(node.class_type, 'LoadImage');
+    assert.equal(node.inputs.image, `mullet/identity/refpack/${entry.name}`);
+  });
+  assert.equal(graph['20'].inputs.image, `mullet/identity/refpack/jenna-face-${'d'.repeat(16)}.png`);
+  assert.equal(Object.values(graph).filter(({ class_type }) => class_type === 'LoadImage').length, references.length);
+  assert.deepEqual(graph['7'].inputs, { model: ['18', 0], conditioning: ['6', 0] });
+  assert.equal(graph['8'].inputs.sampler_name, 'euler');
+  assert.deepEqual(graph['9'].inputs, { model: ['18', 0], scheduler: 'simple', steps: 4, denoise: 1 });
+  assert.equal(graph['10'].inputs.noise_seed, 7);
+  assert.deepEqual(graph['11'].inputs.latent_image, ['6', 1]);
+  assert.deepEqual(graph['12'].inputs, { samples: ['11', 0], vae: ['3', 0] });
+  assert.deepEqual(graph['14'].inputs, { images: ['12', 0], fps: 24 });
+  assert.deepEqual(graph['15'].inputs, {
+    video: ['14', 0],
+    filename_prefix: 'mullet/scene-motion-ref',
+    format: 'auto',
+    codec: 'auto'
+  });
+  assert.equal('audio' in graph['14'].inputs, false);
+  assert.deepEqual(graph['16'].inputs, { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 });
+  assert.deepEqual(graph['18'].inputs, { model: ['16', 0], shift_video: 6, shift_audio: 3 });
+  assert.equal(inlineSceneVideoOutputNode(request), '15');
+  const serialized = JSON.stringify(graph);
+  assert.equal(serialized.includes('motion-inputs'), false);
+  assert.equal(serialized.includes('fl2v'), false);
+  assert.equal(serialized.includes('MiniMaxH3ImageToVideo'), false);
+
+  const wide = buildInlineSceneVideoRequest(motionSource(sceneRequest('3:2')));
+  const wideGraph = buildInlineSceneVideoWorkflow(wide, 0);
+  assert.equal(wideGraph['6'].inputs.width, 928);
+  assert.equal(wideGraph['6'].inputs.height, 640);
+  assert.equal(wideGraph['10'].inputs.noise_seed, 0);
+  const trioGraph = buildInlineSceneVideoWorkflow(buildInlineSceneVideoRequest(motionSource(trioScene())), 1);
+  assert.deepEqual(Object.keys(trioGraph['6'].inputs.ref_images), Array.from({ length: 9 }, (_, index) => `ref_image_${index}`));
+  assert.equal(trioGraph['28'].class_type, 'LoadImage');
+  assert.equal(trioGraph['28'].inputs.image, `mullet/identity/refpack/servalan-fullbody-${'9'.repeat(16)}.png`);
+  assert.throws(() => buildInlineSceneVideoWorkflow(request, -1), /seed is invalid/);
+  assert.throws(() => buildInlineSceneVideoWorkflow(request, 1.5), /seed is invalid/);
+});
+
+test('normalizes the single-template capability report and its availability', () => {
+  const available = normalizeInlineSceneVideoCapabilities({
+    spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
+    templates: [{ template: { id: INLINE_SCENE_VIDEO_TEMPLATE_ID }, available: true, missing: [] }]
+  });
+  assert.equal(INLINE_SCENE_VIDEO_CAPABILITIES_SPEC, 'mullet_inline_scene_video_capabilities_v7');
+  assert.equal(available.templates.length, 1);
+  assert.equal(available.templates[0].template, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE);
+  assert.deepEqual(available.durations, [3]);
+  assert.equal(available.aspectRatios, INLINE_SCENE_VIDEO_DIMENSIONS);
+  assert.equal(inlineSceneVideoTemplateAvailable(available), true);
+  const degraded = normalizeInlineSceneVideoCapabilities({
+    spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
+    templates: [{
+      template: { id: INLINE_SCENE_VIDEO_TEMPLATE_ID },
+      available: false,
+      missing: ['node:MiniMaxH3ReferenceToVideo', 'node:MiniMaxH3ReferenceToVideo']
+    }]
+  });
+  assert.equal(inlineSceneVideoTemplateAvailable(degraded), false);
+  assert.deepEqual(degraded.templates[0].missing, ['node:MiniMaxH3ReferenceToVideo']);
+  assert.equal(inlineSceneVideoTemplateAvailable(null), false);
+  assert.throws(() => normalizeInlineSceneVideoCapabilities({
+    spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
+    templates: [{ template: { id: INLINE_SCENE_VIDEO_TEMPLATE_ID }, available: true, missing: ['x'] }]
+  }), /contradicts diagnostics/);
+  assert.throws(() => normalizeInlineSceneVideoCapabilities({
+    spec: INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
+    templates: [{ template: { id: 'minimax-h3-fl2va-scene-loop-v1' }, available: true, missing: [] }]
+  }), /template capability/);
+  assert.throws(() => normalizeInlineSceneVideoCapabilities({ spec: 'mullet_inline_scene_video_capabilities_v6', templates: [] }), /capabilities/);
+});
 
 test('blocks replacement generation until persisted motion restoration finishes', () => {
   const ready = {
@@ -280,7 +610,7 @@ test('blocks replacement generation until persisted motion restoration finishes'
 });
 
 test('maps teardown and decode failure to non-generating playback states', () => {
-  const request = buildInlineSceneVideoRequest(staticScene());
+  const request = buildInlineSceneVideoRequest(motionSource());
   assert.deepEqual(
     inlineSceneVideoDecodeFailureTransition(true, request),
     { action: 'ignore' }
@@ -325,7 +655,7 @@ test('rejects missing, empty, and non-canonical integer provenance headers', () 
 });
 
 test('accepts only a canonical finite encoded-duration header', () => {
-  const duration = 124 / 24;
+  const duration = 73 / 24;
   assert.equal(parseInlineSceneVideoNumberHeader(String(duration), 'x-mullet-duration-seconds', 0.001, 3_600), duration);
   for (const value of [null, '', ' 5', '05', '+5', '5.0', '.5', '5.', '5e0', 'NaN', 'Infinity']) {
     assert.throws(
@@ -336,7 +666,7 @@ test('accepts only a canonical finite encoded-duration header', () => {
 });
 
 test('reference scene graph nests the pictures under ref_images and names them in order', async () => {
-  const { buildMiniMaxH3ReferenceSceneWorkflow, buildMiniMaxH3ReferenceScenePrompt, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE } = await import('../src/lib/inline-scene-video.ts');
+  const { buildMiniMaxH3ReferenceSceneWorkflow, buildMiniMaxH3ReferenceScenePrompt } = await import('../src/lib/inline-scene-video.ts');
   const references = [
     { subject: 'Jan', view: 'face', image: 'mullet/identity/refpack/jan-pollock-face.png' },
     { subject: 'Jan', view: 'fullbody', image: 'mullet/identity/refpack/jan-pollock-fullbody.png' },
@@ -358,4 +688,3 @@ test('reference scene graph nests the pictures under ref_images and names them i
   assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1024, height: 576, frames: 72, fps: 24, seed: 7 }), /5 \+ 17k/);
   assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references: [{ subject: 'X', view: 'face', image: '../etc/passwd.png' }], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /mullet input namespace/);
 });
-

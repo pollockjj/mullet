@@ -1,25 +1,17 @@
 import {
   INLINE_SCENE_VIDEO_CAPABILITIES_SPEC,
   INLINE_SCENE_VIDEO_DIMENSIONS,
-  INLINE_SCENE_VIDEO_DURATION_SECONDS,
+  INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER,
   INLINE_SCENE_VIDEO_TEMPLATES,
-  MINIMAX_H3_SCENE_LOOP_TEMPLATE,
-  MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
+  MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES,
   buildInlineSceneVideoWorkflow,
-  isMiniMaxH3InlineSceneVideoTemplate,
   inlineSceneVideoDimensions,
   inlineSceneVideoOutputNode,
+  normalizeInlineSceneVideoRequest,
   type InlineSceneVideoCapabilities,
-  type InlineSceneVideoInputReference,
-  type InlineSceneVideoPriorMasterInput,
   type InlineSceneVideoRequest
 } from '../inline-scene-video.ts';
-import {
-  normalizeInlineSceneContinuityMaster,
-  type InlineSceneContinuityMaster
-} from '../inline-scene.ts';
-import { validateH264AacMp4, validateH264VideoOnlyMp4 } from '../mp4.ts';
-import { assertComfyIdentityReference } from './comfy-portrait.ts';
+import { validateH264VideoOnlyMp4 } from '../mp4.ts';
 import { trackPrompt, untrackPrompt } from './inflight.ts';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -183,7 +175,7 @@ export async function loadInlineSceneVideoCapabilities(
   };
 
   const unique = (items: readonly string[]): string[] => [...new Set(items)];
-  const minimaxCapabilities = [MINIMAX_H3_SCENE_LOOP_TEMPLATE].map((minimax) => {
+  const minimaxCapabilities = INLINE_SCENE_VIDEO_TEMPLATES.map((minimax) => {
     const minimaxMissing = minimax.requiredNodes
       .filter((nodeName) => !nodeAvailable(nodeName))
       .map((nodeName) => `node:${nodeName}`);
@@ -216,6 +208,16 @@ export async function loadInlineSceneVideoCapabilities(
         `video-codec:${minimax.codec}`
       ));
     }
+    if (nodeAvailable('MiniMaxH3ReferenceToVideo')) {
+      diagnostic(minimaxMissing, 'node-input:MiniMaxH3ReferenceToVideo.ref_images', () => requireExactAutogrowDefinition(
+        inputDefinition(info.MiniMaxH3ReferenceToVideo, 'MiniMaxH3ReferenceToVideo', 'optional', 'ref_images'),
+        'MiniMaxH3ReferenceToVideo',
+        'ref_images',
+        'ref_image_',
+        MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES
+      ));
+      optionDiagnostic(minimaxMissing, 'MiniMaxH3ReferenceToVideo', 'ref_image_size', minimax.refImageSize, `ref-image-size:${minimax.refImageSize}`);
+    }
     uploadDiagnostic(minimaxMissing);
     return {
       template: minimax,
@@ -234,106 +236,40 @@ export async function loadInlineSceneVideoCapabilities(
   };
 }
 
-export function validateInlineSceneVideoPng(bytes: Uint8Array, expectedWidth: number, expectedHeight: number): void {
-  if (
-    bytes.byteLength < 24
-    || bytes[0] !== 0x89
-    || bytes[1] !== 0x50
-    || bytes[2] !== 0x4e
-    || bytes[3] !== 0x47
-    || bytes[4] !== 0x0d
-    || bytes[5] !== 0x0a
-    || bytes[6] !== 0x1a
-    || bytes[7] !== 0x0a
-    || bytes[12] !== 0x49
-    || bytes[13] !== 0x48
-    || bytes[14] !== 0x44
-    || bytes[15] !== 0x52
-  ) throw new Error('inline-scene video input has an invalid PNG header');
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint32(16, false) !== expectedWidth || view.getUint32(20, false) !== expectedHeight) {
-    throw new Error('inline-scene video input dimensions do not match its static source');
+export class InlineSceneVideoReferenceMissingError extends Error {
+  constructor(name: string) {
+    super('inline-scene video reference is not prepared on the loop lane: ' + name);
+    this.name = 'InlineSceneVideoReferenceMissingError';
   }
 }
 
-export async function uploadInlineSceneVideoInput(
+// Every reference the request names must already sit on the loop lane's input namespace
+// (prepared by /api/scene/references). A missing one is a 409 upstream, never a silent
+// clip without that person.
+export async function assertInlineSceneVideoReferencesPresent(
   fetcher: Fetcher,
   baseUrl: string,
-  bytes: Uint8Array,
-  imageSha256: string,
+  request: InlineSceneVideoRequest,
   signal?: AbortSignal
-): Promise<InlineSceneVideoInputReference> {
-  if (!SHA256_PATTERN.test(imageSha256)) throw new Error('inline-scene video input hash is invalid');
-  if (await sha256InlineSceneVideoBytes(bytes) !== imageSha256) {
-    throw new Error('inline-scene video input hash does not match its bytes');
-  }
-  const name = 'scene-motion-' + globalThis.crypto.randomUUID() + '.png';
-  const subfolder = 'mullet/motion-inputs';
-  const form = new FormData();
-  form.append('image', new Blob([bytes.slice().buffer], { type: 'image/png' }), name);
-  form.append('subfolder', subfolder);
-  form.append('type', 'input');
-  form.append('overwrite', 'false');
-  const response = await fetcher(endpoint(baseUrl, '/upload/image'), { method: 'POST', body: form, signal });
-  const body = await responseJson(response, 'inline-scene video input upload');
-  if (!isRecord(body) || body.name !== name || body.subfolder !== subfolder || body.type !== 'input') {
-    throw new Error('ComfyUI returned an unexpected inline-scene video upload location');
-  }
-  return { name, subfolder, type: 'input', imageSha256 };
-}
-
-export async function validateInlineSceneVideoPriorMasterBytes(
-  bytes: Uint8Array,
-  master: InlineSceneContinuityMaster
 ): Promise<void> {
-  const normalized = normalizeInlineSceneContinuityMaster(master);
-  if (await sha256InlineSceneVideoBytes(bytes) !== normalized.imageSha256) {
-    throw new Error('inline-scene video prior master hash does not match its bytes');
+  const normalized = normalizeInlineSceneVideoRequest(request);
+  for (const reference of normalized.source.references) {
+    signal?.throwIfAborted();
+    const query = new URLSearchParams({ filename: reference.name, subfolder: INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER, type: 'input' });
+    // GET, not HEAD: ComfyUI's /view does not answer HEAD consistently. The body is
+    // dropped immediately, so nothing but the status is read.
+    const response = await fetcher(endpoint(baseUrl, '/view?' + query), { signal });
+    const present = response.ok;
+    // The body is read and dropped: only the status matters, but leaving it unread keeps
+    // the socket half-consumed.
+    await response.arrayBuffer().catch(() => undefined);
+    if (!present) throw new InlineSceneVideoReferenceMissingError(reference.name);
   }
-  try {
-    validateInlineSceneVideoPng(bytes, normalized.width, normalized.height);
-  } catch {
-    throw new Error('inline-scene video prior master dimensions do not match its bytes');
-  }
-}
-
-export async function uploadInlineSceneVideoPriorMasterInput(
-  fetcher: Fetcher,
-  baseUrl: string,
-  bytes: Uint8Array,
-  master: InlineSceneContinuityMaster,
-  signal?: AbortSignal
-): Promise<InlineSceneVideoPriorMasterInput> {
-  const normalized = normalizeInlineSceneContinuityMaster(master);
-  await validateInlineSceneVideoPriorMasterBytes(bytes, normalized);
-  const name = 'scene-motion-prior-' + globalThis.crypto.randomUUID() + '.png';
-  const subfolder = 'mullet/motion-inputs';
-  const form = new FormData();
-  form.append('image', new Blob([bytes.slice().buffer], { type: 'image/png' }), name);
-  form.append('subfolder', subfolder);
-  form.append('type', 'input');
-  form.append('overwrite', 'false');
-  const response = await fetcher(endpoint(baseUrl, '/upload/image'), { method: 'POST', body: form, signal });
-  const body = await responseJson(response, 'inline-scene video prior master upload');
-  if (!isRecord(body) || body.name !== name || body.subfolder !== subfolder || body.type !== 'input') {
-    throw new Error('ComfyUI returned an unexpected inline-scene video prior master upload location');
-  }
-  return {
-    name,
-    subfolder,
-    type: 'input',
-    imageSha256: normalized.imageSha256,
-    width: normalized.width,
-    height: normalized.height
-  };
 }
 
 function promptId(value: unknown): string {
   if (!isRecord(value) || typeof value.prompt_id !== 'string' || !UUID_PATTERN.test(value.prompt_id)) {
-    throw new Error('ComfyUI returned no inline-scene video prompt ID');
-  }
-  if (!isRecord(value.node_errors) || Object.keys(value.node_errors).length !== 0) {
-    throw new Error('ComfyUI rejected the inline-scene video graph');
+    throw new Error('ComfyUI returned an invalid inline-scene video prompt ID');
   }
   return value.prompt_id;
 }
@@ -375,9 +311,7 @@ function outputVideo(
     throw new Error('ComfyUI inline-scene video history did not mark the output animated');
   }
   const video = references[0];
-  const filenamePattern = request.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
-    ? /^scene-motion-loop_\d+_\.mp4$/
-    : /^scene-motion_\d+_\.mp4$/;
+  const filenamePattern = /^scene-motion-ref_\d+_\.mp4$/;
   if (typeof video.filename !== 'string' || !filenamePattern.test(video.filename)) {
     throw new Error('ComfyUI returned an unexpected inline-scene video filename');
   }
@@ -466,16 +400,14 @@ export async function runComfyInlineSceneVideo(
   fetcher: Fetcher,
   baseUrl: string,
   request: InlineSceneVideoRequest,
-  input: InlineSceneVideoInputReference,
   seed: number,
-  signal?: AbortSignal,
-  priorMasterInput?: InlineSceneVideoPriorMasterInput
+  signal?: AbortSignal
 ): Promise<ComfyInlineSceneVideo> {
-  const workflow = buildInlineSceneVideoWorkflow(request, input, seed, priorMasterInput);
+  const workflow = buildInlineSceneVideoWorkflow(request, seed);
   let id = '';
   let completed = false;
   try {
-    // The scene loop animates the accepted scene still and takes no identity references.
+    // The clip is conditioned on the prepared references named in the request; nothing is uploaded here.
     const queueResponse = await fetcher(endpoint(baseUrl, '/prompt'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -500,8 +432,6 @@ export async function runComfyInlineSceneVideo(
       frames: dimensions.frames,
       fps: dimensions.fps
     };
-    let durationSeconds: number;
-    let audioTracks: ComfyInlineSceneVideo['audioTracks'];
     if (contentType !== 'video/mp4') throw new Error('ComfyUI inline-scene video output is not MP4');
     if (
       bytes.byteLength < 12
@@ -510,13 +440,9 @@ export async function runComfyInlineSceneVideo(
       || bytes[6] !== 0x79
       || bytes[7] !== 0x70
     ) throw new Error('ComfyUI inline-scene video output has an invalid MP4 signature');
-    if (request.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
-      durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
-      audioTracks = 0;
-    } else {
-      durationSeconds = validateH264AacMp4(bytes, expected).durationSeconds;
-      audioTracks = 1;
-    }
+    // Video-only decode: the audio branch is not wired into the graph.
+    const durationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
+    const audioTracks: ComfyInlineSceneVideo['audioTracks'] = 0;
     completed = true;
     return {
       bytes,

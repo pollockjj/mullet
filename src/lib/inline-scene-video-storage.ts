@@ -1,17 +1,17 @@
 import {
   INLINE_SCENE_VIDEO_FPS,
-  MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
   inlineSceneVideoDimensions,
+  inlineSceneVideoReferencesSha256,
   inlineSceneVideoRequestKey,
   normalizeInlineSceneVideoRequest,
   type InlineSceneVideoMode,
   type InlineSceneVideoRequest,
   type InlineSceneVideoTemplateId
 } from './inline-scene-video.ts';
-import { validateH264AacMp4, validateH264VideoOnlyMp4 } from './mp4.ts';
+import { validateH264VideoOnlyMp4 } from './mp4.ts';
 
-export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v9' as const;
-export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v9' as const;
+export const STORED_INLINE_SCENE_VIDEO_SPEC = 'mullet_stored_inline_scene_video_v10' as const;
+export const STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC = 'mullet_stored_inline_scene_video_envelope_v10' as const;
 
 export class StoredInlineSceneVideoIntegrityError extends Error {
   constructor(cause: unknown) {
@@ -37,7 +37,8 @@ export type StoredInlineSceneVideo = {
   durationSeconds: number;
   audioTracks: 0 | 1;
   generatedAt: number;
-  inputImageSha256: string;
+  // Hash over the ordered reference set the clip was conditioned on.
+  referencesSha256: string;
   videoSha256: string;
   video: Blob;
 };
@@ -93,7 +94,9 @@ const OBSOLETE_INLINE_SCENE_VIDEO_SPECS = new Set([
   'mullet_stored_inline_scene_video_v7',
   'mullet_stored_inline_scene_video_envelope_v7',
   'mullet_stored_inline_scene_video_v8',
-  'mullet_stored_inline_scene_video_envelope_v8'
+  'mullet_stored_inline_scene_video_envelope_v8',
+  'mullet_stored_inline_scene_video_v9',
+  'mullet_stored_inline_scene_video_envelope_v9'
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -162,17 +165,17 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     expectedDurationSeconds,
     expectedDurationSeconds
   );
-  // The FL2VA loop is silent (its node has no audio path); Ref2VA carries native audio.
-  const expectedAudioTracks = request.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID ? 0 : 1;
+  // The clip is decoded video-only (the audio branch is not wired), so it is silent.
+  const expectedAudioTracks = 0;
   const audioTracks = safeInteger(
     value.audioTracks,
     'stored inline-scene video audio-track count',
     expectedAudioTracks,
     expectedAudioTracks
   ) as 0 | 1;
-  const inputImageSha256 = sha256(value.inputImageSha256, 'stored inline-scene video input hash');
-  if (inputImageSha256 !== request.source.sceneImageSha256) {
-    throw new Error('stored inline-scene video input hash does not match its request');
+  const referencesSha256 = sha256(value.referencesSha256, 'stored inline-scene video reference hash');
+  if (referencesSha256 !== inlineSceneVideoReferencesSha256(request)) {
+    throw new Error('stored inline-scene video reference hash does not match its request');
   }
   const videoSha256 = sha256(value.videoSha256, 'stored inline-scene video output hash');
   const expectedContentType = 'video/mp4';
@@ -200,7 +203,7 @@ export function normalizeStoredInlineSceneVideo(value: unknown): StoredInlineSce
     durationSeconds,
     audioTracks,
     generatedAt: safeInteger(value.generatedAt, 'stored inline-scene video timestamp', 1, Number.MAX_SAFE_INTEGER),
-    inputImageSha256,
+    referencesSha256,
     videoSha256,
     video: value.video
   };
@@ -236,18 +239,7 @@ export async function verifyStoredInlineSceneVideo(value: unknown): Promise<Stor
     frames: dimensions.frames,
     fps: dimensions.fps
   };
-  let encodedDurationSeconds: number;
-  if (video.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
-    encodedDurationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
-  } else {
-    if (
-      bytes[4] !== 0x66
-      || bytes[5] !== 0x74
-      || bytes[6] !== 0x79
-      || bytes[7] !== 0x70
-    ) throw new Error('stored inline-scene video has an invalid MP4 signature');
-    encodedDurationSeconds = validateH264AacMp4(bytes, expected).durationSeconds;
-  }
+  const encodedDurationSeconds = validateH264VideoOnlyMp4(bytes, expected).durationSeconds;
   if (encodedDurationSeconds !== video.durationSeconds) {
     throw new Error('stored inline-scene video encoded duration does not match its bytes');
   }

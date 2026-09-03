@@ -4,21 +4,21 @@ import test from 'node:test';
 
 import { transcriptSourceForMessages } from '../src/lib/transcript-source.ts';
 import {
+  INLINE_SCENE_QWEN_TEMPLATE_ID,
   INLINE_SCENE_TEMPLATE_ID,
   buildInlineSceneImageRequest,
   buildInlineSceneRequest,
-  createInlineSceneResult,
-  inlineSceneDimensions,
-  inlineSceneImageRequestKey,
-  inlineSceneSourceForScenarioOpening
+  createInlineSceneResult
 } from '../src/lib/inline-scene.ts';
 import {
+  INLINE_SCENE_VIDEO_TEMPLATE_ID,
   buildInlineSceneVideoRequest,
   inlineSceneVideoDecodeFailureTransition,
   inlineSceneVideoDimensions,
   inlineSceneVideoReconciliationAllowed,
-  inlineSceneVideoRequestKey,
-  MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
+  inlineSceneVideoReferenceName,
+  inlineSceneVideoReferencesSha256,
+  inlineSceneVideoRequestKey
 } from '../src/lib/inline-scene-video.ts';
 import {
   STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC,
@@ -32,11 +32,14 @@ import {
 } from '../src/lib/inline-scene-video-storage.ts';
 import { buildH264AacMp4Fixture } from './mp4-fixture.mjs';
 
-const loopMp4Bytes = buildH264AacMp4Fixture({ width: 1024, height: 576, frames: 73, includeAudio: false });
+const clipMp4Bytes = buildH264AacMp4Fixture({ width: 1024, height: 576, frames: 73, includeAudio: false });
 const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 const epoch = '11111111-1111-4111-8111-111111111111';
-const staticPromptId = '22222222-2222-4222-8222-222222222222';
 const motionPromptId = '33333333-3333-4333-8333-333333333333';
+const messages = [
+  { role: 'user', content: 'What is happening on the flight deck?' },
+  { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
+];
 const prompt = 'A damaged starship flight deck tilts sharply beneath Blake as he braces both hands against a glowing control console. Red warning lights rake across dark metal walls while loose equipment slides toward the lower side of the room. The wide camera frames Blake in the foreground, the main display and streaking stars behind him, with hard directional light, visible smoke, and a tense cinematic composition.';
 const sceneLora = Object.freeze({
   path: 'zimage/jenna6.safetensors',
@@ -49,83 +52,95 @@ const sceneCandidate = Object.freeze({
   aliases: ['Jenna', 'Jenna Stannis'],
   profileFingerprint: 'd'.repeat(64)
 });
-const soloCast = Object.freeze({
-  kind: 'solo',
-  identities: [{
-    profileId: sceneCandidate.id,
-    profileFingerprint: sceneCandidate.profileFingerprint,
-    displayName: sceneCandidate.displayName,
-    subject: 'Jenna Stannis',
-    referenceImage: {
-      name: 'jenna-stannis-v1.jpg',
-      subfolder: 'mullet/identity',
-      type: 'input',
-      sha256: 'e'.repeat(64),
-      width: 400,
-      height: 600,
-      aspectRatio: '2:3'
-    }
-  }]
+const callyCandidate = Object.freeze({
+  id: 'cally',
+  displayName: 'Cally',
+  aliases: ['Cally'],
+  profileFingerprint: 'f'.repeat(64)
 });
+const jennaIdentity = Object.freeze({
+  profileId: sceneCandidate.id,
+  profileFingerprint: sceneCandidate.profileFingerprint,
+  displayName: sceneCandidate.displayName,
+  subject: 'Jenna Stannis',
+  referenceImage: {
+    name: 'jenna-stannis-v1.jpg',
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: 'e'.repeat(64),
+    width: 400,
+    height: 600,
+    aspectRatio: '2:3'
+  },
+  bodyReferenceImage: null
+});
+const callyIdentity = Object.freeze({
+  profileId: callyCandidate.id,
+  profileFingerprint: callyCandidate.profileFingerprint,
+  displayName: callyCandidate.displayName,
+  subject: 'Cally',
+  referenceImage: {
+    name: 'cally-v2.jpg',
+    subfolder: 'mullet/identity',
+    type: 'input',
+    sha256: '5'.repeat(64),
+    width: 400,
+    height: 600,
+    aspectRatio: '2:3'
+  },
+  bodyReferenceImage: null
+});
+const soloCast = Object.freeze({ kind: 'solo', identities: [jennaIdentity] });
+const duoCast = Object.freeze({ kind: 'duo', identities: [jennaIdentity, callyIdentity] });
 
-function request(sourceKind = 'completed_turn', modelTemplate = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID) {
-  const messages = sourceKind === 'scenario_opening'
-    ? [{
-        role: 'assistant',
-        content: 'Jenna steadies herself beside the Liberator flight console as the ship emerges from hyperspace.'
-      }]
-    : [
-        { role: 'user', content: 'What is happening on the flight deck?' },
-        { role: 'assistant', content: 'Blake braces against the console as the Liberator pitches under fire.' }
-      ];
-  const sidecar = sourceKind === 'scenario_opening'
-    ? {
-        spec: 'mullet_inline_scene_request_v3',
-        kind: 'inline_scene',
-        source: inlineSceneSourceForScenarioOpening(conversationId, messages, {
-          scenarioId: 'blakes-7-after-false-control',
-          scenarioVersion: '3.0',
-          starterId: 'jenna',
-          expectedGreeting: messages[0].content
-        }),
-        turns: messages,
-        candidates: [sceneCandidate]
-      }
-    : buildInlineSceneRequest(
-        conversationId,
-        messages,
-        transcriptSourceForMessages(conversationId, messages),
-        [sceneCandidate]
-      );
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+// A prepared reference on the loop lane, named by profile, view, and the subject's
+// fingerprint; sha256 is the hash of the prepared PNG.
+function reference(identity, view, salt = 0) {
+  const digest = sha256(`${identity.profileId}:${view}:${salt}`);
+  return {
+    profileId: identity.profileId,
+    view,
+    sha256: digest,
+    name: inlineSceneVideoReferenceName(identity.profileId, view, identity.profileFingerprint)
+  };
+}
+
+function referencesFor(cast, views = ['face', 'threequarter', 'fullbody']) {
+  return cast.identities.flatMap((identity) => views.map((view) => reference(identity, view)));
+}
+
+function sceneRequest(cast = soloCast) {
+  const candidates = cast.identities.map(({ profileId }) => profileId === 'jenna' ? sceneCandidate : callyCandidate);
+  const sidecar = buildInlineSceneRequest(
+    conversationId,
+    messages,
+    transcriptSourceForMessages(conversationId, messages),
+    candidates
+  );
   const result = createInlineSceneResult(sidecar, 'gemma-4-ortenzya', {
     prompt,
-    subjectIds: [sceneCandidate.id]
+    subjectIds: cast.identities.map(({ profileId }) => profileId)
   });
-  const sceneRequest = buildInlineSceneImageRequest(result, {
-    modelTemplate: INLINE_SCENE_TEMPLATE_ID,
-    cast: soloCast,
-    lora: sceneLora,
+  return buildInlineSceneImageRequest(result, {
+    modelTemplate: cast.kind === 'solo' ? INLINE_SCENE_TEMPLATE_ID : INLINE_SCENE_QWEN_TEMPLATE_ID,
+    cast,
+    lora: cast.kind === 'solo' ? sceneLora : null,
     aspectRatio: '16:9',
     megapixels: 1
   });
-  const dimensions = inlineSceneDimensions('16:9', 1);
-  return buildInlineSceneVideoRequest({
-    conversationId,
-    epoch,
-    requestKey: inlineSceneImageRequestKey(sceneRequest),
-    request: sceneRequest,
-    promptId: staticPromptId,
-    seed: 42,
-    width: dimensions.width,
-    height: dimensions.height,
-    generatedAt: 17,
-    imageSha256: 'a'.repeat(64)
-  }, modelTemplate);
+}
+
+function request(cast = soloCast, references = referencesFor(cast)) {
+  return buildInlineSceneVideoRequest({ conversationId, epoch, request: sceneRequest(cast), references });
 }
 
 function stored(overrides = {}, motionRequest = request()) {
   const dimensions = inlineSceneVideoDimensions(motionRequest.aspectRatio, motionRequest.modelTemplate);
-  const bytes = loopMp4Bytes;
+  const bytes = clipMp4Bytes;
   return {
     spec: STORED_INLINE_SCENE_VIDEO_SPEC,
     conversationId,
@@ -143,53 +158,135 @@ function stored(overrides = {}, motionRequest = request()) {
     durationSeconds: 73 / 24,
     audioTracks: 0,
     generatedAt: 18,
-    inputImageSha256: 'a'.repeat(64),
-    videoSha256: createHash('sha256').update(bytes).digest('hex'),
+    referencesSha256: inlineSceneVideoReferencesSha256(motionRequest),
+    videoSha256: sha256(bytes),
     video: new Blob([bytes], { type: 'video/mp4' }),
     ...overrides
   };
 }
 
-test('normalizes and byte-verifies the default static-scene-bound silent H.264 MP4', async () => {
+test('normalizes and byte-verifies the reference-conditioned silent H.264 MP4', async () => {
   const normalized = normalizeStoredInlineSceneVideo(stored());
-  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v9');
-  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v9');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_SPEC, 'mullet_stored_inline_scene_video_v10');
+  assert.equal(STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, 'mullet_stored_inline_scene_video_envelope_v10');
   assert.equal(normalized.requestKey, inlineSceneVideoRequestKey(normalized.request));
-  assert.equal((await verifyStoredInlineSceneVideo(normalized)).video.type, 'video/mp4');
+  assert.equal(normalized.modelTemplate, INLINE_SCENE_VIDEO_TEMPLATE_ID);
+  assert.equal(normalized.mode, 'ref2v');
+  assert.equal(normalized.width, 1024);
+  assert.equal(normalized.height, 576);
+  assert.equal(normalized.frames, 73);
+  assert.equal(normalized.fps, 24);
+  assert.equal(normalized.durationSeconds, 73 / 24);
   assert.equal(normalized.audioTracks, 0);
-  assert.equal(normalized.request.source.scenePromptId, staticPromptId);
+  const expectedReferencesSha256 = sha256(normalized.request.source.references.map((entry) => entry.sha256).join('\n'));
+  assert.equal(normalized.referencesSha256, expectedReferencesSha256);
+  assert.deepEqual(normalized.request.source.references.map(({ name }) => name), [
+    `jenna-face-${'d'.repeat(16)}.png`,
+    `jenna-threequarter-${'d'.repeat(16)}.png`,
+    `jenna-fullbody-${'d'.repeat(16)}.png`
+  ]);
+  assert.equal('inputImageSha256' in normalized, false);
+  assert.equal('scenePromptId' in normalized.request.source, false);
+  assert.equal('sceneImageSha256' in normalized.request.source, false);
+  const verified = await verifyStoredInlineSceneVideo(normalized);
+  assert.equal(verified.video.type, 'video/mp4');
+  assert.equal(verified.videoSha256, sha256(clipMp4Bytes));
 });
 
-
-test('preserves scenario-opening identity through motion persistence', async () => {
-  const completed = stored();
-  const opening = normalizeStoredInlineSceneVideo(stored({}, request('scenario_opening')));
-  assert.equal(opening.request.source.sceneRequest.source.sourceKind, 'scenario_opening');
-  assert.equal(opening.request.source.sceneRequest.source.scenarioId, 'blakes-7-after-false-control');
-  assert.equal(opening.request.source.sceneRequest.source.scenarioVersion, '3.0');
-  assert.equal(opening.request.source.sceneRequest.source.starterId, 'jenna');
-  assert.notEqual(opening.requestKey, completed.requestKey);
-  await verifyStoredInlineSceneVideo(opening);
+test('persists a duo cast whose every member has at least one prepared reference', async () => {
+  const duoRequest = request(duoCast, [reference(callyIdentity, 'identity'), reference(jennaIdentity, 'face')]);
+  const normalized = normalizeStoredInlineSceneVideo(stored({}, duoRequest));
+  assert.equal(normalized.request.source.sceneRequest.cast.kind, 'duo');
+  assert.deepEqual(normalized.request.source.references.map(({ profileId }) => profileId), ['cally', 'jenna']);
+  assert.equal(normalized.referencesSha256, inlineSceneVideoReferencesSha256(duoRequest));
+  assert.notEqual(normalized.requestKey, inlineSceneVideoRequestKey(request()));
+  await verifyStoredInlineSceneVideo(normalized);
 });
 
-test('rejects mismatched source, key, dimensions, timing, hashes, and blobs', async () => {
+test('rejects mismatched source, key, template, timing, hashes, references, and blobs', async () => {
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ spec: 'mullet_stored_inline_scene_video_v9' })), /invalid stored inline-scene video/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ conversationId: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ epoch: '748b08b7-20bb-4138-a402-0188cc04d2ea' })), /source is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ requestKey: 'wrong' })), /request key is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ modelTemplate: 'minimax-h3-fl2va-scene-loop-v1' })), /template is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ mode: 'flf2v_loop' })), /mode is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ promptId: 'not-a-uuid' })), /prompt ID is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ width: 512 })), /dimensions are invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ height: 768 })), /dimensions are invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ frames: 48 })), /timing is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ fps: 30 })), /timing is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ durationSeconds: Number.NaN })), /encoded duration is invalid/);
-  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ inputImageSha256: 'c'.repeat(64) })), /does not match/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ durationSeconds: 3 })), /encoded duration is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ audioTracks: 1 })), /audio-track count is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ referencesSha256: 'c'.repeat(64) })), /reference hash does not match its request/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ referencesSha256: undefined })), /reference hash is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ referencesSha256: 'C'.repeat(64) })), /reference hash is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ generatedAt: 0 })), /timestamp is invalid/);
   assert.throws(() => normalizeStoredInlineSceneVideo(stored({ video: new Blob(['no'], { type: 'text/plain' }) })), /video is invalid/);
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({ video: new Blob([clipMp4Bytes], { type: 'video/webm' }) })), /video is invalid/);
+
+  // The stored request is re-validated: references must belong to and cover the cast.
+  const valid = request();
+  const foreign = {
+    ...valid,
+    source: { ...valid.source, references: [...valid.source.references, reference(callyIdentity, 'face')] }
+  };
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({}, foreign)), /does not belong to the scene cast/);
+  const duoRequest = request(duoCast);
+  const incomplete = {
+    ...duoRequest,
+    source: { ...duoRequest.source, references: duoRequest.source.references.filter(({ profileId }) => profileId === 'jenna') }
+  };
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({}, incomplete)), /missing references for cally/);
+  const misnamed = {
+    ...valid,
+    source: {
+      ...valid.source,
+      references: [{ ...valid.source.references[0], name: inlineSceneVideoReferenceName('jenna', 'face', 'a'.repeat(64)) }]
+    }
+  };
+  assert.throws(() => normalizeStoredInlineSceneVideo(stored({}, misnamed)), /does not match its subject fingerprint/);
+  const rehashed = {
+    ...valid,
+    source: { ...valid.source, references: [{ ...valid.source.references[0], sha256: 'a'.repeat(64) }, ...valid.source.references.slice(1)] }
+  };
+  assert.throws(
+    () => normalizeStoredInlineSceneVideo(stored({ referencesSha256: inlineSceneVideoReferencesSha256(valid) }, rehashed)),
+    /reference hash does not match its request/
+  );
+
   await assert.rejects(verifyStoredInlineSceneVideo(stored({ videoSha256: 'd'.repeat(64) })), /hash does not match/);
-  await assert.rejects(verifyStoredInlineSceneVideo(stored({ durationSeconds: 5.0398 })), /encoded duration/);
-  const wrongSizeBytes = buildH264AacMp4Fixture({ width: 640, height: 768, frames: 121, includeAudio: false });
+  const wrongSizeBytes = buildH264AacMp4Fixture({ width: 640, height: 768, frames: 73, includeAudio: false });
   await assert.rejects(
     verifyStoredInlineSceneVideo(stored({
       video: new Blob([wrongSizeBytes], { type: 'video/mp4' }),
-      videoSha256: createHash('sha256').update(wrongSizeBytes).digest('hex')
+      videoSha256: sha256(wrongSizeBytes)
     })),
     /dimensions/
+  );
+  const wrongLengthBytes = buildH264AacMp4Fixture({ width: 1024, height: 576, frames: 49, includeAudio: false });
+  await assert.rejects(
+    verifyStoredInlineSceneVideo(stored({
+      video: new Blob([wrongLengthBytes], { type: 'video/mp4' }),
+      videoSha256: sha256(wrongLengthBytes)
+    })),
+    /frame count/
+  );
+  const audioBearingBytes = buildH264AacMp4Fixture({ width: 1024, height: 576, frames: 73 });
+  await assert.rejects(
+    verifyStoredInlineSceneVideo(stored({
+      video: new Blob([audioBearingBytes], { type: 'video/mp4' }),
+      videoSha256: sha256(audioBearingBytes)
+    })),
+    /audio track/
+  );
+  const slowBytes = buildH264AacMp4Fixture({ width: 1024, height: 576, frames: 73, fps: 12, includeAudio: false });
+  await assert.rejects(
+    verifyStoredInlineSceneVideo(stored({
+      video: new Blob([slowBytes], { type: 'video/mp4' }),
+      videoSha256: sha256(slowBytes)
+    })),
+    /encoded duration does not match its bytes/
   );
 });
 
@@ -201,8 +298,13 @@ test('unwraps writer envelopes and rejects malformed ownership', () => {
     writeId: 'writer-a',
     video: value
   }), value);
+  assert.equal(unwrapStoredInlineSceneVideo(null), null);
   assert.throws(
     () => unwrapStoredInlineSceneVideo({ spec: STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, writeId: '' }),
+    /envelope is invalid/
+  );
+  assert.throws(
+    () => unwrapStoredInlineSceneVideo({ spec: STORED_INLINE_SCENE_VIDEO_ENVELOPE_SPEC, writeId: 'writer-a' }),
     /envelope is invalid/
   );
 });
@@ -226,30 +328,74 @@ test('rolls back a write that becomes stale before installation', async () => {
   assert.equal(rolledBack, 'writer-a');
 });
 
-test('discards corrupt motion inside its restore lock without touching static state', async () => {
+test('commits only a byte-verified clip and installs it before releasing the lock', async () => {
   let lockHeld = false;
-  let discardedInsideLock = false;
-  let staticScenePresent = true;
+  let installedWhileLocked = false;
+  let saved = null;
+  const result = await commitStoredInlineSceneVideo(stored(), {
+    exclusive: async (operation) => {
+      lockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        lockHeld = false;
+      }
+    },
+    save: async (video) => {
+      saved = video;
+      return { writeId: 'writer-b', previousRaw: null };
+    },
+    isCurrent: () => true,
+    rollback: async () => assert.fail('verified write rolled back'),
+    install: () => { installedWhileLocked = lockHeld; }
+  });
+  assert.equal(result, true);
+  assert.equal(installedWhileLocked, true);
+  assert.equal(saved?.referencesSha256, inlineSceneVideoReferencesSha256(request()));
+  let saves = 0;
   await assert.rejects(
-    restoreStoredInlineSceneVideo({
-      exclusive: async (operation) => {
-        lockHeld = true;
-        try {
-          return await operation();
-        } finally {
-          lockHeld = false;
-        }
-      },
-      load: async () => stored({ videoSha256: 'd'.repeat(64) }),
-      discardInvalid: async () => { discardedInsideLock = lockHeld; },
+    commitStoredInlineSceneVideo(stored({ referencesSha256: 'c'.repeat(64) }), {
+      exclusive: async (operation) => operation(),
+      save: async () => { saves += 1; return { writeId: 'writer-c', previousRaw: null }; },
       isCurrent: () => true,
-      accepts: () => true,
-      install: () => assert.fail('corrupt motion installed')
+      rollback: async () => {},
+      install: () => assert.fail('unverified clip installed')
     }),
-    StoredInlineSceneVideoIntegrityError
+    /reference hash does not match/
   );
-  assert.equal(discardedInsideLock, true);
-  assert.equal(staticScenePresent, true);
+  assert.equal(saves, 0);
+});
+
+test('discards corrupt motion inside its restore lock without touching static state', async () => {
+  for (const corrupt of [
+    stored({ videoSha256: 'd'.repeat(64) }),
+    stored({ referencesSha256: 'd'.repeat(64) }),
+    stored({ audioTracks: 1 })
+  ]) {
+    let lockHeld = false;
+    let discardedInsideLock = false;
+    let staticScenePresent = true;
+    await assert.rejects(
+      restoreStoredInlineSceneVideo({
+        exclusive: async (operation) => {
+          lockHeld = true;
+          try {
+            return await operation();
+          } finally {
+            lockHeld = false;
+          }
+        },
+        load: async () => corrupt,
+        discardInvalid: async () => { discardedInsideLock = lockHeld; },
+        isCurrent: () => true,
+        accepts: () => true,
+        install: () => assert.fail('corrupt motion installed')
+      }),
+      StoredInlineSceneVideoIntegrityError
+    );
+    assert.equal(discardedInsideLock, true);
+    assert.equal(staticScenePresent, true);
+  }
 });
 
 test('discards a malformed writer envelope inside its restore lock', async () => {
@@ -280,7 +426,7 @@ test('discards a malformed writer envelope inside its restore lock', async () =>
   assert.equal(discardedInsideLock, true);
 });
 
-test('silently discards obsolete v1 through v8 motion inside the restore lock', async () => {
+test('silently discards obsolete v1 through v9 motion inside the restore lock', async () => {
   for (const spec of [
     'mullet_stored_inline_scene_video_v1',
     'mullet_stored_inline_scene_video_envelope_v1',
@@ -297,7 +443,9 @@ test('silently discards obsolete v1 through v8 motion inside the restore lock', 
     'mullet_stored_inline_scene_video_v7',
     'mullet_stored_inline_scene_video_envelope_v7',
     'mullet_stored_inline_scene_video_v8',
-    'mullet_stored_inline_scene_video_envelope_v8'
+    'mullet_stored_inline_scene_video_envelope_v8',
+    'mullet_stored_inline_scene_video_v9',
+    'mullet_stored_inline_scene_video_envelope_v9'
   ]) {
     let lockHeld = false;
     let discardedInsideLock = false;
@@ -319,6 +467,23 @@ test('silently discards obsolete v1 through v8 motion inside the restore lock', 
     assert.equal(restored, null);
     assert.equal(discardedInsideLock, true);
   }
+  // A v9 record that still looks complete (it carried the still's hash) is discarded on
+  // spec alone, without an integrity error.
+  let discarded = 0;
+  const staleRecord = await restoreStoredInlineSceneVideo({
+    exclusive: async (operation) => operation(),
+    load: async () => ({
+      spec: 'mullet_stored_inline_scene_video_envelope_v9',
+      writeId: 'writer-a',
+      video: { ...stored(), spec: 'mullet_stored_inline_scene_video_v9', inputImageSha256: 'a'.repeat(64) }
+    }),
+    discardInvalid: async () => { discarded += 1; },
+    isCurrent: () => true,
+    accepts: () => true,
+    install: () => assert.fail('v9 motion installed')
+  });
+  assert.equal(staleRecord, null);
+  assert.equal(discarded, 1);
 });
 
 test('restores only accepted current motion and installs before releasing the lock', async () => {
@@ -339,8 +504,22 @@ test('restores only accepted current motion and installs before releasing the lo
     accepts: (video) => video.epoch === epoch,
     install: () => { installedWhileLocked = lockHeld; }
   });
-  assert.equal(restored?.request.source.scenePromptId, staticPromptId);
+  assert.equal(restored?.promptId, motionPromptId);
+  assert.equal(restored?.referencesSha256, inlineSceneVideoReferencesSha256(request()));
+  assert.equal(restored?.request.mode, 'ref2v');
   assert.equal(installedWhileLocked, true);
+
+  let installed = false;
+  const rejected = await restoreStoredInlineSceneVideo({
+    exclusive: async (operation) => operation(),
+    load: async () => stored(),
+    discardInvalid: async () => assert.fail('valid rejected motion discarded'),
+    isCurrent: () => true,
+    accepts: () => false,
+    install: () => { installed = true; }
+  });
+  assert.equal(rejected, null);
+  assert.equal(installed, false);
 });
 
 test('verified persisted motion remains restorable across a playback fallback and page reload', async () => {
@@ -394,5 +573,5 @@ test('verified persisted motion remains restorable across a playback fallback an
   assert.equal(discarded, 0);
   assert.equal(replacementPosts, 0);
   assert.equal(persisted.video.promptId, motionPromptId);
-  assert.equal(persisted.video.videoSha256, createHash('sha256').update(loopMp4Bytes).digest('hex'));
+  assert.equal(persisted.video.videoSha256, sha256(clipMp4Bytes));
 });

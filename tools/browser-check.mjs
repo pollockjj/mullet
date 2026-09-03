@@ -6,13 +6,14 @@
 // Modes:
 //   (none)               load, select scenario/starter, read the panels, screenshot
 //   --generate portrait  click "Generate portrait" and time click-to-visible
-//   --generate loop      the whole five-stage loop from the starter click: label,
-//                        portrait, caption, portrait motion, scene still, scene motion,
-//                        then reload the page in the same profile and prove that every
-//                        media item comes back from storage without a new generation
-//   --generate scene     (legacy) scene still + scene motion only
-//   --turn "text"        after the first loop lands, send one chat turn and time the five
-//                        stages again from the send click (two consecutive scenes)
+//   --generate loop      the whole loop from the starter click: label, portrait, caption,
+//                        portrait motion, scene clip (a single reference-to-video clip in
+//                        the scene card; there is no scene still any more), then reload
+//                        the page in the same profile and prove that every media item
+//                        comes back from storage without a new generation
+//   --generate scene     (legacy) scene clip only
+//   --turn "text"        after the first loop lands, send one chat turn and time the
+//                        stages again from the send click (two consecutive scene clips)
 //   --storage key=value  set a localStorage entry (repeatable) before the app mounts, e.g.
 //                        --storage mullet.inline-scene-megapixels=0.5 to pair a setting
 //                        that has no UI control any more
@@ -331,7 +332,8 @@ async function main() {
         record.loop.expression = await page.evaluate(EXPRESSION_LABEL);
       }
       // [1]-[4] arrive in whatever order the lanes allow, so every stage is watched at
-      // once and each records the moment it actually appeared.
+      // once and each records the moment it actually appeared. The scene stage is the
+      // clip itself: the scene card carries only <video class="scene-motion">.
       const captionWatch = (async () => {
         const captionDeadline = Date.now() + 400_000;
         while (Date.now() < captionDeadline) {
@@ -350,7 +352,6 @@ async function main() {
         waitStage(page, record, 'portraitVisibleMs', PORTRAIT_IMAGE, { timeoutMs: 360_000, pollMs: 250, since }),
         captionWatch,
         waitStage(page, record, 'portraitMotionMs', PORTRAIT_VIDEO, { timeoutMs: 400_000, pollMs: 1_000, since }),
-        waitStage(page, record, 'sceneStillMs', SCENE_IMAGE, { timeoutMs: 400_000, pollMs: 1_000, since }),
         waitStage(page, record, 'sceneMotionMs', SCENE_VIDEO, { timeoutMs: 900_000, pollMs: 2_000, since })
       ]);
 
@@ -372,7 +373,6 @@ async function main() {
         record.turn = {};
         const previous = await page.evaluate(`(() => ({
           portrait: document.querySelector('.portrait img')?.src ?? '',
-          scene: document.querySelector('.scene-card img')?.src ?? '',
           sceneVideo: document.querySelector('.scene-card video')?.currentSrc ?? ''
         }))()`);
         record.turn.typed = await page.evaluate(`(() => {
@@ -402,7 +402,6 @@ async function main() {
           await Promise.all([
             waitStage(page, turnRecord, 'portraitVisibleMs', newSrc('.portrait img', 'src', previous.portrait), { timeoutMs: 360_000, pollMs: 250, since }),
             waitStage(page, turnRecord, 'portraitMotionMs', PORTRAIT_VIDEO, { timeoutMs: 400_000, pollMs: 1_000, since }),
-            waitStage(page, turnRecord, 'sceneStillMs', newSrc('.scene-card img', 'src', previous.scene), { timeoutMs: 400_000, pollMs: 1_000, since }),
             waitStage(page, turnRecord, 'sceneMotionMs', newSrc('.scene-card video', 'currentSrc', previous.sceneVideo), { timeoutMs: 900_000, pollMs: 2_000, since })
           ]);
           turnRecord.captionRequests = page.requests.filter((request) => request.method === 'POST' && pathOf(request.url) === '/api/sidecar/caption').length - captionsBefore;
@@ -424,7 +423,8 @@ async function main() {
       }
 
       // Reload in the same profile: everything must come back from storage, and no
-      // generation may be submitted. A caption re-run is tolerated but recorded.
+      // generation may be submitted. A caption re-run is tolerated but recorded. The
+      // scene card holds only the clip now, so sceneImage is observed, never required.
       const reloadAt = Date.now();
       await page.goto(url, { timeoutMs: 45_000 });
       await page.evaluate('window.confirm = () => true; window.alert = () => undefined; true');
@@ -445,7 +445,7 @@ async function main() {
           .filter((request) => request.method === 'POST' && pathOf(request.url) === '/api/sidecar/caption').length,
         mediaPanel: await page.evaluate(`document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`)
       };
-      for (const item of ['portraitImage', 'portraitVideo', 'sceneImage', 'sceneVideo']) {
+      for (const item of ['portraitImage', 'portraitVideo', 'sceneVideo']) {
         if (!record.reload[item]) record.stages[`reload:${item}`] = `${item} not restored within ${settleMs} ms of reload`;
       }
       if (record.reload.generationRequests.length > 0) {
@@ -454,11 +454,10 @@ async function main() {
       }
     }
 
-    // (legacy) scene still then scene motion only.
+    // (legacy) scene clip only.
     if (generate === 'scene' && record.timings.interactiveMs !== null) {
       record.scene = {};
       const sceneStart = Date.now();
-      await waitStage(page, record, 'sceneStillMs', SCENE_IMAGE, { timeoutMs: 400_000, pollMs: 1_000, since: sceneStart });
       await waitStage(page, record, 'sceneMotionMs', SCENE_VIDEO, { timeoutMs: 900_000, pollMs: 2_000, since: sceneStart });
       record.scene.mediaPanel = await page.evaluate(
         `document.querySelector('[aria-label="Media"]')?.textContent.replace(/\\s+/g,' ').trim().slice(0,320) ?? null`

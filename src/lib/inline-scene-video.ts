@@ -3,26 +3,27 @@ import {
   inlineSceneImageRequestKey,
   normalizeInlineSceneImageRequest,
   type InlineSceneAspectRatio,
-  type InlineSceneContinuityMaster,
-  type InlineSceneIdentity,
   type InlineSceneImageRequest
 } from './inline-scene.ts';
 import { sha256Hex } from './sha256.ts';
 
-export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v6' as const;
-export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v6' as const;
-export const MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID = 'minimax-h3-fl2va-scene-loop-v1' as const;
-export const MINIMAX_H3_SCENE_LOOP_MODE = 'flf2v_loop' as const;
-export const INLINE_SCENE_VIDEO_TEMPLATE_ID = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
-export const INLINE_SCENE_VIDEO_MODE = MINIMAX_H3_SCENE_LOOP_MODE;
+export const INLINE_SCENE_VIDEO_REQUEST_SPEC = 'mullet_inline_scene_video_request_v7' as const;
+export const INLINE_SCENE_VIDEO_CAPABILITIES_SPEC = 'mullet_inline_scene_video_capabilities_v7' as const;
+// The scene is a reference-to-video clip (operator order, 2026-09-02): no scene still.
+export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID = 'minimax-h3-ref2va-scene-v1' as const;
+export const MINIMAX_H3_REFERENCE_SCENE_MODE = 'ref2v' as const;
+export const MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES = 9 as const;
+export const INLINE_SCENE_VIDEO_TEMPLATE_ID = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID;
+export const INLINE_SCENE_VIDEO_MODE = MINIMAX_H3_REFERENCE_SCENE_MODE;
+export const INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER = 'mullet/identity/refpack' as const;
 export const INLINE_SCENE_VIDEO_FPS = 24 as const;
 // See PORTRAIT_VIDEO_TIMEOUT_MS: three times the contended measurement, not fifteen minutes.
 export const INLINE_SCENE_VIDEO_TIMEOUT_MS = 300_000 as const;
-// MiniMaxH3ImageToVideo accepts lengths of 5 + 17k only; 73 is nearest three seconds.
-export const MINIMAX_H3_SCENE_LOOP_FRAMES = 73 as const;
-export const INLINE_SCENE_VIDEO_FRAMES = MINIMAX_H3_SCENE_LOOP_FRAMES;
-export const MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS = 3 as const;
-export const INLINE_SCENE_VIDEO_DURATION_SECONDS = MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS;
+// MiniMax H3 accepts lengths of 5 + 17k frames only; 73 is the nearest three seconds.
+export const MINIMAX_H3_SCENE_FRAMES = 73 as const;
+export const INLINE_SCENE_VIDEO_FRAMES = MINIMAX_H3_SCENE_FRAMES;
+export const MINIMAX_H3_SCENE_DURATION_SECONDS = 3 as const;
+export const INLINE_SCENE_VIDEO_DURATION_SECONDS = MINIMAX_H3_SCENE_DURATION_SECONDS;
 export const INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
   { aspectRatio: '3:2', width: 1152, height: 768 },
   { aspectRatio: '4:3', width: 1024, height: 768 },
@@ -32,83 +33,18 @@ export const INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
 
 // The scene is the expression portrait's aspect ratio inverted: 576x1024 becomes
 // 1024x576. The other ratios hold the same pixel budget, snapped to H3's 32-pixel step.
-export const MINIMAX_H3_SCENE_LOOP_DIMENSIONS = Object.freeze([
+export const MINIMAX_H3_SCENE_DIMENSIONS = Object.freeze([
   { aspectRatio: '3:2', width: 928, height: 640 },
   { aspectRatio: '4:3', width: 896, height: 672 },
   { aspectRatio: '5:4', width: 864, height: 672 },
   { aspectRatio: '16:9', width: 1024, height: 576 }
 ] as const);
 
-export const MINIMAX_H3_LIGHTX_PREVIEW_INLINE_SCENE_VIDEO_DIMENSIONS = Object.freeze([
-  { aspectRatio: '3:2', width: 832, height: 544 },
-  { aspectRatio: '4:3', width: 736, height: 544 },
-  { aspectRatio: '5:4', width: 672, height: 544 },
-  { aspectRatio: '16:9', width: 960, height: 544 }
-] as const);
-
-
-
-// Ref2VA with the four-step distillation LoRA. Self-contained: the unaccelerated
-// 20-step base it used to extend has been removed entirely.
-
-// The scene loop. Identity comes from the accepted scene still itself, which was
-// generated with the cast references, so FL2VA needs no reference conditioning of its
-// own and can use identical first and last frames to produce a genuine seamless loop -
-// the same mechanism the working portrait loop uses.
-export const MINIMAX_H3_SCENE_LOOP_TEMPLATE = Object.freeze({
-  id: MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
-  label: 'MiniMax H3 FL2VA Turbo · 3 s loop (1024x576)',
-  modelFamily: 'minimax-h3-fl2va',
-  modelFiles: {
-    unet: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
-    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
-    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
-    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
-    turboLora: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors'
-  },
-  requiredNodes: [
-    'UNETLoader',
-    'CLIPLoader',
-    'VAELoader',
-    'LoadImage',
-    'MiniMaxH3ImageToVideo',
-    'BasicGuider',
-    'KSamplerSelect',
-    'BasicScheduler',
-    'RandomNoise',
-    'SamplerCustomAdvanced',
-    'VAEDecode',
-    'CreateVideo',
-    'SaveVideo',
-    'LoraLoaderModelOnly',
-    'MiniMaxH3SigmaShift'
-  ],
-  outputNode: '15',
-  mode: MINIMAX_H3_SCENE_LOOP_MODE,
-  dimensions: MINIMAX_H3_SCENE_LOOP_DIMENSIONS,
-  durationSeconds: MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS,
-  frames: MINIMAX_H3_SCENE_LOOP_FRAMES,
-  multiple: 32,
-  shortEdge: 576,
-  maxPixels: 1024 * 576,
-  sampler: 'euler',
-  scheduler: 'simple',
-  steps: 4,
-  denoise: 1,
-  shiftVideo: 6,
-  shiftAudio: 3,
-  format: 'auto',
-  codec: 'auto',
-  promptGuide: 'one continuous landscape shot, identical first and last frame so the clip loops seamlessly, restrained natural motion, no cuts, no camera moves'
-} as const);
 
 // Reference-to-video scene clip (operator proposal, 2026-09-02): no scene still. Up to
 // nine reference images of the cast condition MiniMaxH3ReferenceToVideo directly, so the
 // scene lands animated in one pass (probe on firestorm:8189: three references, 1024x576,
 // 73 frames, 4 steps, 61.4 s of ComfyUI). Same sampler chain as the loop.
-export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID = 'minimax-h3-ref2va-scene-v1' as const;
-export const MINIMAX_H3_REFERENCE_SCENE_MODE = 'ref2v' as const;
-export const MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES = 9 as const;
 export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE = Object.freeze({
   id: MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID,
   label: 'MiniMax H3 Ref2VA Turbo · 3 s scene from cast references (1024x576)',
@@ -139,12 +75,12 @@ export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE = Object.freeze({
   ],
   outputNode: '15',
   mode: MINIMAX_H3_REFERENCE_SCENE_MODE,
-  dimensions: MINIMAX_H3_SCENE_LOOP_DIMENSIONS,
-  durationSeconds: MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS,
-  frames: MINIMAX_H3_SCENE_LOOP_FRAMES,
+  dimensions: MINIMAX_H3_SCENE_DIMENSIONS,
+  durationSeconds: MINIMAX_H3_SCENE_DURATION_SECONDS,
+  frames: MINIMAX_H3_SCENE_FRAMES,
   multiple: 32,
   shortEdge: 576,
-  maxPixels: 1024 * 576,
+  maxPixels: 896 * 672,
   sampler: 'euler',
   scheduler: 'simple',
   steps: 4,
@@ -259,24 +195,29 @@ export function buildMiniMaxH3ReferenceSceneWorkflow(settings: {
 // steps is removed, not hidden behind a selector.
 // One scene-motion path. No selection.
 export const INLINE_SCENE_VIDEO_TEMPLATES = Object.freeze([
-  MINIMAX_H3_SCENE_LOOP_TEMPLATE
+  MINIMAX_H3_REFERENCE_SCENE_TEMPLATE
 ] as const);
 
 export type InlineSceneVideoTemplate = (typeof INLINE_SCENE_VIDEO_TEMPLATES)[number];
 export type InlineSceneVideoTemplateId = InlineSceneVideoTemplate['id'];
 export type InlineSceneVideoMode = InlineSceneVideoTemplate['mode'];
 
+export type InlineSceneVideoReferenceView = 'face' | 'threequarter' | 'fullbody' | 'identity';
+
+// One prepared reference picture on the loop lane (input `mullet/identity/refpack/<name>`).
+export type InlineSceneVideoReference = {
+  profileId: string;
+  view: InlineSceneVideoReferenceView;
+  sha256: string;
+  name: string;
+};
+
 export type InlineSceneVideoSource = {
   conversationId: string;
   epoch: string;
   sceneRequestKey: string;
-  scenePromptId: string;
-  sceneSeed: number;
-  sceneGeneratedAt: number;
-  sceneWidth: number;
-  sceneHeight: number;
-  sceneImageSha256: string;
   sceneRequest: InlineSceneImageRequest;
+  references: InlineSceneVideoReference[];
 };
 
 export type InlineSceneVideoRequest = {
@@ -326,65 +267,10 @@ export type InlineSceneVideoDecodeFailureTransition =
 
 export type InlineSceneVideoMasterToggleAction = 'abort' | 'restore' | 'none';
 
-export type InlineSceneVideoInputScene = {
-  conversationId: string;
-  epoch: string;
-  requestKey: string;
-  request: InlineSceneImageRequest;
-  promptId: string;
-  seed: number;
-  width: number;
-  height: number;
-  generatedAt: number;
-  imageSha256: string;
-};
-
-export type InlineSceneVideoInputReference = {
-  name: string;
-  subfolder: 'mullet/motion-inputs';
-  type: 'input';
-  imageSha256: string;
-};
-
-export type InlineSceneVideoPriorMasterInput = {
-  name: string;
-  subfolder: 'mullet/motion-inputs';
-  type: 'input';
-  imageSha256: string;
-  width: number;
-  height: number;
-};
-
-export type InlineSceneH3ReferencePlanEntry =
-  | {
-      picture: number;
-      kind: 'current_scene';
-      sha256: string;
-    }
-  | {
-      picture: number;
-      kind: 'prior_master';
-      sha256: string;
-      master: InlineSceneContinuityMaster;
-    }
-  | {
-      picture: number;
-      kind: 'canonical_identity' | 'body_identity';
-      sha256: string;
-      identityIndex: number;
-      identity: InlineSceneIdentity;
-      referenceImage: InlineSceneIdentity['referenceImage'];
-    };
-
-type InlineSceneH3ReferencePlanCandidate =
-  | Omit<Extract<InlineSceneH3ReferencePlanEntry, { kind: 'current_scene' }>, 'picture'>
-  | Omit<Extract<InlineSceneH3ReferencePlanEntry, { kind: 'prior_master' }>, 'picture'>
-  | Omit<Extract<InlineSceneH3ReferencePlanEntry, { kind: 'canonical_identity' | 'body_identity' }>, 'picture'>;
-
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const INPUT_IMAGE_PATTERN = /^scene-motion-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
-const PRIOR_MASTER_IMAGE_PATTERN = /^scene-motion-prior-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/i;
+const REFERENCE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}-(face|threequarter|fullbody|identity)-[0-9a-f]{1,16}\.png$/;
+const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -408,7 +294,7 @@ export function inlineSceneVideoTemplate(
 export function isMiniMaxH3InlineSceneVideoTemplate(
   modelTemplate: InlineSceneVideoTemplateId
 ): boolean {
-  return inlineSceneVideoTemplate(modelTemplate).modelFamily === 'minimax-h3-fl2va';
+  return inlineSceneVideoTemplate(modelTemplate).modelFamily === 'minimax-h3-ref2va';
 }
 
 export function inlineSceneVideoTemplateCapability(
@@ -441,7 +327,12 @@ export function inlineSceneVideoDimensions(
 }
 
 export function buildInlineSceneVideoRequest(
-  scene: InlineSceneVideoInputScene,
+  scene: {
+    conversationId: string;
+    epoch: string;
+    request: InlineSceneImageRequest;
+    references: readonly InlineSceneVideoReference[];
+  },
   modelTemplate: InlineSceneVideoTemplateId = INLINE_SCENE_VIDEO_TEMPLATE_ID
 ): InlineSceneVideoRequest {
   const template = inlineSceneVideoTemplate(modelTemplate);
@@ -452,18 +343,36 @@ export function buildInlineSceneVideoRequest(
     source: {
       conversationId: scene.conversationId,
       epoch: scene.epoch,
-      sceneRequestKey: scene.requestKey,
-      scenePromptId: scene.promptId,
-      sceneSeed: scene.seed,
-      sceneGeneratedAt: scene.generatedAt,
-      sceneWidth: scene.width,
-      sceneHeight: scene.height,
-      sceneImageSha256: scene.imageSha256,
-      sceneRequest: scene.request
+      sceneRequestKey: inlineSceneImageRequestKey(scene.request),
+      sceneRequest: scene.request,
+      references: Array.isArray(scene.references) ? scene.references.map((reference) => ({ ...reference })) : scene.references
     },
     aspectRatio: scene.request.aspectRatio,
     durationSeconds: template.durationSeconds
   });
+}
+
+// A reference's file name is keyed on the subject's profile fingerprint (so the loop lane
+// can be checked for it before anything is rendered); its sha256 is the picture's hash.
+export function inlineSceneVideoReferenceName(profileId: string, view: InlineSceneVideoReferenceView, profileFingerprint: string): string {
+  return `${profileId}-${view}-${profileFingerprint.slice(0, 16)}.png`;
+}
+
+export function normalizeInlineSceneVideoReference(value: unknown, profileFingerprint?: string): InlineSceneVideoReference {
+  if (!isRecord(value)) throw new Error('inline-scene video reference is invalid');
+  const { profileId, view, sha256, name } = value;
+  if (typeof profileId !== 'string' || !PROFILE_ID_PATTERN.test(profileId)) throw new Error('inline-scene video reference profile is invalid');
+  if (view !== 'face' && view !== 'threequarter' && view !== 'fullbody' && view !== 'identity') {
+    throw new Error('inline-scene video reference view is invalid');
+  }
+  if (typeof sha256 !== 'string' || !SHA256_PATTERN.test(sha256)) throw new Error('inline-scene video reference hash is invalid');
+  if (typeof name !== 'string' || !REFERENCE_NAME_PATTERN.test(name) || !name.startsWith(`${profileId}-${view}-`)) {
+    throw new Error('inline-scene video reference name does not match its profile and view');
+  }
+  if (profileFingerprint !== undefined && name !== inlineSceneVideoReferenceName(profileId, view, profileFingerprint)) {
+    throw new Error('inline-scene video reference name does not match its subject fingerprint');
+  }
+  return { profileId, view, sha256, name };
 }
 
 export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVideoRequest {
@@ -483,28 +392,34 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
     || value.source.sceneRequestKey !== sceneRequestKey
     || typeof value.source.epoch !== 'string'
     || !UUID_PATTERN.test(value.source.epoch)
-    || typeof value.source.scenePromptId !== 'string'
-    || !UUID_PATTERN.test(value.source.scenePromptId)
-    || typeof value.source.sceneImageSha256 !== 'string'
-    || !SHA256_PATTERN.test(value.source.sceneImageSha256)
   ) throw new Error('inline-scene video source provenance is invalid');
-  const sceneGeneratedAt = integer(value.source.sceneGeneratedAt, 'inline-scene video source timestamp', 1, Number.MAX_SAFE_INTEGER);
-  const sceneSeed = integer(value.source.sceneSeed, 'inline-scene video source seed', 0, Number.MAX_SAFE_INTEGER);
-  const sceneWidth = integer(value.source.sceneWidth, 'inline-scene video source width', 16, 8192);
-  const sceneHeight = integer(value.source.sceneHeight, 'inline-scene video source height', 16, 8192);
-  const staticDimensions = inlineSceneDimensionsForTemplate(
-    sceneRequest.modelTemplate,
-    sceneRequest.aspectRatio,
-    sceneRequest.megapixels
-  );
-  if (sceneWidth !== staticDimensions.width || sceneHeight !== staticDimensions.height) {
-    throw new Error('inline-scene video source dimensions do not match its static request');
+  if (!Array.isArray(value.source.references) || value.source.references.length < 1 || value.source.references.length > MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES) {
+    throw new Error(`inline-scene video needs between 1 and ${MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES} references`);
+  }
+  // Every reference must belong to a cast member of the scene (its name is bound to that
+  // member's fingerprint), and every cast member must have at least one reference, or the
+  // clip cannot bind identities.
+  const fingerprints = new Map(sceneRequest.cast.identities.map(({ profileId, profileFingerprint }) => [profileId, profileFingerprint]));
+  const references = value.source.references.map((reference: unknown) => {
+    const profileId = isRecord(reference) && typeof reference.profileId === 'string' ? reference.profileId : '';
+    const fingerprint = fingerprints.get(profileId);
+    if (fingerprint === undefined) throw new Error('inline-scene video reference does not belong to the scene cast');
+    return normalizeInlineSceneVideoReference(reference, fingerprint);
+  });
+  if (new Set(references.map(({ name }) => name)).size !== references.length) {
+    throw new Error('inline-scene video references are duplicated');
+  }
+  const castIds = new Set(fingerprints.keys());
+  for (const profileId of castIds) {
+    if (!references.some((reference) => reference.profileId === profileId)) {
+      throw new Error(`inline-scene video is missing references for ${profileId}`);
+    }
   }
   if (
     value.aspectRatio !== sceneRequest.aspectRatio
     || !template.dimensions.some(({ aspectRatio }) => aspectRatio === value.aspectRatio)
   ) {
-    throw new Error('inline-scene video aspect ratio does not match its static source');
+    throw new Error('inline-scene video aspect ratio does not match its scene');
   }
   if (value.durationSeconds !== template.durationSeconds) throw new Error('unsupported inline-scene video duration');
   return {
@@ -515,20 +430,13 @@ export function normalizeInlineSceneVideoRequest(value: unknown): InlineSceneVid
       conversationId: sceneRequest.source.conversationId,
       epoch: value.source.epoch,
       sceneRequestKey,
-      scenePromptId: value.source.scenePromptId,
-      sceneSeed,
-      sceneGeneratedAt,
-      sceneWidth,
-      sceneHeight,
-      sceneImageSha256: value.source.sceneImageSha256,
-      sceneRequest
+      sceneRequest,
+      references
     },
     aspectRatio: value.aspectRatio as InlineSceneAspectRatio,
     durationSeconds: template.durationSeconds
   };
 }
-
-
 
 export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): string {
   const normalized = normalizeInlineSceneVideoRequest(request);
@@ -536,17 +444,18 @@ export function inlineSceneVideoRequestKey(request: InlineSceneVideoRequest): st
     normalized.source.conversationId,
     normalized.source.epoch,
     normalized.source.sceneRequestKey,
-    normalized.source.scenePromptId,
-    normalized.source.sceneSeed,
-    normalized.source.sceneGeneratedAt,
-    normalized.source.sceneWidth,
-    normalized.source.sceneHeight,
-    normalized.source.sceneImageSha256,
+    ...normalized.source.references.map(({ name }) => name),
     normalized.modelTemplate,
     normalized.mode,
     normalized.aspectRatio,
     normalized.durationSeconds
   ].join('\u001f');
+}
+
+// One hash over the ordered reference set: the clip's input provenance, carried in the
+// response headers and the stored record where the still's hash used to be.
+export function inlineSceneVideoReferencesSha256(request: InlineSceneVideoRequest): string {
+  return sha256Hex(normalizeInlineSceneVideoRequest(request).source.references.map(({ sha256 }) => sha256).join('\n'));
 }
 
 export function inlineSceneVideoSourceRequestSha256(request: InlineSceneVideoRequest): string {
@@ -636,107 +545,43 @@ export function parseInlineSceneVideoNumberHeader(
 }
 
 
-function validateInlineSceneVideoInputReference(
-  sceneInput: InlineSceneVideoInputReference,
-  expectedImageSha256: string
-): void {
-  if (
-    sceneInput.subfolder !== 'mullet/motion-inputs'
-    || sceneInput.type !== 'input'
-    || sceneInput.imageSha256 !== expectedImageSha256
-    || !INPUT_IMAGE_PATTERN.test(sceneInput.name)
-  ) throw new Error('inline-scene video input reference is invalid');
+
+
+
+export function inlineSceneVideoSceneReferences(request: InlineSceneVideoRequest): MiniMaxH3SceneReference[] {
+  const normalized = normalizeInlineSceneVideoRequest(request);
+  const names = new Map(normalized.source.sceneRequest.cast.identities.map(({ profileId, displayName }) => [profileId, displayName]));
+  return normalized.source.references.map((reference) => ({
+    subject: names.get(reference.profileId) ?? reference.profileId,
+    view: reference.view,
+    image: `${INLINE_SCENE_VIDEO_REFERENCE_SUBFOLDER}/${reference.name}`
+  }));
 }
 
-function validateInlineSceneVideoPriorMasterInput(
-  input: InlineSceneVideoPriorMasterInput,
-  master: InlineSceneContinuityMaster
-): void {
-  if (
-    input.subfolder !== 'mullet/motion-inputs'
-    || input.type !== 'input'
-    || input.imageSha256 !== master.imageSha256
-    || input.width !== master.width
-    || input.height !== master.height
-    || !PRIOR_MASTER_IMAGE_PATTERN.test(input.name)
-  ) throw new Error('inline-scene video prior master input does not match its request');
-}
-
-function nextInlineSceneVideoSeed(seed: number): number {
-  return seed + 42 <= Number.MAX_SAFE_INTEGER ? seed + 42 : seed - 42;
-}
-
-
-
-// Scene loop: MiniMaxH3ImageToVideo with the accepted scene still wired to BOTH
-// first_frame and last_frame, which is what makes the clip loop. Mirrors the portrait
-// loop graph that already runs reliably at four steps.
-function buildMiniMaxH3SceneLoopWorkflow(
-  normalized: InlineSceneVideoRequest,
-  sceneInput: InlineSceneVideoInputReference,
-  seed: number
-): Record<string, unknown> {
-  const template = MINIMAX_H3_SCENE_LOOP_TEMPLATE;
-  const { width, height, frames, fps } = inlineSceneVideoDimensions(
-    normalized.aspectRatio,
-    normalized.modelTemplate
-  );
-  return {
-    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
-    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
-    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
-    '5': { class_type: 'LoadImage', inputs: { image: `${sceneInput.subfolder}/${sceneInput.name}` } },
-    '6': { class_type: 'MiniMaxH3ImageToVideo', inputs: {
-      clip: ['2', 0],
-      vae: ['3', 0],
-      prompt: buildInlineSceneVideoPrompt(normalized),
-      width,
-      height,
-      length: frames,
-      first_frame: ['5', 0],
-      last_frame: ['5', 0]
-    } },
-    '7': { class_type: 'BasicGuider', inputs: { model: ['18', 0], conditioning: ['6', 0] } },
-    '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
-    '9': { class_type: 'BasicScheduler', inputs: { model: ['18', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
-    '10': { class_type: 'RandomNoise', inputs: { noise_seed: seed } },
-    '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
-    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
-    // The scene loop is silent by necessity, not by choice: MiniMaxH3ImageToVideo (the
-    // FL2VA node that provides first/last-frame looping) rejects audio_vae in this build,
-    // so no audio branch exists on this path. Ref2VA keeps native audio but cannot loop.
-    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps } },
-    '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: 'mullet/scene-motion-loop', format: template.format, codec: template.codec } },
-    '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
-    '18': { class_type: 'MiniMaxH3SigmaShift', inputs: { model: ['16', 0], shift_video: template.shiftVideo, shift_audio: template.shiftAudio } }
-  };
-}
-
-// The loop animates an already-correct scene still, so the prompt only has to keep it
-// still-faithful and make the motion return to the starting frame.
 export function buildInlineSceneVideoPrompt(request: InlineSceneVideoRequest): string {
   const normalized = normalizeInlineSceneVideoRequest(request);
-  return [
+  return buildMiniMaxH3ReferenceScenePrompt(
     normalized.source.sceneRequest.prompt,
-    // The same verbatim appearance facts the scene still was given, so the clip cannot
-    // drift away from the frame it is animating.
     normalized.source.sceneRequest.continuity,
-    'Preserve every visible subject, identity, attire, object, and spatial relationship while continuing only restrained physical motion implied by the scene.',
-    'The identical supplied scene is both the first and the final keyframe; all motion returns exactly to that keyframe so the clip loops seamlessly.',
-    'Ambient physical motion only: no talking, no lip or mouth movement, and no speech gestures.',
-    'One continuous landscape shot: no camera movement, no cuts, no new subjects, no new objects, no text, and no black frames.'
-  ].filter(Boolean).join(' ');
+    inlineSceneVideoSceneReferences(normalized)
+  );
 }
 
 export function buildInlineSceneVideoWorkflow(
   request: InlineSceneVideoRequest,
-  sceneInput: InlineSceneVideoInputReference,
-  seed: number,
-  priorMasterInput?: InlineSceneVideoPriorMasterInput
+  seed: number
 ): Record<string, unknown> {
   const normalized = normalizeInlineSceneVideoRequest(request);
-  if (priorMasterInput) throw new Error('the scene loop does not accept a prior master input');
-  return buildMiniMaxH3SceneLoopWorkflow(normalized, sceneInput, seed);
+  const { width, height, frames, fps } = inlineSceneVideoDimensions(normalized.aspectRatio, normalized.modelTemplate);
+  return buildMiniMaxH3ReferenceSceneWorkflow({
+    prompt: buildInlineSceneVideoPrompt(normalized),
+    references: inlineSceneVideoSceneReferences(normalized),
+    width,
+    height,
+    frames,
+    fps,
+    seed
+  });
 }
 
 export function inlineSceneVideoOutputNode(request: InlineSceneVideoRequest): string {

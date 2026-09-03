@@ -67,7 +67,7 @@
     INLINE_SCENE_VIDEO_DURATION_SECONDS,
     INLINE_SCENE_VIDEO_FPS,
     INLINE_SCENE_VIDEO_TIMEOUT_MS,
-    MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID,
+    MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID,
     buildInlineSceneVideoRequest,
     isMiniMaxH3InlineSceneVideoTemplate,
     inlineSceneMasterToggleEnabled,
@@ -75,8 +75,10 @@
     inlineSceneVideoDimensions,
     inlineSceneVideoMasterToggleAction,
     inlineSceneVideoReconciliationAllowed,
+    inlineSceneVideoReferencesSha256,
     inlineSceneVideoRequestKey,
     inlineSceneVideoSourceRequestSha256,
+    type InlineSceneVideoReference,
     inlineSceneVideoTemplateAvailable,
     inlineSceneVideoTemplateCapability,
     normalizeInlineSceneVideoCapabilities,
@@ -382,7 +384,6 @@
   let inlineSceneMegapixels: InlineSceneMegapixels = 0.5;
   let inlineSceneSidecarRequest: InlineSceneRequest | null = null;
   let generatedInlineScene: StoredInlineScene | null = null;
-  let generatedInlineSceneUrl = '';
   let inlineSceneApplies = false;
   let inlineSceneCurrent = false;
   let inlineSceneGeneration = 0;
@@ -423,7 +424,7 @@
   let capabilityRetryCounts: Record<string, number> = {};
   let capabilityRetryTimers: Record<string, number> = {};
   let inlineSceneVideoComponentDestroying = false;
-  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
+  let inlineSceneVideoModelTemplate: InlineSceneVideoTemplateId = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID;
   let inlineSceneVideoTiming = inlineSceneVideoDimensions(inlineSceneAspectRatio, inlineSceneVideoModelTemplate);
   let inlineSceneH3ReferenceSummary = '';
   let inlineSceneH3StillReferenceSummary = '';
@@ -918,12 +919,12 @@
       : 'automatic';
     localStorage.setItem(inlineSceneStillModeStorageKey, inlineSceneStillMode);
     const savedInlineSceneVideoModelTemplate = localStorage.getItem(inlineSceneVideoModelTemplateStorageKey);
-    inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
+    inlineSceneVideoModelTemplate = savedInlineSceneVideoModelTemplate === MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID
       || savedInlineSceneVideoModelTemplate === 'removed'
       || savedInlineSceneVideoModelTemplate === 'removed'
-      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID
+      || savedInlineSceneVideoModelTemplate === MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID
       ? savedInlineSceneVideoModelTemplate as InlineSceneVideoTemplateId
-      : MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
+      : MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID;
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     restorePortraitSettings();
     restoreInlineSceneSettings();
@@ -974,7 +975,6 @@
     inlineSceneVideoController?.abort();
     if (generatedPortraitUrl) URL.revokeObjectURL(generatedPortraitUrl);
     if (generatedPortraitVideoUrl) URL.revokeObjectURL(generatedPortraitVideoUrl);
-    if (generatedInlineSceneUrl) URL.revokeObjectURL(generatedInlineSceneUrl);
     if (generatedInlineSceneVideoUrl) URL.revokeObjectURL(generatedInlineSceneVideoUrl);
   });
 
@@ -1378,13 +1378,59 @@
     return scene;
   }
 
-  function inlineSceneContinuityMasterForScene(scene: StoredInlineScene): InlineSceneContinuityMaster {
-    return createInlineSceneContinuityMaster(scene.request, {
-      promptId: scene.promptId,
-      seed: scene.seed,
-      generatedAt: scene.generatedAt,
-      imageSha256: scene.imageSha256
+  function inlineSceneContinuityMasterForScene(_scene: StoredInlineScene): InlineSceneContinuityMaster | null {
+    // Continuity now comes from the reference pack, which is identical every turn; there is
+    // no still to promote to a master.
+    return null;
+  }
+
+  // The reference pack for a cast, prepared once per profile fingerprint set and reused
+  // every turn (that reuse is what keeps identities and clothing consistent).
+  const inlineSceneReferenceCache = new Map<string, InlineSceneVideoReference[]>();
+  async function prepareInlineSceneReferences(
+    cast: InlineSceneCast,
+    profiles: readonly ScenarioPortraitProfile[],
+    signal: AbortSignal
+  ): Promise<InlineSceneVideoReference[]> {
+    const castProfiles = cast.identities.map((identity) => {
+      const profile = profiles.find((candidate) => candidate.id === identity.profileId);
+      if (!profile || profile.fingerprint !== identity.profileFingerprint) {
+        throw new Error(`Scene subject ${identity.profileId} no longer matches the active scenario cast.`);
+      }
+      return profile;
     });
+    const cacheKey = castProfiles.map(({ fingerprint }) => fingerprint).join('\u001f');
+    const cached = inlineSceneReferenceCache.get(cacheKey);
+    if (cached) return cached;
+    const response = await fetch(`${base}/api/scene/references`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        profiles: castProfiles.map((profile) => ({
+          id: profile.id,
+          fingerprint: profile.fingerprint,
+          displayName: profile.displayName,
+          subject: profile.subject,
+          seed: profile.seed,
+          subjectLora: profile.subjectLora
+            ? { name: profile.subjectLora.name, trigger: profile.subjectLora.trigger, sha256: profile.subjectLora.sha256 }
+            : null,
+          referenceImage: profile.referenceImage
+        }))
+      }),
+      signal
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const detail = payload && typeof payload.message === 'string' ? payload.message : `Scene references failed (${response.status}).`;
+      throw new Error(detail);
+    }
+    if (!payload || !Array.isArray(payload.references) || payload.references.length < 1) {
+      throw new Error('Scene reference preparation returned no references.');
+    }
+    const references = payload.references as InlineSceneVideoReference[];
+    inlineSceneReferenceCache.set(cacheKey, references);
+    return references;
   }
 
   function inlineSceneDriverForCast(
@@ -1520,8 +1566,6 @@
   }
 
   function removeInstalledInlineScene() {
-    if (generatedInlineSceneUrl) URL.revokeObjectURL(generatedInlineSceneUrl);
-    generatedInlineSceneUrl = '';
     generatedInlineScene = null;
   }
 
@@ -1653,7 +1697,6 @@
   function installGeneratedInlineScene(scene: StoredInlineScene, preserveStoredMotion = false) {
     removeInstalledInlineScene();
     generatedInlineScene = scene;
-    generatedInlineSceneUrl = URL.createObjectURL(scene.image);
     if (!preserveStoredMotion) invalidateInlineSceneVideoForNewStaticScene();
   }
 
@@ -1728,7 +1771,12 @@
   ): InlineSceneVideoRequest | null {
     if (!scene || !current) return null;
     try {
-      return buildInlineSceneVideoRequest(scene, modelTemplate);
+      return buildInlineSceneVideoRequest({
+        conversationId: scene.conversationId,
+        epoch: scene.epoch,
+        request: scene.request,
+        references: scene.references
+      }, modelTemplate);
     } catch {
       return null;
     }
@@ -1880,7 +1928,7 @@
       }
       inlineSceneVideoCapabilities = normalizeInlineSceneVideoCapabilities(payload);
       if (!inlineSceneVideoCapabilities.templates.some(({ template }) => template.id === inlineSceneVideoModelTemplate)) {
-        inlineSceneVideoModelTemplate = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
+        inlineSceneVideoModelTemplate = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID;
         localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
       }
     } catch (cause) {
@@ -1984,21 +2032,10 @@
       activeController.abort();
     }, INLINE_SCENE_VIDEO_TIMEOUT_MS + 5_000);
     try {
-      const form = new FormData();
-      form.append('request', JSON.stringify(selectedRequest));
-      form.append('image', selectedScene.image, 'scene.png');
-      appendManagedBodyReferenceParts(form, inlineSceneVideoManagedBodyReferenceHashes(selectedRequest));
-      const priorMasterRequired = isMiniMaxH3InlineSceneVideoTemplate(selectedRequest.modelTemplate)
-        && [].some(({ kind }) => kind === 'prior_master');
-      if (priorMasterRequired) {
-        if (!selectedScene.continuityMasterImage) {
-          throw new Error('MiniMax H3 Ref2VA requires the verified prior scene master.');
-        }
-        form.append('master', selectedScene.continuityMasterImage, 'scene-continuity-master.png');
-      }
       const response = await fetch(base + '/api/scene/video', {
         method: 'POST',
-        body: form,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ request: selectedRequest }),
         signal: activeController.signal
       });
       if (!response.ok) {
@@ -2009,7 +2046,6 @@
         throw new Error(detail);
       }
       const video = await response.blob();
-      const isSilentLoop = selectedRequest.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
       const expectedContentType = 'video/mp4';
       const minimumBytes = 12;
       if (video.type !== expectedContentType || video.size < minimumBytes) {
@@ -2024,21 +2060,16 @@
       ) throw new Error('Inline-scene motion generator returned an invalid MP4 signature.');
       const modelTemplate = response.headers.get('x-mullet-model-template') ?? '';
       const mode = response.headers.get('x-mullet-video-mode') ?? '';
-      const sourcePromptId = response.headers.get('x-mullet-source-prompt-id') ?? '';
-      const sourceSeed = inlineSceneVideoHeaderInteger(response, 'x-mullet-source-seed', 0, Number.MAX_SAFE_INTEGER);
       const sourceRequestSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-source-request-sha256');
-      const inputImageSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-input-sha256');
+      const referencesSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-references-sha256');
       const audioTracks = inlineSceneVideoHeaderInteger(response, 'x-mullet-audio-tracks', 0, 1);
-      const expectedAudioTracks = isSilentLoop ? 0 : 1;
       if (
         modelTemplate !== selectedRequest.modelTemplate
         || mode !== selectedRequest.mode
-        || audioTracks !== expectedAudioTracks
-        || sourcePromptId !== selectedRequest.source.scenePromptId
-        || sourceSeed !== selectedRequest.source.sceneSeed
+        || audioTracks !== 0
         || sourceRequestSha256 !== inlineSceneVideoSourceRequestSha256(selectedRequest)
-        || inputImageSha256 !== selectedRequest.source.sceneImageSha256
-      ) throw new Error('Inline-scene motion response provenance does not match its static scene.');
+        || referencesSha256 !== inlineSceneVideoReferencesSha256(selectedRequest)
+      ) throw new Error('Inline-scene motion response provenance does not match its scene and references.');
       const videoSha256 = inlineSceneVideoHeaderSha256(response, 'x-mullet-video-sha256');
       if (await blobSha256(video) !== videoSha256) {
         throw new Error('Inline-scene motion response hash does not match its video.');
@@ -2060,7 +2091,7 @@
         durationSeconds: inlineSceneVideoHeaderNumber(response, 'x-mullet-duration-seconds', 0.001, 3_600),
         audioTracks,
         generatedAt: Date.now(),
-        inputImageSha256,
+        referencesSha256,
         videoSha256,
         video
       });
@@ -2141,7 +2172,7 @@
 
   function persistInlineSceneVideoModelTemplate() {
     if (!inlineSceneVideoTemplateCapability(inlineSceneVideoCapabilities, inlineSceneVideoModelTemplate)) {
-      inlineSceneVideoModelTemplate = MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID;
+      inlineSceneVideoModelTemplate = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID;
     }
     localStorage.setItem(inlineSceneVideoModelTemplateStorageKey, inlineSceneVideoModelTemplate);
     inlineSceneVideoGeneration += 1;
@@ -2394,24 +2425,15 @@
       }
       const cast = inlineSceneCastForResult(result, selectedProfiles);
       let continuityMaster: InlineSceneContinuityMaster | null = null;
-      let continuityMasterImage: Blob | null = null;
       if (selectedContinuityScene) {
         const verifiedMasterScene = await verifyStoredInlineScene(selectedContinuityScene);
         const candidateMaster = inlineSceneContinuityMasterForScene(verifiedMasterScene);
-        if (
-          false
-          || inlineSceneContinuityMasterEligible(cast, candidateMaster)
-        ) {
+        if (candidateMaster && inlineSceneContinuityMasterEligible(cast, candidateMaster)) {
           continuityMaster = candidateMaster;
-          continuityMasterImage = verifiedMasterScene.image;
         }
       }
       const driver = inlineSceneDriverForCast(cast, selectedProfiles, continuityMaster, selectedStillMode);
-      if (driver.lora) {
-        // LoRA scenes take no image master (see inlineSceneDriverForCast).
-        continuityMaster = null;
-        continuityMasterImage = null;
-      }
+      if (driver.lora) continuityMaster = null;
       if (!inlineSceneDriverAvailable(selectedCapabilities, driver)) {
         const capability = selectedCapabilities.templates.find(
           ({ template }) => template.id === driver.modelTemplate
@@ -2444,57 +2466,23 @@
         activeController.signal,
         imageRequest.continuity
       )) return;
-      const imageForm = new FormData();
-      imageForm.append('request', JSON.stringify(imageRequest));
-      if (continuityMasterImage) imageForm.append('master', continuityMasterImage, 'scene-continuity-master.png');
-      appendManagedBodyReferenceParts(imageForm, inlineSceneManagedBodyReferenceHashes(imageRequest));
-      const imageResponse = await fetch(`${base}/api/scene`, {
-        method: 'POST',
-        body: imageForm,
-        signal: activeController.signal
-      });
-      if (!imageResponse.ok) {
-        const payload = await imageResponse.json().catch(() => null);
-        const detail = payload && typeof payload.message === 'string'
-          ? payload.message
-          : `Inline scene failed (${imageResponse.status}).`;
-        throw new Error(detail);
-      }
-      const image = await imageResponse.blob();
-      if (image.type !== 'image/png' || image.size < 24) throw new Error('Inline-scene generator returned an invalid image.');
-      const modelTemplate = imageResponse.headers.get('x-mullet-model-template') ?? '';
-      if (modelTemplate !== imageRequest.modelTemplate) throw new Error('Inline-scene response model does not match its request.');
-      const imageSha256 = inlineSceneResponseHash(imageResponse);
-      if (await blobSha256(image) !== imageSha256) throw new Error('Inline-scene response hash does not match its image.');
-      const promptId = imageResponse.headers.get('x-mullet-prompt-id') ?? '';
-      const seed = responseHeaderInteger(imageResponse, 'x-mullet-seed', 0, Number.MAX_SAFE_INTEGER);
-      const width = responseHeaderInteger(imageResponse, 'x-mullet-width', 16, 2048);
-      const height = responseHeaderInteger(imageResponse, 'x-mullet-height', 16, 2048);
+      const references = await prepareInlineSceneReferences(cast, selectedProfiles, activeController.signal);
       const generatedAt = Date.now();
-      const acceptedMaster = createInlineSceneContinuityMaster(imageRequest, {
-        promptId,
-        seed,
-        generatedAt,
-        imageSha256
-      });
-      if (acceptedMaster.width !== width || acceptedMaster.height !== height) {
-        throw new Error('Inline-scene response dimensions do not match its accepted continuity master.');
-      }
       const stored = normalizeStoredInlineScene({
         spec: STORED_INLINE_SCENE_SPEC,
         conversationId: imageRequest.source.conversationId,
         epoch,
         requestKey,
         request: imageRequest,
-        modelTemplate,
-        promptId,
-        seed,
-        width,
-        height,
+        modelTemplate: imageRequest.modelTemplate,
         generatedAt,
-        imageSha256,
-        image,
-        continuityMasterImage
+        references,
+        referencesSha256: inlineSceneVideoReferencesSha256(buildInlineSceneVideoRequest({
+          conversationId: imageRequest.source.conversationId,
+          epoch,
+          request: imageRequest,
+          references
+        }))
       });
       await commitStoredInlineScene(stored, {
         exclusive: runStoredInlineSceneExclusive,
@@ -4838,7 +4826,7 @@
             <dt>Portrait motion</dt>
             <dd>{portraitVideoBusy ? 'Animating…' : portraitVideoCurrent ? 'current' : 'none yet'}</dd>
             <dt>Scene</dt>
-            <dd>{inlineSceneBusy ? 'Directing…' : inlineSceneCurrent ? `${generatedInlineScene?.width}×${generatedInlineScene?.height}` : 'none yet'}</dd>
+            <dd>{inlineSceneBusy ? 'Directing…' : inlineSceneCurrent && generatedInlineScene ? `${generatedInlineScene.references.length} references` : 'none yet'}</dd>
             <dt>Scene motion</dt>
             <dd>{inlineSceneVideoBusy ? 'Animating…' : inlineSceneVideoCurrent ? 'current' : 'none yet'}</dd>
             <dt>Continuity</dt>
@@ -4980,16 +4968,14 @@
               <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
               {#if true && inlineScenesEnabled && finalizedInlineSceneSource?.messageIndex === messageIndex}
                 <figure
-                  class:stale={Boolean(generatedInlineSceneUrl) && (!inlineSceneCurrent || (inlineSceneMotionEnabled && Boolean(generatedInlineSceneVideo) && !inlineSceneVideoCurrent))}
+                  class:stale={Boolean(generatedInlineSceneVideo) && (!inlineSceneCurrent || !inlineSceneVideoCurrent)}
                   class="scene-card"
                   aria-busy={inlineSceneBusy || inlineSceneVideoBusy}
-                  style:--scene-ratio={inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.width + ' / ' + generatedInlineSceneVideo.height : generatedInlineScene ? generatedInlineScene.width + ' / ' + generatedInlineScene.height : '16 / 9'}
+                  style:--scene-ratio={generatedInlineSceneVideo ? generatedInlineSceneVideo.width + ' / ' + generatedInlineSceneVideo.height : '16 / 9'}
                 >
-                  {#if generatedInlineSceneUrl}
-                    <img src={generatedInlineSceneUrl} alt={inlineSceneApplies ? 'Generated landscape still for this finalized response' : 'Prior verified landscape shown while the current response renders'} />
-                  {:else}
-                    <div class:error-state={Boolean(inlineSceneError)} class="scene-placeholder">
-                      <span>{inlineSceneError ? 'Static scene unavailable' : inlineSceneBusy ? 'Directing and rendering…' : 'Waiting for scene generation'}</span>
+                  {#if !inlineSceneVideoVisible}
+                    <div class:error-state={Boolean(inlineSceneError || inlineSceneVideoError)} class="scene-placeholder">
+                      <span>{inlineSceneError || inlineSceneVideoError ? 'Scene unavailable' : inlineSceneBusy ? 'Directing and preparing references…' : inlineSceneVideoBusy ? 'Rendering the scene clip…' : 'Waiting for scene generation'}</span>
                     </div>
                   {/if}
                   {#if inlineSceneVideoMounted}
@@ -5010,8 +4996,8 @@
                     ></video>
                   {/if}
                   <figcaption>
-                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? generatedInlineSceneVideo.modelTemplate === MINIMAX_H3_SCENE_LOOP_TEMPLATE_ID ? 'Current response · H3 FL2VA identical-frame loop · silent' : 'Current response · MiniMax H3 Ref2VA with native audio' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion · static shown until playback advances' : inlineSceneVideoPlaybackState === 'fallback' && inlineSceneVideoCurrent ? 'Current response · static fallback' : inlineSceneVideoBusy ? 'Animating landscape · static fallback' : inlineSceneBusy ? generatedInlineSceneUrl ? 'Updating landscape · prior verified scene shown' : 'Gemma sidecar → deterministic scene driver' : inlineSceneCurrent ? (inlineSceneVideoError ? 'Current response · static fallback' : `Current response · ${inlineSceneStillDriverLabel(generatedInlineScene?.request.modelTemplate ?? INLINE_SCENE_QWEN_TEMPLATE_ID)}`) : generatedInlineSceneUrl && !inlineSceneApplies ? 'Prior response · verified static fallback' : inlineSceneApplies ? 'Stale settings · replacement pending' : inlineSceneError ? 'Static fallback unavailable' : 'Static landscape pending'}</span>
-                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.durationSeconds} s selected · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s encoded · {generatedInlineSceneVideo.audioTracks === 0 ? 'silent' : 'native audio'}</small>{:else if generatedInlineScene}<small>{generatedInlineScene.width}×{generatedInlineScene.height} · {generatedInlineScene.request.aspectRatio} · {generatedInlineScene.request.megapixels} MP</small>{/if}
+                    <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? 'Current response · MiniMax H3 reference clip · silent' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion' : inlineSceneVideoBusy ? 'Rendering the scene clip from the cast references' : inlineSceneBusy ? 'Gemma sidecar → scene direction and references' : inlineSceneVideoError ? 'Scene clip unavailable' : inlineSceneError ? 'Scene direction unavailable' : inlineSceneCurrent ? 'Current response · scene clip pending' : inlineSceneApplies ? 'Stale settings · replacement pending' : 'Scene pending'}</span>
+                    {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.source.references.length} references · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s</small>{:else if generatedInlineScene}<small>{generatedInlineScene.references.length} references · {generatedInlineScene.request.aspectRatio}</small>{/if}
                   </figcaption>
                 </figure>
               {/if}
