@@ -4973,12 +4973,13 @@
                   aria-busy={inlineSceneBusy || inlineSceneVideoBusy}
                   style:--scene-ratio={generatedInlineSceneVideo ? generatedInlineSceneVideo.width + ' / ' + generatedInlineSceneVideo.height : '16 / 9'}
                 >
-                  {#if !inlineSceneVideoVisible}
+                  <div class="scene-frame">
+                    {#if !inlineSceneVideoVisible}
                     <div class:error-state={Boolean(inlineSceneError || inlineSceneVideoError)} class="scene-placeholder">
                       <span>{inlineSceneError || inlineSceneVideoError ? 'Scene unavailable' : inlineSceneBusy ? 'Directing and preparing references…' : inlineSceneVideoBusy ? 'Rendering the scene clip…' : 'Waiting for scene generation'}</span>
                     </div>
-                  {/if}
-                  {#if inlineSceneVideoMounted}
+                    {/if}
+                    {#if inlineSceneVideoMounted}
                     <video
                       class="scene-motion"
                       class:playback-confirmed={inlineSceneVideoVisible}
@@ -4994,7 +4995,8 @@
                       on:error={handleInlineSceneVideoDecodeError}
                       aria-label="Generated landscape motion for this finalized response"
                     ></video>
-                  {/if}
+                    {/if}
+                  </div>
                   <figcaption>
                     <span>{inlineSceneVideoVisible && generatedInlineSceneVideo ? 'Current response · MiniMax H3 reference clip · silent' : inlineSceneVideoPlaybackState === 'starting' && inlineSceneVideoMounted ? 'Starting motion' : inlineSceneVideoBusy ? 'Rendering the scene clip from the cast references' : inlineSceneBusy ? 'Gemma sidecar → scene direction and references' : inlineSceneVideoError ? 'Scene clip unavailable' : inlineSceneError ? 'Scene direction unavailable' : inlineSceneCurrent ? 'Current response · scene clip pending' : inlineSceneApplies ? 'Stale settings · replacement pending' : 'Scene pending'}</span>
                     {#if inlineSceneVideoVisible && generatedInlineSceneVideo}<small>{generatedInlineSceneVideo.width}×{generatedInlineSceneVideo.height} · {generatedInlineSceneVideo.request.source.references.length} references · {generatedInlineSceneVideo.durationSeconds.toFixed(3)} s</small>{:else if generatedInlineScene}<small>{generatedInlineScene.references.length} references · {generatedInlineScene.request.aspectRatio}</small>{/if}
@@ -5251,11 +5253,12 @@
   .content { color: #e8e2d9; font: 16px/1.72 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
   .scene-card { position: relative; overflow: hidden; margin: 18px 0 0; border: 1px solid #435344; border-radius: 13px; background: #171b18; box-shadow: 0 18px 42px rgba(0,0,0,.24); }
   .scene-card.stale { border-color: #6d573d; }
-  .scene-card img, .scene-card video, .scene-placeholder { display: block; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); object-fit: cover; background: linear-gradient(135deg, #25221d, #171918); }
-  .scene-card .scene-motion { position: absolute; inset: 0 auto auto 0; z-index: 1; opacity: 0; pointer-events: none; }
+  .scene-card .scene-frame { position: relative; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); overflow: hidden; background: linear-gradient(135deg, #25221d, #171918); }
+  .scene-card .scene-frame > * { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
+  .scene-card .scene-motion { z-index: 1; opacity: 0; pointer-events: none; }
   .scene-card .scene-motion.playback-confirmed { opacity: 1; pointer-events: auto; }
   .scene-motion-controls { display: grid; gap: 7px; margin-top: 4px; padding-top: 10px; border-top: 1px solid #3c3731; }
-  .scene-placeholder { min-height: 180px; display: grid; place-items: center; color: #8ea491; font: 700 10px/1.4 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+  .scene-card .scene-frame > .scene-placeholder { display: grid; place-items: center; text-align: center; padding: 0 16px; color: #8ea491; font: 700 10px/1.4 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
   .scene-placeholder:not(.error-state) { background: linear-gradient(110deg, #171918 25%, #263028 45%, #171918 65%); background-size: 240% 100%; animation: scene-shimmer 1.8s linear infinite; }
   .scene-placeholder.error-state { color: #d4a99e; background: #251918; }
   .scene-card figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 9px 11px; color: #a8b9aa; background: #171b18; font: 700 9px/1.3 ui-monospace, monospace; }

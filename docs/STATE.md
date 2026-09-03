@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on 9520f72 (scene is one H3 reference clip from the cast pack, no still; cache re-confirms the lane), verified over two turns | SERVED-SHA: 9520f72431222a56122f08cfd711b3f4c541bc64 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: scene-clip-history (operator 2026-09-03: every response keeps its own clip in the transcript, as SillyTavern does) | STATE: card-height fix verified, deploying | SERVED-SHA: 9520f72431222a56122f08cfd711b3f4c541bc64 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -790,3 +790,17 @@ label 1.3 s, portrait 5.6 s, caption 7.2 s, portrait loop 56.4 s, scene clip 107
 current; reload restored all three media items with zero generation requests; only the
 proxy-root favicon 502s. The cached pack was re-confirmed on the lane and nothing was
 re-rendered. READY FOR OPERATOR.
+
+06:20 CDT 2026-09-03, operator defect: the scene card rendered as a thin strip. Cause: with
+the still gone, the only in-flow element sizing the card was the removed `<img>`; the clip
+is absolutely positioned, so the card collapsed to its caption and clipped the video. The
+card now has a `.scene-frame` that always carries the aspect ratio and the clip and the
+placeholder fill it. My two-turn checks had passed with the collapsed card because
+`SCENE_VIDEO` only asserted decode, so the check now also requires a rendered box of at
+least 200x120 and records the measured box and the number of cards. Candidate check as
+Kristi (`scratch/browser-check/cand-card/`, 06:33-06:38): ok=true, clip visible full size
+on both turns, reload restored everything with zero generation requests.
+Operator order in the same turn: every text response must generate its own clip and all
+older clips must stay in the chat history, exactly as SillyTavern keeps per-message media.
+Today MULLET stores one active clip and renders one card at the newest finalized response.
+Next: per-message clip storage and rendering.

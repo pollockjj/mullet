@@ -131,7 +131,15 @@ const READ_PANELS = `(() => {
 const PORTRAIT_IMAGE = `(() => { const i = document.querySelector('.portrait img'); return i && i.complete && i.naturalWidth > 0; })()`;
 const PORTRAIT_VIDEO = `(() => { const v = document.querySelector('.portrait video'); return v && v.readyState >= 2 && v.videoWidth > 0; })()`;
 const SCENE_IMAGE = `(() => { const i = document.querySelector('.scene-card img'); return i && i.complete && i.naturalWidth > 0; })()`;
-const SCENE_VIDEO = `(() => { const v = document.querySelector('.scene-card video'); return v && v.readyState >= 2 && v.videoWidth > 0; })()`;
+// Decoded AND actually laid out: a card that collapses to a sliver still decodes, so the
+// rendered box is part of the assertion.
+const SCENE_VIDEO = `(() => { const v = document.querySelector('.scene-card video');
+  if (!v || v.readyState < 2 || !(v.videoWidth > 0)) return false;
+  const box = v.getBoundingClientRect();
+  return box.width >= 200 && box.height >= 120; })()`;
+const SCENE_GEOMETRY = `(() => { const v = document.querySelector('.scene-card video');
+  const box = v ? v.getBoundingClientRect() : null;
+  return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null; })()`;
 const EXPRESSION_LABEL = `(() => { const m = document.querySelector('[aria-label="Media"]')?.textContent ?? '';
   const match = m.replace(/\\s+/g, ' ').match(/Expression\\s+([a-z]+)/i);
   return match && !/^determining$/i.test(match[1]) ? match[1] : ''; })()`;
@@ -437,6 +445,11 @@ async function main() {
         portraitImage: await page.evaluate(PORTRAIT_IMAGE),
         portraitVideo: await page.evaluate(PORTRAIT_VIDEO),
         sceneImage: await page.evaluate(SCENE_IMAGE),
+        sceneVideoBox: await page.evaluate(SCENE_GEOMETRY),
+        // One scene card only: the clip belongs to the newest finalized response, and
+        // older turns must not keep a stale one.
+        sceneCards: await page.evaluate(`document.querySelectorAll('.scene-card').length`),
+        sceneVideos: await page.evaluate(`document.querySelectorAll('.scene-card video').length`),
         sceneVideo: await page.evaluate(SCENE_VIDEO),
         generationRequests: generationRequests(page, reloadAt).map((request) => ({
           path: pathOf(request.url), status: request.status, startedMs: request.startedAt - reloadAt
