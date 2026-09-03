@@ -484,12 +484,12 @@ test('submits one MiniMaxH3ReferenceToVideo graph loading the refpack pictures b
   assert.equal(conditioning.inputs.height, 576);
   assert.equal(conditioning.inputs.length, 73);
   assert.equal(conditioning.inputs.ref_image_size, 'max');
-  assert.deepEqual(conditioning.inputs.ref_images, {
-    ref_image_0: ['20', 0],
-    ref_image_1: ['21', 0],
-    ref_image_2: ['22', 0]
-  });
-  assert.equal(Object.keys(conditioning.inputs).some((key) => key.startsWith('ref_images.')), false);
+  // Dotted autogrow paths: measured on the lane, any other shape is silently dropped and
+  // the clip comes out with none of the subject's identity in it.
+  assert.equal(conditioning.inputs.ref_images, undefined);
+  assert.deepEqual(conditioning.inputs['ref_images.ref_image_0'], ['20', 0]);
+  assert.deepEqual(conditioning.inputs['ref_images.ref_image_1'], ['21', 0]);
+  assert.deepEqual(conditioning.inputs['ref_images.ref_image_2'], ['22', 0]);
   references.forEach((entry, index) => {
     const node = graph[String(20 + index)];
     assert.equal(node.class_type, 'LoadImage');
@@ -530,8 +530,8 @@ test('submits one MiniMaxH3ReferenceToVideo graph loading the refpack pictures b
   const everyView = ALL_VIEWS.map((view) => reference(sceneCandidate.id, view));
   const deepGraph = buildInlineSceneVideoWorkflow(buildInlineSceneVideoRequest(motionSource(sceneRequest(), everyView)), 1);
   assert.deepEqual(
-    Object.keys(deepGraph['6'].inputs.ref_images),
-    ALL_VIEWS.map((_, index) => `ref_image_${index}`)
+    Object.keys(deepGraph['6'].inputs).filter((key) => key.startsWith('ref_images.')),
+    ALL_VIEWS.map((_, index) => `ref_images.ref_image_${index}`)
   );
   assert.equal(deepGraph[String(20 + ALL_VIEWS.length - 1)].class_type, 'LoadImage');
   assert.equal(deepGraph[String(20 + ALL_VIEWS.length - 1)].inputs.image, `mullet/identity/refpack/${everyView.at(-1).name}`);
@@ -661,7 +661,9 @@ test('reference scene graph nests the pictures under ref_images and names them i
   const graph = buildMiniMaxH3ReferenceSceneWorkflow({ prompt: built, references, width: 1024, height: 576, frames: 73, fps: 24, seed: 7 });
   const node = graph['6'];
   assert.equal(node.class_type, 'MiniMaxH3ReferenceToVideo');
-  assert.deepEqual(node.inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0] });
+  assert.equal(node.inputs.ref_images, undefined);
+  assert.deepEqual(node.inputs['ref_images.ref_image_0'], ['20', 0]);
+  assert.deepEqual(node.inputs['ref_images.ref_image_1'], ['21', 0]);
   assert.equal(node.inputs.ref_image_size, 'max');
   assert.equal(graph['1'].inputs.unet_name, template.modelFiles.unet);
   assert.equal(graph['16'].inputs.lora_name, template.modelFiles.turboLora);

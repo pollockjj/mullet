@@ -383,7 +383,11 @@ test('queues the reference graph with its own client id, polls history, and retu
   assert.equal(queued.client_id, 'mullet-inline-scene-video');
   assert.deepEqual(queued.prompt, buildInlineSceneVideoWorkflow(videoRequest, 42));
   assert.equal(queued.prompt['6'].class_type, 'MiniMaxH3ReferenceToVideo');
-  assert.deepEqual(queued.prompt['6'].inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0], ref_image_2: ['22', 0] });
+  assert.equal(queued.prompt['6'].inputs.ref_images, undefined);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(queued.prompt['6'].inputs).filter(([key]) => key.startsWith('ref_images.'))),
+      { 'ref_images.ref_image_0': ['20', 0], 'ref_images.ref_image_1': ['21', 0], 'ref_images.ref_image_2': ['22', 0] }
+    );
   assert.equal(queued.prompt['20'].inputs.image, `mullet/identity/refpack/jenna-face-${'d'.repeat(16)}.png`);
   assert.equal(queued.prompt['10'].inputs.noise_seed, 42);
   assert.equal(queued.prompt['15'].inputs.filename_prefix, 'mullet/scene-motion-ref');
@@ -404,7 +408,10 @@ test('queues the reference graph with its own client id, polls history, and retu
   const pair = comfyFetcher();
   await runComfyInlineSceneVideo(pair.fetcher, baseUrl, pairRequest, 7);
   const pairQueued = JSON.parse(pair.calls[0].init.body);
-  assert.deepEqual(pairQueued.prompt['6'].inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0] });
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(pairQueued.prompt['6'].inputs).filter(([key]) => key.startsWith('ref_images.'))),
+    { 'ref_images.ref_image_0': ['20', 0], 'ref_images.ref_image_1': ['21', 0] }
+  );
   assert.equal(pairQueued.prompt['21'].inputs.image, `mullet/identity/refpack/jenna-identity-${'d'.repeat(16)}.png`);
   assert.match(pairQueued.prompt['6'].inputs.prompt, /Jenna Stannis is the person in <Picture 1> face, <Picture 2> identity/);
 });

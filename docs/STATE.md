@@ -1,4 +1,4 @@
-QUEUE-ITEM: one-to-one scenes (804c298 verified as a candidate; deploying) | STATE: scene is one subject, close, alone, silent; clip-per-response served as 963fa8f | SERVED-SHA: 963fa8fc7b7260a4a9a9028f7c7ea742aea9a80a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: reference-plumbing (the clips never used the references; fixed, verifying) | STATE: 804c298 served with one-to-one framing but reference-less clips | SERVED-SHA: 804c298 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -855,3 +855,21 @@ turns show one subject framed waist-up and alone, reload restored both clips wit
 generation requests. Suite 247 pass, svelte-check 0 errors.
 Open, sent to the operator to judge: sigma shift 6 (shipped, inherited from the loop path)
 vs 12 (the turbo LoRA's own table) on an identical seed, 39.8 s at 12.
+
+07:45-08:05 CDT 2026-09-03, operator: both probe clips bear zero resemblance to the LoRA
+subject. They were right, and the cause is mine: MULLET's clips have never used the
+reference pictures at all. Evidence, measured on the lane with one seed and one prompt and
+frames extracted through LoadVideo -> GetVideoComponents -> SaveImage (the first time I
+have actually looked inside a generated clip):
+- no references at all: 118,804 bytes
+- references as a nested `ref_images` object (what MULLET shipped): 119,479 bytes, and the
+  extracted frame is pixel-identical to the no-reference run
+- as a list, as an index-keyed object, as objects with a `ref_image` key: 119,4xx bytes,
+  same non-effect
+- flat `ref_image_0` keys: TypeError, unexpected keyword argument
+- dotted `ref_images.ref_image_0`: 170,480 bytes and the face is the referenced subject
+ComfyUI expands an autogrow group into dotted input paths and re-nests them before calling
+the node, so anything else is silently dropped. Fixed in the graph builder; the tests now
+pin the dotted paths and assert the nested object is absent. This also explains why
+`ref_image_size` match vs max made no difference (46.2 s both) - there was nothing to size.
+Frame extraction now exists at scratchpad/frames.mjs and is how a clip gets looked at.

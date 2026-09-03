@@ -181,13 +181,17 @@ export function buildMiniMaxH3ReferenceSceneWorkflow(settings: {
     '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
     '18': { class_type: 'MiniMaxH3SigmaShift', inputs: { model: ['16', 0], shift_video: template.shiftVideo, shift_audio: template.shiftAudio } }
   };
-  const refImages: Record<string, [string, number]> = {};
+  // ComfyUI expands an autogrow group into dotted input paths ("<group>.<prefix><index>")
+  // and nests them again before calling the node. Measured on the lane 2026-09-03 against
+  // a no-reference baseline: a nested object, a list, and flat `ref_image_0` keys all
+  // produce a clip byte-identical to using no references at all - the pictures are
+  // silently dropped - while the dotted path changes the clip completely and the face
+  // becomes the referenced subject. Flat keys reach execute() as an unexpected kwarg.
+  const referenceInputs: Record<string, [string, number]> = {};
   settings.references.forEach((reference, index) => {
     const nodeId = String(20 + index);
     graph[nodeId] = { class_type: 'LoadImage', inputs: { image: reference.image } };
-    // ComfyUI's autogrow input is submitted nested under the input name; flat keys pass
-    // validation and then fail inside execute().
-    refImages[`ref_image_${index}`] = [nodeId, 0];
+    referenceInputs[`ref_images.ref_image_${index}`] = [nodeId, 0];
   });
   graph['6'] = { class_type: 'MiniMaxH3ReferenceToVideo', inputs: {
     clip: ['2', 0],
@@ -198,7 +202,7 @@ export function buildMiniMaxH3ReferenceSceneWorkflow(settings: {
     height: settings.height,
     length: settings.frames,
     ref_image_size: template.refImageSize,
-    ref_images: refImages
+    ...referenceInputs
   } };
   return graph;
 }
