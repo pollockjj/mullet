@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on 963fa8f (scene clip per response kept in the transcript, restored on reload), verified over two turns | SERVED-SHA: 963fa8fc7b7260a4a9a9028f7c7ea742aea9a80a | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: one-to-one scenes (804c298 verified as a candidate; deploying) | STATE: scene is one subject, close, alone, silent; clip-per-response served as 963fa8f | SERVED-SHA: 963fa8fc7b7260a4a9a9028f7c7ea742aea9a80a | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -830,3 +830,28 @@ after reload the transcript held both responses' clips, restored with zero gener
 requests; only the proxy-root favicon 502s. READY FOR OPERATOR.
 Also served earlier this morning: 6b3b945, the scene-card frame that fixed the collapsed
 card (served check ok at 06:52, `scratch/browser-check/loop-6b3b945/`).
+
+07:20-07:38 CDT 2026-09-03, operator order: MULLET is a one-to-one app, and a scene whose
+subject is far away, unrecognisable, sharing the frame with other people, or talking is
+wrong. Causes and changes:
+- The director was told to "select every visibly present person, one to three total" and to
+  describe "spatial composition and camera framing" freely. It now selects exactly one
+  subject (the character the player is with; the parser slices to one) and is told to frame
+  a medium close-up or waist-up shot of that person, never to place another person,
+  bystander, silhouette or crowd in frame, and never to describe speech.
+- The clip prompt now names that one person, states they are the only person in frame,
+  demands a close waist-up framing that never pulls back to a wide landscape, demands the
+  face stay unobstructed and match the references, and forbids talking, lip movement,
+  speech gestures and singing.
+- The reference pack's third view was a full-body standing photo, which taught the model to
+  place the subject at a distance; it is now a waist-up view (832x1024), named `waistup`.
+- `ref_image_size` moved from `match` to `max`, so references condition the clip at their
+  own resolution instead of being scaled down to the clip's pixel area. Measured on the
+  lane with an identical seed: 46.2 s either way, so the identity fidelity is free.
+- The 80-clip storage cap I had invented was removed; the operator never asked for one and
+  a clip is 147-330 KB.
+Candidate check as Kristi (`scratch/browser-check/cand-1to1/`, 07:31-07:38): ok=true, both
+turns show one subject framed waist-up and alone, reload restored both clips with zero
+generation requests. Suite 247 pass, svelte-check 0 errors.
+Open, sent to the operator to judge: sigma shift 6 (shipped, inherited from the loop path)
+vs 12 (the turbo LoRA's own table) on an identical seed, 39.8 s at 12.
