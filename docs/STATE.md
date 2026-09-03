@@ -1,4 +1,4 @@
-QUEUE-ITEM: h3-reference-scene (skip the still: reference-scene builder committed; nine-Krea-reference clip probing; route/client next) | STATE: READY FOR OPERATOR on 2c355e2 (65536 response, 262144 context, HF samplers; verified two turns as Jan) | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: h3-reference-scene (code complete in the working tree: v7 clip request, /api/scene/references, client without a still; candidate check queued behind the operator's 41-job Qwen batch on 8189) | STATE: 2c355e2 served, READY FOR OPERATOR | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -725,3 +725,21 @@ uploaded to the loop lane's `mullet/identity/refpack/` in 1.0 s and one 1024x576
 747 KB, sent to the operator). Reference count barely moves the cost at `match` size: the
 three-reference run was 61.4 s including the ref2va weight load. Decision (GOAL policy,
 operator proposal 21:05): the scene path becomes reference-to-video with no scene still.
+
+21:40-22:00 CDT, reference-scene implementation (uncommitted until its candidate check
+passes). Shape: the director result still becomes an `InlineSceneImageRequest` (scene
+prompt, cast, continuity clause) but no still is rendered; a new `POST /api/scene/references`
+prepares a reference pack per cast member (three Krea views per LoRA subject rendered on
+the still lane, or the identity photo for a reference-driven subject) under the loop
+lane's `mullet/identity/refpack/<profile>-<view>-<fingerprint16>.png`, cached in the
+browser per cast fingerprint; the scene-video request (spec v7) carries the scene request
+plus that reference list and `POST /api/scene/video` (JSON) submits one
+`MiniMaxH3ReferenceToVideo` graph (nested `ref_images`, `<Picture N>` bindings to display
+names, 1024x576, 73 frames, 4-step ref2v turbo) and returns the MP4 with
+`x-mullet-references-sha256`. Stored scene record v7 = description + references; stored
+clip v10 keyed on the reference hash; the FL2V scene-loop template, still upload, prior
+masters and managed body references are deleted from the scene path (the portrait loop
+keeps its own FL2V). The media panel's scene card shows only the clip. Browser check no
+longer waits for a scene still and requires portrait image, portrait loop, and scene clip
+on reload. Expected cost per turn: ~5 s of Krea per new subject once, then ~50-60 s of H3
+per clip instead of still 37 s + loop 56 s.
