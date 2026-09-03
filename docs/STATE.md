@@ -1,4 +1,4 @@
-QUEUE-ITEM: h3-reference-scene (9520f72 cache hardening queued behind the operator's lane use) | STATE: READY FOR OPERATOR on 9768667 (scene is one H3 reference clip, no still), verified over two turns | SERVED-SHA: 9768667789e11fcf778c188e0f1c1f79c4c10207 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on 9520f72 (scene is one H3 reference clip from the cast pack, no still; cache re-confirms the lane), verified over two turns | SERVED-SHA: 9520f72431222a56122f08cfd711b3f4c541bc64 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -782,3 +782,11 @@ already on the lane from the candidate run, so the lanes ran two portraits (5.6 
 and two clips (50.6 s with 3 references, 51.3 s with 9) and rendered no references at all.
 Against the still path on the same scenario (2c355e2: 127 s and 163 s), the scene lands
 17-25 s earlier and one ComfyUI stage per turn is gone. READY FOR OPERATOR.
+
+Served 9520f72 at 23:22:23 CDT with both lanes quiet; two-turn check through the real
+origin, cabin as Jan (`scratch/browser-check/loop-9520f72/`, 23:22-23:27): ok=true. Turn 1:
+label 1.3 s, portrait 5.6 s, caption 7.2 s, portrait loop 56.4 s, scene clip 107.4 s. Turn
+2: response 29.2 s, portrait 36.5 s, portrait loop 87.4 s, scene clip 139.4 s; Continuity
+current; reload restored all three media items with zero generation requests; only the
+proxy-root favicon 502s. The cached pack was re-confirmed on the lane and nothing was
+re-rendered. READY FOR OPERATOR.
