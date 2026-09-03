@@ -1,4 +1,4 @@
-QUEUE-ITEM: angela-krea (LoRA angelapollock-krea2-v2-attn appeared 20:40 CDT; profile switched, candidate check pending) | STATE: d65c792 served, READY FOR OPERATOR | SERVED-SHA: d65c7925ba157d480fd43828160cdee7d3bfa35e | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: angela-krea (751190a served 20:44 CDT; served two-turn check running) | STATE: 751190a served (all three cabin subjects on Krea) | SERVED-SHA: 751190a54ee1dbafa37c453ae97df7c91b725f77 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -650,3 +650,21 @@ Header hash from `/view_metadata/loras`: ca901818454e401e4d28ab4319602be9e101c1e
 with that LoRA, same trigger `angelapollock` and seed; the Z-Image LoRA is no longer
 referenced by the cabin scenario. Suite 216 pass, svelte-check 0 errors. Next: candidate
 check as Angela over two turns on 8782, deploy, served check.
+
+Candidate 751190a on 8782, cabin as Angela, two turns (`scratch/browser-check/cand-angela-751190a/`,
+20:38-20:43 CDT): ok=true. Turn 1: label 2.8 s, portrait 8.8 s (5.8 s of Krea with
+angelapollock-krea2-v2-attn), caption 8.1 s, scene still 38.8 s (3.7 s of Krea), portrait
+loop 53.9 s, scene loop 110.9 s. Turn 2 ran while the operator was playing as Jan on the
+served build (their Jan portrait 20:40:39 and scene 20:41:51 interleave with Angela's in
+the 8188 history), so it was contended: response 36.6 s, portrait 53.3 s (5.9 s of Krea),
+scene still 79.7 s (3.7 s of Krea), portrait loop 136.9 s, scene loop 192.8 s; Continuity
+current; reload restored all four with zero requests. Both Angela stills on both turns
+came from Krea with her LoRA. The first candidate build of this commit was made without
+`BASE_PATH=/mullet` and failed the check at the 404 healthz; recipe recorded in
+docs/PLAN.md.
+
+Deployed 751190a at 20:44:12 CDT (healthz revision confirmed). The deploy gate saw both
+lanes empty, but the operator's Jan session was active 13 s earlier: the hold I added to
+wait for three quiet minutes stopped the wrong process (the task wrapper shell, not the
+chain), so the served server restarted between two of their turns. The served two-turn
+check as Angela is running now.
