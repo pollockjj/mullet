@@ -873,3 +873,11 @@ the node, so anything else is silently dropped. Fixed in the graph builder; the 
 pin the dotted paths and assert the nested object is absent. This also explains why
 `ref_image_size` match vs max made no difference (46.2 s both) - there was nothing to size.
 Frame extraction now exists at scratchpad/frames.mjs and is how a clip gets looked at.
+
+Candidate check of the reference fix (`scratch/browser-check/cand-ref/`, 07:56-08:02):
+ok=true, two turns, both clips carried three dotted reference inputs (the lane history
+shows `ref_images.ref_image_0..2` on prompts 00022 and 00023, and zero on the run before
+the fix), reload restored both clips with no generation requests. The clip stage now costs
+149 s on turn 1 and 158 s on turn 2 against ~119 s before, because reference tokens ride
+through every sampling step - that is the price of the subject actually being in the shot.
+A frame pulled from the candidate's own clip shows the referenced subject, alone, waist-up.
