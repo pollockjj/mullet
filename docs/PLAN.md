@@ -212,3 +212,27 @@ quote banks - until the operator accepts.
    `launchctl unload` then `load` that plist, wait for the served `/mullet/healthz` revision.
 5. Re-run the same browser check against the real origin; record both results in
    `docs/STATE.md`; kill the candidate server and any `mullet-cdp-` Chrome.
+
+## Reference-scene acceptance (operator order 2026-09-02: skip the still)
+
+The scene stage is one MiniMax H3 reference-to-video clip conditioned on the cast's
+reference pack; there is no scene still. A candidate is READY FOR OPERATOR only when the
+browser check (`tools/browser-check.mjs --generate loop --turn ...`) shows, for the cabin
+scenario as Jan over two turns:
+
+1. `POST /api/scene/references` prepared the pack for the cast (three Krea views per LoRA
+   subject, rendered once and found on the loop lane afterwards; the second turn must not
+   render them again).
+2. `POST /api/scene/video` returned an MP4 whose `x-mullet-references-sha256` matches the
+   request, with the clip visible in the scene card (`sceneMotionMs`) on both turns.
+3. Portrait still and portrait loop unchanged; continuity caption current on turn two.
+4. Reload restores portrait image, portrait loop, and scene clip with zero generation
+   requests.
+5. No 5xx from MULLET routes; the lane histories show only `mullet-scene-reference`,
+   `mullet-portrait`, `mullet-portrait-video`, `mullet-inline-scene-video` prompts from
+   the check.
+
+Follow-up once the clip path is accepted: delete the unused still path (`/api/scene`,
+`src/lib/server/comfy-inline-scene.ts`, the Krea/Qwen/Z-Image scene-still templates in
+`src/lib/inline-scene.ts` that only served the still) so the scene description no longer
+carries a still model template.
