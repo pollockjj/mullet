@@ -1,4 +1,4 @@
-QUEUE-ITEM: h3-reference-to-video (operator proposal 21:05 CDT: skip the scene still, feed up to 9 Krea references into H3; probing MiniMaxH3ReferenceToVideo on 8189) | STATE: 2c355e2 served 21:28 CDT (65536 response / 262144 context / HF samplers); served browser check pending | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: h3-reference-to-video (operator proposal 21:05 CDT: skip the scene still, feed up to 9 Krea references into H3; three-identity clip 61.4 s; reference-scene graph builder added, nine-Krea-reference clip probing) | STATE: 2c355e2 served 21:28 CDT (65536 response / 262144 context / HF samplers); served browser check pending | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 

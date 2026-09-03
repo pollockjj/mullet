@@ -335,5 +335,27 @@ test('accepts only a canonical finite encoded-duration header', () => {
   }
 });
 
-
+test('reference scene graph nests the pictures under ref_images and names them in order', async () => {
+  const { buildMiniMaxH3ReferenceSceneWorkflow, buildMiniMaxH3ReferenceScenePrompt, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE } = await import('../src/lib/inline-scene-video.ts');
+  const references = [
+    { subject: 'Jan', view: 'face', image: 'mullet/identity/refpack/jan-pollock-face.png' },
+    { subject: 'Jan', view: 'fullbody', image: 'mullet/identity/refpack/jan-pollock-fullbody.png' },
+    { subject: 'Kristi', view: 'identity', image: 'mullet/identity/cabin-kristi-v1.png' }
+  ];
+  const prompt = buildMiniMaxH3ReferenceScenePrompt('They sit on the porch steps.', 'Jan: grey shirt.', references);
+  assert.match(prompt, /Jan is the person in <Picture 1> face, <Picture 2> full body and clothing; Kristi is the person in <Picture 3> identity/);
+  const graph = buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1024, height: 576, frames: 73, fps: 24, seed: 7 });
+  const node = graph['6'];
+  assert.equal(node.class_type, 'MiniMaxH3ReferenceToVideo');
+  assert.deepEqual(node.inputs.ref_images, { ref_image_0: ['20', 0], ref_image_1: ['21', 0], ref_image_2: ['22', 0] });
+  assert.equal(node.inputs.ref_image_size, 'match');
+  assert.equal(graph['1'].inputs.unet_name, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.modelFiles.unet);
+  assert.equal(graph['16'].inputs.lora_name, MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.modelFiles.turboLora);
+  assert.equal(graph['22'].inputs.image, 'mullet/identity/cabin-kristi-v1.png');
+  assert.equal(Object.keys(graph).filter((id) => graph[id].class_type === 'LoadImage').length, 3);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references: [], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /between 1 and 9/);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1000, height: 576, frames: 73, fps: 24, seed: 7 }), /multiples of 32/);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references, width: 1024, height: 576, frames: 72, fps: 24, seed: 7 }), /5 \+ 17k/);
+  assert.throws(() => buildMiniMaxH3ReferenceSceneWorkflow({ prompt, references: [{ subject: 'X', view: 'face', image: '../etc/passwd.png' }], width: 1024, height: 576, frames: 73, fps: 24, seed: 7 }), /mullet input namespace/);
+});
 

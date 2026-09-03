@@ -102,6 +102,159 @@ export const MINIMAX_H3_SCENE_LOOP_TEMPLATE = Object.freeze({
   promptGuide: 'one continuous landscape shot, identical first and last frame so the clip loops seamlessly, restrained natural motion, no cuts, no camera moves'
 } as const);
 
+// Reference-to-video scene clip (operator proposal, 2026-09-02): no scene still. Up to
+// nine reference images of the cast condition MiniMaxH3ReferenceToVideo directly, so the
+// scene lands animated in one pass (probe on firestorm:8189: three references, 1024x576,
+// 73 frames, 4 steps, 61.4 s of ComfyUI). Same sampler chain as the loop.
+export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID = 'minimax-h3-ref2va-scene-v1' as const;
+export const MINIMAX_H3_REFERENCE_SCENE_MODE = 'ref2v' as const;
+export const MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES = 9 as const;
+export const MINIMAX_H3_REFERENCE_SCENE_TEMPLATE = Object.freeze({
+  id: MINIMAX_H3_REFERENCE_SCENE_TEMPLATE_ID,
+  label: 'MiniMax H3 Ref2VA Turbo · 3 s scene from cast references (1024x576)',
+  modelFamily: 'minimax-h3-ref2va',
+  modelFiles: {
+    unet: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
+    clip: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors',
+    videoVae: 'minimax_h3_video_vae_fp16.safetensors',
+    audioVae: 'minimax_h3_audio_vae_fp32.safetensors',
+    turboLora: 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors'
+  },
+  requiredNodes: [
+    'UNETLoader',
+    'CLIPLoader',
+    'VAELoader',
+    'LoadImage',
+    'MiniMaxH3ReferenceToVideo',
+    'BasicGuider',
+    'KSamplerSelect',
+    'BasicScheduler',
+    'RandomNoise',
+    'SamplerCustomAdvanced',
+    'VAEDecode',
+    'CreateVideo',
+    'SaveVideo',
+    'LoraLoaderModelOnly',
+    'MiniMaxH3SigmaShift'
+  ],
+  outputNode: '15',
+  mode: MINIMAX_H3_REFERENCE_SCENE_MODE,
+  dimensions: MINIMAX_H3_SCENE_LOOP_DIMENSIONS,
+  durationSeconds: MINIMAX_H3_SCENE_LOOP_DURATION_SECONDS,
+  frames: MINIMAX_H3_SCENE_LOOP_FRAMES,
+  multiple: 32,
+  shortEdge: 576,
+  maxPixels: 1024 * 576,
+  sampler: 'euler',
+  scheduler: 'simple',
+  steps: 4,
+  denoise: 1,
+  shiftVideo: 6,
+  shiftAudio: 3,
+  refImageSize: 'match',
+  format: 'auto',
+  codec: 'auto',
+  promptGuide: 'one continuous landscape shot of the referenced people in the described place, restrained natural motion, no cuts, no text'
+} as const);
+
+export type MiniMaxH3SceneReference = {
+  // Subject label used in the prompt binding ("Jan"), and the view the picture shows.
+  subject: string;
+  view: 'face' | 'threequarter' | 'fullbody' | 'identity';
+  // Uploaded ComfyUI input path (subfolder/name) readable by the loop lane.
+  image: string;
+};
+
+// The prompt names every picture in connection order, as the ComfyUI MiniMax H3 docs
+// require ("<Picture 1>"), and says which subject and view it carries.
+export function buildMiniMaxH3ReferenceScenePrompt(
+  scenePrompt: string,
+  continuity: string,
+  references: readonly MiniMaxH3SceneReference[]
+): string {
+  const bySubject = new Map<string, string[]>();
+  references.forEach((reference, index) => {
+    const tag = `<Picture ${index + 1}>`;
+    const viewLabel = reference.view === 'face' ? 'face'
+      : reference.view === 'threequarter' ? 'three-quarter view'
+      : reference.view === 'fullbody' ? 'full body and clothing'
+      : 'identity';
+    const list = bySubject.get(reference.subject) ?? [];
+    list.push(`${tag} ${viewLabel}`);
+    bySubject.set(reference.subject, list);
+  });
+  const bindings = [...bySubject.entries()].map(([subject, pictures]) => `${subject} is the person in ${pictures.join(', ')}`);
+  return [
+    bindings.length ? `Use the pictures for identity, hair, and clothing only: ${bindings.join('; ')}.` : '',
+    scenePrompt,
+    continuity,
+    'Preserve every referenced identity exactly; no new people.',
+    'Ambient physical motion only: no talking, no lip or mouth movement, and no speech gestures.',
+    MINIMAX_H3_REFERENCE_SCENE_TEMPLATE.promptGuide + ', no black frames.'
+  ].filter(Boolean).join(' ');
+}
+
+export function buildMiniMaxH3ReferenceSceneWorkflow(settings: {
+  prompt: string;
+  references: readonly MiniMaxH3SceneReference[];
+  width: number;
+  height: number;
+  frames: number;
+  fps: number;
+  seed: number;
+}): Record<string, unknown> {
+  const template = MINIMAX_H3_REFERENCE_SCENE_TEMPLATE;
+  if (settings.references.length < 1 || settings.references.length > MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES) {
+    throw new Error(`reference scene needs between 1 and ${MINIMAX_H3_REFERENCE_SCENE_MAX_REFERENCES} references`);
+  }
+  if (!Number.isInteger(settings.width) || !Number.isInteger(settings.height) || settings.width % template.multiple !== 0 || settings.height % template.multiple !== 0) {
+    throw new Error(`reference scene dimensions must be multiples of ${template.multiple}`);
+  }
+  if (!Number.isInteger(settings.frames) || settings.frames < 5 || (settings.frames - 5) % 17 !== 0) {
+    throw new Error('reference scene frame count must be 5 + 17k');
+  }
+  if (!Number.isSafeInteger(settings.seed) || settings.seed < 0) throw new Error('reference scene seed is invalid');
+  if (settings.references.some((reference) => !/^mullet\/[A-Za-z0-9_./-]+\.png$/.test(reference.image) || reference.image.includes('..'))) {
+    throw new Error('reference scene images must live in the mullet input namespace');
+  }
+  const graph: Record<string, unknown> = {
+    '1': { class_type: 'UNETLoader', inputs: { unet_name: template.modelFiles.unet, weight_dtype: 'default' } },
+    '2': { class_type: 'CLIPLoader', inputs: { clip_name: template.modelFiles.clip, type: 'minimax', device: 'default' } },
+    '3': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.videoVae } },
+    '4': { class_type: 'VAELoader', inputs: { vae_name: template.modelFiles.audioVae } },
+    '7': { class_type: 'BasicGuider', inputs: { model: ['18', 0], conditioning: ['6', 0] } },
+    '8': { class_type: 'KSamplerSelect', inputs: { sampler_name: template.sampler } },
+    '9': { class_type: 'BasicScheduler', inputs: { model: ['18', 0], scheduler: template.scheduler, steps: template.steps, denoise: template.denoise } },
+    '10': { class_type: 'RandomNoise', inputs: { noise_seed: settings.seed } },
+    '11': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['10', 0], guider: ['7', 0], sampler: ['8', 0], sigmas: ['9', 0], latent_image: ['6', 1] } },
+    '12': { class_type: 'VAEDecode', inputs: { samples: ['11', 0], vae: ['3', 0] } },
+    '14': { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps: settings.fps } },
+    '15': { class_type: 'SaveVideo', inputs: { video: ['14', 0], filename_prefix: 'mullet/scene-motion-ref', format: template.format, codec: template.codec } },
+    '16': { class_type: 'LoraLoaderModelOnly', inputs: { model: ['1', 0], lora_name: template.modelFiles.turboLora, strength_model: 1 } },
+    '18': { class_type: 'MiniMaxH3SigmaShift', inputs: { model: ['16', 0], shift_video: template.shiftVideo, shift_audio: template.shiftAudio } }
+  };
+  const refImages: Record<string, [string, number]> = {};
+  settings.references.forEach((reference, index) => {
+    const nodeId = String(20 + index);
+    graph[nodeId] = { class_type: 'LoadImage', inputs: { image: reference.image } };
+    // ComfyUI's autogrow input is submitted nested under the input name; flat keys pass
+    // validation and then fail inside execute().
+    refImages[`ref_image_${index}`] = [nodeId, 0];
+  });
+  graph['6'] = { class_type: 'MiniMaxH3ReferenceToVideo', inputs: {
+    clip: ['2', 0],
+    vae: ['3', 0],
+    audio_vae: ['4', 0],
+    prompt: settings.prompt,
+    width: settings.width,
+    height: settings.height,
+    length: settings.frames,
+    ref_image_size: template.refImageSize,
+    ref_images: refImages
+  } };
+  return graph;
+}
+
 // Only distillation-accelerated paths survive. Anything that needed 20 unaccelerated
 // steps is removed, not hidden behind a selector.
 // One scene-motion path. No selection.
