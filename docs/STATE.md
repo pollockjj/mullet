@@ -1,4 +1,4 @@
-QUEUE-ITEM: lane-layout benchmark (operator order 2026-09-02) | STATE: armed, blocked on hammerhead:1234 being down; Krea served on f57c7ef | SERVED-SHA: f57c7ef747f2045cbaffde6d90b0e0e71706f527 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: lane layout (operator order 2026-09-02) | STATE: media-type layout measured faster on every stage; switching the served plist and re-checking | SERVED-SHA: f57c7ef747f2045cbaffde6d90b0e0e71706f527 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -556,3 +556,31 @@ portrait loop 66.6 s and scene loop 73.9 s delivered. The Krea path works on bot
 The local model on hammerhead came back at 18:18 and is slow under load (5 s for a
 five-token reply while the benchmark, the operator's chat and the sidecars share it);
 the served build logged 30 s director timeouts at 18:32 for that reason.
+
+## Lane-layout benchmark, 2026-09-02 18:18-19:40 CDT (cabin scenario as Jan, Krea stills, candidate of f57c7ef on 8782, alternating layouts so each run starts with the other layout's residency)
+
+Click-to-visible from the starter click, turn 1 (POST duration in brackets):
+
+| Stage | pipeline run 1 | media run 1 | pipeline run 2 | media run 2 |
+| --- | ---: | ---: | ---: | ---: |
+| portrait still | 8.1 s (4.1 warm, Krea left resident by the probe) | 20.7 s (16.6 cold, H3 had run on 8188) | 8.6 s (4.4 warm, left by media run 1) | 19.2 s (16.3 cold) |
+| caption | 51.0 s (LLM contended) | 6.4 s | 10.7 s | 6.9 s |
+| scene still | 96.0 s (15.2 cold on 8189) | 45.4 s (4.2 warm on 8188) | 64.5 s (16.5 cold on 8189) | 44.4 s (4.0 warm on 8188) |
+| portrait loop | 76.0 s (67.1) | 72.5 s (51.0 warm H3 on 8189) | 72.5 s (63.4) | 68.5 s (49.1 warm) |
+| scene loop | 196.1 s (98.2) | 128.5 s (82.2, queued behind the portrait loop) | 134.5 s (70.4) | 125.5 s (79.8) |
+
+Reading: in steady state the media layout keeps Krea/Qwen resident on 8188 (both stills
+~4 s of ComfyUI instead of ~16 s) and H3 resident on 8189 (portrait loop ~50 s instead
+of 63-67 s); the scene loop queues behind the portrait loop but still lands sooner
+(125-128 s) than under the pipeline layout (134-196 s), where each lane pays an H3 reload
+every turn. The portrait-still numbers under "media" above are cold only because the
+preceding pipeline run had put H3 on 8188; with the media layout served continuously
+the portrait is the 4 s case. Decision: serve the media-type layout
+(PORTRAIT_VIDEO_COMFY_BASE_URL=http://firestorm:8189, SCENE_STILL_COMFY_BASE_URL=
+http://firestorm:8188) via the plist; code unchanged (f57c7ef). Rollback plist:
+`scratch/deploy/rollback-f57c7ef-pipeline-layout-before-media-layout.plist`.
+
+The second turn failed in all four runs for a reason outside the lanes: the chat route
+threw "model metadata does not expose n_ctx for gemma-4-ortenzya" (the operator's
+LM Studio restart at ~18:15 changed the model metadata), so no second response was
+produced. Being diagnosed next; it affects the served build's chat as well.
