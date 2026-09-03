@@ -1,5 +1,7 @@
-export const DEFAULT_RESPONSE_TOKENS = 8096;
-export const MAX_RESPONSE_TOKENS = 128000;
+// SillyTavern values the operator runs against gemma-4-ortenzya: response length 65536,
+// context 262144 (the model's n_ctx). Read from ~/SillyTavern/data/default-user/settings.json.
+export const DEFAULT_RESPONSE_TOKENS = 65536;
+export const MAX_RESPONSE_TOKENS = 262144;
 
 export function resolveTokenLimit(
   value: unknown,

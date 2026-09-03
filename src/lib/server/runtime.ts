@@ -7,7 +7,15 @@ const parsedDefaultTokens = Number.parseInt(env.MODEL_DEFAULT_TOKENS ?? String(D
 const defaultMaxTokens = Number.isInteger(parsedDefaultTokens) && parsedDefaultTokens >= 1 && parsedDefaultTokens <= maxTokens
   ? parsedDefaultTokens
   : Math.min(DEFAULT_RESPONSE_TOKENS, maxTokens);
-const parsedTemperature = Number.parseFloat(env.MODEL_TEMPERATURE ?? '0.85');
+// Sampler values come from the model publisher's recommendations (Hugging Face model
+// card) and are set per deployment in the plist. A field left unset is not sent, so the
+// model server applies its own per-model defaults instead of a number invented here.
+function optionalNumber(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+const parsedTemperature = Number.parseFloat(env.MODEL_TEMPERATURE ?? '');
 
 function lane(value: string | undefined): string {
   return (value ?? '').trim().replace(/\/$/, '');
@@ -34,11 +42,19 @@ export const runtime = {
   maxTokens,
   defaultMaxTokens,
   // Context size to assume when the model server does not expose one (MODEL_CONTEXT_TOKENS);
-  // defaults to 32768, which every model served here so far exceeds.
+  // defaults to 262144, the n_ctx of gemma-4-ortenzya-q6.
   contextTokensFallback: (() => {
-    const parsed = Number.parseInt(env.MODEL_CONTEXT_TOKENS ?? '32768', 10);
-    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 32_768;
+    const parsed = Number.parseInt(env.MODEL_CONTEXT_TOKENS ?? '262144', 10);
+    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 262_144;
   })(),
-  temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : 0.85,
+  temperature: Number.isFinite(parsedTemperature) ? parsedTemperature : undefined,
+  sampling: {
+    top_p: optionalNumber(env.MODEL_TOP_P),
+    top_k: optionalNumber(env.MODEL_TOP_K),
+    min_p: optionalNumber(env.MODEL_MIN_P),
+    repeat_penalty: optionalNumber(env.MODEL_REPEAT_PENALTY),
+    presence_penalty: optionalNumber(env.MODEL_PRESENCE_PENALTY),
+    frequency_penalty: optionalNumber(env.MODEL_FREQUENCY_PENALTY)
+  },
   revision: env.BUILD_SHA ?? env.PUBLIC_BUILD_SHA ?? 'development'
 };

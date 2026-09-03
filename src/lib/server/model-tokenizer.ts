@@ -39,10 +39,13 @@ export async function getModelContextTokens(
   if (!response.ok) throw new Error(`model metadata request failed (${response.status})`);
   const payload = await response.json() as { data?: unknown[]; models?: unknown[] };
   const entries = [...(Array.isArray(payload.data) ? payload.data : []), ...(Array.isArray(payload.models) ? payload.models : [])];
-  const model = entries.find((candidate) => {
+  const names = (candidate: unknown): string[] => {
     const record = candidate as Record<string, unknown>;
-    return record?.id === modelId || record?.name === modelId || record?.model === modelId;
-  });
+    return [record?.id, record?.name, record?.model].filter((value): value is string => typeof value === 'string');
+  };
+  const model = entries.find((candidate) => names(candidate).includes(modelId))
+    ?? entries.find((candidate) => names(candidate).some((name) => name.startsWith(`${modelId}-`) || modelId.startsWith(`${name}-`)))
+    ?? (entries.length === 1 ? entries[0] : undefined);
   let tokens = contextFromEntry(model);
   if (tokens === null) {
     if (!Number.isInteger(fallbackTokens) || (fallbackTokens as number) < 1) {

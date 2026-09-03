@@ -185,7 +185,8 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         messages: upstreamMessages,
         stream: true,
         max_tokens: tokenLimit,
-        temperature: runtime.temperature
+        ...(runtime.temperature === undefined ? {} : { temperature: runtime.temperature }),
+        ...Object.fromEntries(Object.entries(runtime.sampling).filter(([, value]) => value !== undefined))
       }),
       signal: request.signal
     });

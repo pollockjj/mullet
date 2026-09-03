@@ -885,7 +885,7 @@
       }
     }
 
-    const savedTokenLimit = Number(localStorage.getItem('mullet.response-token-limit'));
+    const savedTokenLimit = Number(localStorage.getItem('mullet.response-token-limit.v2'));
     if (Number.isInteger(savedTokenLimit) && savedTokenLimit >= 1 && savedTokenLimit <= data.maxTokens) {
       tokenLimit = savedTokenLimit;
     }
@@ -4507,7 +4507,7 @@
   }
 
   function persistTokenLimit() {
-    if (browser) localStorage.setItem('mullet.response-token-limit', String(tokenLimit));
+    if (browser) localStorage.setItem('mullet.response-token-limit.v2', String(tokenLimit));
     lastLoreBudget = 0;
   }
 
