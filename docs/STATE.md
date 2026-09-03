@@ -1,4 +1,4 @@
-QUEUE-ITEM: h3-reference-to-video (operator proposal 21:05 CDT: skip the scene still, feed up to 9 Krea references into H3; three-identity clip 61.4 s; reference-scene graph builder added, nine-Krea-reference clip probing) | STATE: 2c355e2 served 21:28 CDT (65536 response / 262144 context / HF samplers); served browser check pending | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: h3-reference-scene (skip the still: reference-scene builder committed; nine-Krea-reference clip probing; route/client next) | STATE: READY FOR OPERATOR on 2c355e2 (65536 response, 262144 context, HF samplers; verified two turns as Jan) | SERVED-SHA: 2c355e2027e0d34d341c09c7dbe9c82638909c51 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -708,3 +708,13 @@ LoRA minimax_h3_ref2v_turbo_4step_v0.1, sigma shift 6/3, euler/simple 4 steps, 1
 is still 37 s + loop 56 s; a reference clip lands the scene animated in one 61 s pass.
 Next: nine Krea references (three views per subject, rendered on 8188) into one clip to
 measure the cost of the full reference budget, then build the path.
+
+Served 2c355e2, two-turn check through the real origin, cabin as Jan
+(`scratch/browser-check/loop-2c355e2/`, 21:34-21:40 CDT, lanes shared with my Krea
+reference renders on 8188 and the H3 reference probe on 8189): ok=true. Turn 1: label 4.8 s,
+portrait 10.9 s, caption 7.2 s, scene still 36.9 s, portrait loop 72.0 s, scene loop
+127.0 s. Turn 2 (contended): response 26.6 s, portrait 33.5 s, portrait loop 78.8 s, scene
+still 102.9 s, scene loop 162.9 s; Continuity current; reload restored all four with zero
+requests; only the proxy-root favicon 502s. READY FOR OPERATOR for the chat parameters.
+Krea reference pack (three views per subject, 832x1024 / 640x1152) rendered on 8188 in
+5.5-7.9 s each except one 53 s cold reload; files in the session scratchpad.
