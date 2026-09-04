@@ -1,4 +1,4 @@
-QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on f847d06 (references reach H3; one subject, close, alone, silent; clip per response), verified over two turns | SERVED-SHA: f847d0606433cc30ba20b52e7041d117b108bf5e | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: transcripts-on-disk (candidate verified; deploying) | STATE: saved transcripts as editable JSONL files with list/open/rename/duplicate/export/import and per-message edit/delete | SERVED-SHA: f847d0606433cc30ba20b52e7041d117b108bf5e | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -889,3 +889,30 @@ portrait 9.1 s, caption 7.1 s, portrait loop 68.4 s, scene clip 143.5 s. Turn 2:
 reload restored every clip with zero generation requests; only the proxy-root favicon
 502s. The served clips carry the dotted reference inputs and a frame pulled from the
 served clip shows the referenced subject. READY FOR OPERATOR.
+
+2026-09-04, operator order: "I want 100% control of my transcripts and that includes
+visibility, transparency, and the ability to delete, modify, copy or do whatever I want at
+will just like silly tavern." Why MULLET did not have it: the retained-capability list in
+the postmortem (line 99) names card V2/V3, lorebook/world-info, "a clean local-model
+conversation channel", sidecars, expression determination and the expression still. Chat
+management was never on that list, so the transcript stayed a single localStorage record
+(`mullet.workspace.v4`, one conversation, 1000-message cap) and nobody revisited it.
+Now: one JSONL file per chat under `MULLET_DATA_DIR/chats` (plist points at
+/Users/johnj/dev_master/mullet/data). Line 1 is the header, every later line is one
+message; a hand-edited file with a broken line still loads and reports the skipped line
+instead of losing the conversation. `src/lib/chat-record.ts` owns the format (16 tests),
+`src/lib/server/chat-files.ts` the atomic, path-safe fs layer (14 tests: hostile ids match
+nothing, temp-file-then-rename, corrupt files skipped with a warning, no recursive delete).
+Routes: GET/POST /api/chats, GET/PATCH/DELETE /api/chats/<id>, POST <id>/duplicate,
+GET <id>/export, POST /api/chats/import. The panel lists chats with their file names and
+the directory path, opens, renames inline, duplicates, exports, imports, and deletes behind
+a confirm step; the transcript itself gained per-message edit and delete. The chat id is
+the conversation id, so opening a chat restores that chat's clips; leaving a conversation
+now deletes only its own clips (`deleteStoredInlineSceneVideosForConversation`) and the
+restore prune keeps other chats' media instead of evicting it.
+Candidate check as Kristi (`scratch/browser-check/cand-chats/`, 05:18-05:24): ok=true, both
+turns, two clips restored on reload, and the run wrote its own transcript to disk without
+being asked: summer-weekend-at-the-cabin-9a49d0b5.jsonl, 4 lines, 1889 bytes. API smoke on
+a real server covered save, list, read, rename (file renamed on disk), duplicate, export
+headers, import with a deliberately broken line recovered, and a hostile id answered 404.
+Suite 277 pass, svelte-check 0 errors.

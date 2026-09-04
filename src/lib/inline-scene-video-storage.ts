@@ -406,6 +406,36 @@ export async function rollbackStoredInlineSceneVideoWrite(receipt: InlineSceneVi
   }
 }
 
+// Drops only the clips belonging to one conversation. Saved transcripts are separate
+// chats (operator order, 2026-09-03), so resetting or leaving one must never touch
+// another one's media.
+export async function deleteStoredInlineSceneVideosForConversation(conversationId: string): Promise<void> {
+  if (typeof conversationId !== 'string' || conversationId.length < 1) return;
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const unwrapped = unwrapStoredInlineSceneVideo(cursor.value);
+        const owner = isRecord(unwrapped) && typeof unwrapped.conversationId === 'string' ? unwrapped.conversationId : null;
+        // An entry whose owner cannot be read is junk from an older spec and goes too.
+        if (owner === null || owner === conversationId) cursor.delete();
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB inline-scene video scan failed'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video conversation delete failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB inline-scene video conversation delete aborted'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 // Conversation reset and unrecoverable state both drop every clip.
 export async function clearStoredInlineSceneVideo(): Promise<void> {
   const database = await openDatabase();

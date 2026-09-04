@@ -56,5 +56,10 @@ export const runtime = {
     presence_penalty: optionalNumber(env.MODEL_PRESENCE_PENALTY),
     frequency_penalty: optionalNumber(env.MODEL_FREQUENCY_PENALTY)
   },
+  // Saved transcripts live here as one JSONL file per chat, so the operator can open,
+  // edit, copy and delete them with ordinary tools (operator order, 2026-09-03). Absolute:
+  // launchd sets no working directory, so a relative default would land wherever the
+  // service happened to start.
+  dataDir: (env.MULLET_DATA_DIR ?? '').trim() || `${process.cwd()}/data`,
   revision: env.BUILD_SHA ?? env.PUBLIC_BUILD_SHA ?? 'development'
 };

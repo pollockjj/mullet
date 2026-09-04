@@ -93,6 +93,7 @@
     StoredInlineSceneVideoIntegrityError,
     clearStoredInlineSceneVideo,
     commitStoredInlineSceneVideo,
+    deleteStoredInlineSceneVideosForConversation,
     loadAllStoredInlineSceneVideos,
     loadStoredInlineSceneVideo,
     pruneStoredInlineSceneVideos,
@@ -264,6 +265,28 @@
   let noticeMessage = '';
   let tokenLimit = data.defaultMaxTokens;
   let finalizedFictionResponse: FictionResponseReceipt | null = null;
+  // Saved transcripts: one JSONL file per chat under the server's data directory, listed
+  // and controlled from the panel (operator order, 2026-09-03). The chat id IS the
+  // conversation id, so switching chats also brings that chat's media back.
+  type ChatSummary = {
+    id: string; title: string; card: string; starter: string;
+    createdAt: string; updatedAt: string; messageCount: number; bytes: number; file: string; path: string;
+  };
+  let chats: ChatSummary[] = [];
+  let chatsDirectory = '';
+  let chatsLoading = false;
+  let chatTitle = '';
+  let chatCreatedAt = '';
+  let chatError = '';
+  let chatNotice = '';
+  let chatSaving = false;
+  let chatSaveTimer: number | null = null;
+  let chatImportInput: HTMLInputElement | null = null;
+  let renamingChatId = '';
+  let renameDraft = '';
+  let pendingDeleteChatId = '';
+  let editingMessageIndex: number | null = null;
+  let editingMessageDraft = '';
   let activeCard: ImportedCharacterCard | null = null;
   let cardSourceIdentifier = '';
   let portraitDataUrl = '';
@@ -944,6 +967,7 @@
     void loadPortraitVideoGenerator();
     void loadInlineSceneVideoGenerator();
     void loadScenarioCatalog();
+    void refreshChats();
   });
 
   function restoreWorkspaceState() {
@@ -1937,7 +1961,12 @@
         } catch {
           continue;
         }
-        if (verified.conversationId !== conversationId) continue;
+        // Another saved chat's clips are none of this conversation's business: they are
+        // kept so that opening that chat again still shows its media.
+        if (verified.conversationId !== conversationId) {
+          keep.add(verified.requestKey);
+          continue;
+        }
         const index = inlineSceneClipMessageIndex(verified);
         if (index < 0 || index >= messages.length) continue;
         keep.add(verified.requestKey);
@@ -2723,9 +2752,10 @@
     forgetInlineSceneClips();
     removeInstalledInlineScene();
     if (inlineSceneVideoPersistenceAvailable) {
+      const leaving = conversationId;
       beginInlineSceneVideoPersistenceOperation();
       try {
-        await runStoredInlineSceneVideoExclusive(clearStoredInlineSceneVideo);
+        await runStoredInlineSceneVideoExclusive(() => deleteStoredInlineSceneVideosForConversation(leaving));
       } catch (cause) {
         disableInlineSceneVideoPersistence(cause);
       } finally {
@@ -3890,10 +3920,10 @@
     }
   }
 
-  async function resetSidecarForConversation() {
+  async function resetSidecarForConversation(nextConversationId: string = crypto.randomUUID()) {
     sidecarController?.abort();
     lastExpressionAttemptKey = '';
-    conversationId = crypto.randomUUID();
+    conversationId = nextConversationId;
     finalizedFictionResponse = null;
     await resetInlineSceneForConversation();
     await resetPortraitForConversation();
@@ -4130,6 +4160,200 @@
     if (!browser) return;
     const workspace = createStoredWorkspace(conversationId, messages, finalizedFictionResponse);
     saveStoredWorkspace(localStorage, workspace);
+    scheduleChatFileSave();
+  }
+
+  function chatRecordForSave() {
+    const now = new Date().toISOString();
+    if (!chatCreatedAt) chatCreatedAt = now;
+    const title = chatTitle.trim() || derivedChatTitle();
+    return {
+      header: {
+        spec: 'mullet_chat_v1',
+        id: conversationId,
+        title,
+        card: activeCard?.data.name ?? '',
+        starter: activeScenarioStarterId ?? '',
+        createdAt: chatCreatedAt,
+        updatedAt: now
+      },
+      messages: messages.map((message) => ({ role: message.role, content: message.content, at: now }))
+    };
+  }
+
+  function derivedChatTitle(): string {
+    const firstUser = messages.find((message) => message.role === 'user')?.content ?? '';
+    const collapsed = firstUser.replace(/\s+/g, ' ').trim();
+    if (collapsed) return collapsed.length > 60 ? `${collapsed.slice(0, 57).trimEnd()}…` : collapsed;
+    return activeCard?.data.name?.trim() || 'Untitled chat';
+  }
+
+  // Debounced: the transcript is written after the operator stops typing or a turn lands,
+  // not on every keystroke of a streaming response.
+  function scheduleChatFileSave() {
+    if (!browser || messages.length < 1) return;
+    if (chatSaveTimer !== null) window.clearTimeout(chatSaveTimer);
+    chatSaveTimer = window.setTimeout(() => { void saveChatFile(); }, 1200);
+  }
+
+  async function saveChatFile() {
+    if (!browser || chatSaving || messages.length < 1) return;
+    chatSaving = true;
+    try {
+      const response = await fetch(`${base}/api/chats`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ record: chatRecordForSave() })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? `Chat save failed (${response.status}).`);
+      chatError = '';
+      chatTitle = payload.summary.title;
+      upsertChatSummary(payload.summary);
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The transcript could not be saved.';
+    } finally {
+      chatSaving = false;
+    }
+  }
+
+  function upsertChatSummary(summary: ChatSummary) {
+    chats = [summary, ...chats.filter((entry) => entry.id !== summary.id)]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async function refreshChats() {
+    if (!browser || chatsLoading) return;
+    chatsLoading = true;
+    try {
+      const response = await fetch(`${base}/api/chats`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? `Chat listing failed (${response.status}).`);
+      chats = payload.chats;
+      chatsDirectory = payload.directory;
+      chatError = '';
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The saved chats could not be listed.';
+    } finally {
+      chatsLoading = false;
+    }
+  }
+
+  async function openChat(id: string) {
+    if (!browser || id === conversationId) return;
+    try {
+      await saveChatFile();
+      const response = await fetch(`${base}/api/chats/${encodeURIComponent(id)}`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? `Chat could not be opened (${response.status}).`);
+      await installChatRecord(payload.record);
+      chatNotice = (payload.skipped?.length ?? 0) > 0
+        ? `${payload.skipped.length} line(s) in that file could not be read and were skipped.`
+        : '';
+      chatError = '';
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The chat could not be opened.';
+    }
+  }
+
+  async function installChatRecord(record: { header: ChatSummary & { spec: string }; messages: { role: 'user' | 'assistant'; content: string }[] }) {
+    // Everything keyed on the old conversation is stood down first; the media restore then
+    // brings back whatever belongs to the chat being opened.
+    await resetSidecarForConversation(record.header.id);
+    chatCreatedAt = record.header.createdAt;
+    chatTitle = record.header.title;
+    messages = record.messages.map(({ role, content }) => ({ role, content }));
+    finalizedFictionResponse = null;
+    persist();
+    void restoreInlineSceneAndMotion();
+    void scrollToLatest();
+  }
+
+  async function renameChat(id: string, title: string) {
+    try {
+      const response = await fetch(`${base}/api/chats/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? `Rename failed (${response.status}).`);
+      if (id === conversationId) chatTitle = payload.summary.title;
+      upsertChatSummary(payload.summary);
+      chatError = '';
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The chat could not be renamed.';
+    }
+  }
+
+  async function deleteChatFile(id: string) {
+    try {
+      const response = await fetch(`${base}/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!response.ok && response.status !== 204) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `Delete failed (${response.status}).`);
+      }
+      chats = chats.filter((entry) => entry.id !== id);
+      chatError = '';
+      chatNotice = 'Chat file deleted.';
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The chat could not be deleted.';
+    }
+  }
+
+  async function duplicateChatFile(id: string) {
+    try {
+      const response = await fetch(`${base}/api/chats/${encodeURIComponent(id)}/duplicate`, { method: 'POST' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? `Duplicate failed (${response.status}).`);
+      upsertChatSummary(payload.summary);
+      chatError = '';
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The chat could not be duplicated.';
+    }
+  }
+
+  async function importChatFile(file: File) {
+    try {
+      const response = await fetch(`${base}/api/chats/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-ndjson' },
+        body: await file.text()
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? `Import failed (${response.status}).`);
+      upsertChatSummary(payload.summary);
+      chatNotice = (payload.skipped?.length ?? 0) > 0
+        ? `Imported with ${payload.skipped.length} unreadable line(s) skipped.`
+        : 'Chat imported.';
+      chatError = '';
+    } catch (cause) {
+      chatError = cause instanceof Error ? cause.message : 'The chat could not be imported.';
+    }
+  }
+
+  function beginMessageEdit(index: number) {
+    editingMessageIndex = index;
+    editingMessageDraft = messages[index]?.content ?? '';
+  }
+
+  function commitMessageEdit() {
+    if (editingMessageIndex === null) return;
+    const index = editingMessageIndex;
+    messages = messages.map((message, position) => (
+      position === index ? { ...message, content: editingMessageDraft } : message
+    ));
+    editingMessageIndex = null;
+    editingMessageDraft = '';
+    persist();
+    void saveChatFile();
+  }
+
+  function deleteMessage(index: number) {
+    messages = messages.filter((_, position) => position !== index);
+    if (editingMessageIndex === index) editingMessageIndex = null;
+    persist();
+    void saveChatFile();
   }
 
   function freshConversation(): Message[] {
@@ -5016,6 +5240,80 @@
           disabled={streaming}
         ></textarea>
       </label>
+      <section class="chats" aria-label="Transcripts">
+        <div class="chats-head">
+          <span class="eyebrow">Transcripts</span>
+          <button class="chats-refresh" on:click={() => void refreshChats()} disabled={chatsLoading}>
+            {chatsLoading ? 'Reading…' : 'Refresh'}
+          </button>
+        </div>
+        <div class="chats-actions">
+          <button on:click={() => void saveChatFile()} disabled={chatSaving || messages.length < 1}>
+            {chatSaving ? 'Saving…' : 'Save now'}
+          </button>
+          <button on:click={() => chatImportInput?.click()}>Import…</button>
+          <input
+            class="chats-import"
+            type="file"
+            accept=".jsonl,.ndjson,.txt,application/x-ndjson,text/plain"
+            bind:this={chatImportInput}
+            on:change={(event) => {
+              const input = event.currentTarget;
+              const file = input.files?.[0];
+              if (file) void importChatFile(file).then(() => refreshChats());
+              input.value = '';
+            }}
+          />
+        </div>
+        {#if chatError}<p class="chats-error" role="alert">{chatError}</p>{/if}
+        {#if chatNotice}<p class="chats-notice" role="status">{chatNotice}</p>{/if}
+        <ul class="chat-list">
+          {#each chats as chat (chat.id)}
+            <li class:current={chat.id === conversationId}>
+              {#if renamingChatId === chat.id}
+                <form
+                  class="chat-rename"
+                  on:submit|preventDefault={() => {
+                    const title = renameDraft.trim();
+                    renamingChatId = '';
+                    if (title) void renameChat(chat.id, title);
+                  }}
+                >
+                  <input bind:value={renameDraft} maxlength="200" aria-label="Chat title" />
+                  <button type="submit">Save</button>
+                  <button type="button" on:click={() => { renamingChatId = ''; }}>Cancel</button>
+                </form>
+              {:else}
+                <button class="chat-open" on:click={() => void openChat(chat.id)}>
+                  <strong>{chat.title}</strong>
+                  <small>{chat.messageCount} messages · {new Date(chat.updatedAt).toLocaleString()}</small>
+                </button>
+              {/if}
+              <div class="chat-row-actions">
+                <button on:click={() => { renamingChatId = chat.id; renameDraft = chat.title; }}>Rename</button>
+                <button on:click={() => void duplicateChatFile(chat.id)}>Duplicate</button>
+                <a href={`${base}/api/chats/${chat.id}/export`} download>Export</a>
+                {#if pendingDeleteChatId === chat.id}
+                  <button
+                    class="danger"
+                    on:click={() => { pendingDeleteChatId = ''; void deleteChatFile(chat.id); }}
+                  >Confirm</button>
+                  <button on:click={() => { pendingDeleteChatId = ''; }}>Keep</button>
+                {:else}
+                  <button on:click={() => { pendingDeleteChatId = chat.id; }}>Delete</button>
+                {/if}
+              </div>
+              <code class="chat-file">{chat.file}</code>
+            </li>
+          {:else}
+            <li class="chat-empty">No saved transcripts yet. One is written as soon as this conversation has a message.</li>
+          {/each}
+        </ul>
+        {#if chatsDirectory}
+          <p class="chats-dir">Files live in <code>{chatsDirectory}</code> — edit, copy or delete them with anything you like.</p>
+        {/if}
+      </section>
+
       <button class="clear" on:click={() => void clearConversation()} disabled={streaming || workspaceBusy || assistantTurnBusy || messages.length === 0}>
         {false ? 'Reset assistant chat' : 'Clear conversation'}
       </button>
@@ -5038,7 +5336,23 @@
           {#each messages as message, messageIndex}
             <article class:assistant={message.role === 'assistant'}>
               <span class="speaker">{message.role === 'user' ? 'You' : false ? 'Assistant' : activeCard?.data.name ?? data.model}</span>
-              <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
+              {#if editingMessageIndex === messageIndex}
+                <div class="message-edit">
+                  <textarea bind:value={editingMessageDraft} rows="6" aria-label="Edit message"></textarea>
+                  <div class="message-edit-actions">
+                    <button on:click={commitMessageEdit}>Save</button>
+                    <button on:click={() => { editingMessageIndex = null; editingMessageDraft = ''; }}>Cancel</button>
+                  </div>
+                </div>
+              {:else}
+                <div class="content">{message.content}{#if streaming && message === messages.at(-1)}<span class="cursor">▋</span>{/if}</div>
+                {#if !streaming && !workspaceBusy}
+                  <div class="message-actions">
+                    <button on:click={() => beginMessageEdit(messageIndex)}>Edit</button>
+                    <button on:click={() => deleteMessage(messageIndex)}>Delete</button>
+                  </div>
+                {/if}
+              {/if}
               {#if inlineScenesEnabled && (inlineSceneClips.has(messageIndex) || finalizedInlineSceneSource?.messageIndex === messageIndex)}
                 {@const clip = inlineSceneClips.get(messageIndex) ?? null}
                 {@const isCurrentTurn = finalizedInlineSceneSource?.messageIndex === messageIndex}
@@ -5343,6 +5657,39 @@
   .speaker { display: block; margin-bottom: 8px; color: #c98e4f; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
   article.assistant .speaker { color: #7db68d; }
   .content { color: #e8e2d9; font: 16px/1.72 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .message-actions { display: flex; gap: 6px; margin-top: 6px; opacity: 0; transition: opacity .12s ease; }
+  article:hover .message-actions, article:focus-within .message-actions { opacity: 1; }
+  .message-actions button { padding: 3px 7px; border: 1px solid #3a342d; border-radius: 6px; color: #8d857b; background: transparent; font: 700 9px/1.2 ui-monospace, monospace; cursor: pointer; }
+  .message-actions button:hover { color: #d8cfc4; border-color: #5b5249; }
+  .message-edit { display: grid; gap: 6px; }
+  .message-edit textarea { width: 100%; padding: 8px 9px; border: 1px solid #494139; border-radius: 8px; color: #e7ded2; background: #0f0d0b; font: inherit; line-height: 1.55; resize: vertical; }
+  .message-edit-actions { display: flex; gap: 6px; }
+  .message-edit-actions button { padding: 4px 9px; border: 1px solid #494139; border-radius: 6px; color: #a79e94; background: #191613; font: 700 9px/1.2 ui-monospace, monospace; cursor: pointer; }
+  .chats { display: grid; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #2b2723; }
+  .chats-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .chats-refresh, .chats-actions button, .chat-row-actions button, .chat-row-actions a, .chat-rename button {
+    padding: 4px 7px; border: 1px solid #494139; border-radius: 6px; color: #a79e94; background: #191613;
+    font: 700 9px/1.2 ui-monospace, monospace; text-decoration: none; cursor: pointer;
+  }
+  .chats-actions { display: flex; gap: 6px; }
+  .chats-actions button:disabled { opacity: .5; cursor: default; }
+  .chats-import { display: none; }
+  .chats-error { margin: 0; color: #d4a99e; font-size: 10px; }
+  .chats-notice { margin: 0; color: #8ea491; font-size: 10px; }
+  .chat-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; max-height: 320px; overflow-y: auto; }
+  .chat-list li { display: grid; gap: 5px; padding: 7px 8px; border: 1px solid #35302a; border-radius: 8px; background: #171512; }
+  .chat-list li.current { border-color: #6d966f; background: #171d18; }
+  .chat-open { display: grid; gap: 2px; padding: 0; border: 0; background: none; color: #d8cfc4; text-align: left; cursor: pointer; }
+  .chat-open strong { font-size: 11px; font-weight: 650; }
+  .chat-open small { color: #817a72; font: 400 9px/1.3 ui-monospace, monospace; }
+  .chat-row-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chat-row-actions .danger { border-color: #6e3c34; color: #e6b9ae; }
+  .chat-rename { display: flex; gap: 5px; }
+  .chat-rename input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid #494139; border-radius: 6px; color: #e7ded2; background: #0f0d0b; font-size: 11px; }
+  .chat-file { color: #6f6862; font: 400 8px/1.3 ui-monospace, monospace; overflow-wrap: anywhere; }
+  .chat-empty { color: #817a72; font-size: 10px; }
+  .chats-dir { margin: 0; color: #817a72; font-size: 9px; overflow-wrap: anywhere; }
+  .chats-dir code { color: #a79e94; }
   .scene-card { position: relative; overflow: hidden; margin: 18px 0 0; border: 1px solid #435344; border-radius: 13px; background: #171b18; box-shadow: 0 18px 42px rgba(0,0,0,.24); }
   .scene-card.stale { border-color: #6d573d; }
   .scene-card .scene-frame { position: relative; width: 100%; aspect-ratio: var(--scene-ratio, 16 / 9); overflow: hidden; background: linear-gradient(135deg, #25221d, #171918); }

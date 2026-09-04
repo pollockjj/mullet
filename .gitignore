@@ -5,3 +5,4 @@ scratch/
 !.env.example
 .DS_Store
 
+data/chats/
