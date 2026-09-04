@@ -1,4 +1,4 @@
-QUEUE-ITEM: transcripts-on-disk (candidate verified; deploying) | STATE: saved transcripts as editable JSONL files with list/open/rename/duplicate/export/import and per-message edit/delete | SERVED-SHA: f847d0606433cc30ba20b52e7041d117b108bf5e | LAST-OPERATOR-RESULT: none accepted
+QUEUE-ITEM: none open | STATE: READY FOR OPERATOR on f0ee275 (transcripts are files with full operator control; sidecar budgets cover a cold model reload), verified over two turns | SERVED-SHA: f0ee27594350d3be1ed9c4b371e85da198d61206 | LAST-OPERATOR-RESULT: none accepted
 
 Rewrite the line above on every commit. One line. Queue items are defined in docs/GOAL.md.
 
@@ -929,3 +929,13 @@ Both sidecar budgets (expression classifier and scene director) now stand at 150
 covers the measured cold reload; nothing on the shared host was touched.
 Gap this cost time to find: the server log carries no timestamps, so a failure cannot be
 lined up with a run without guessing.
+
+Served f0ee275 at 05:54:53 CDT; two-turn check through the real origin, cabin as Jan
+(`scratch/browser-check/loop-f0ee275/`, 05:54-06:04): ok=true, and the run proves the
+diagnosis: turn 1's expression label took 51.6 s - the cold model reload, absorbed by the
+new 150 s budget where the old 30 s one failed - and everything downstream then worked
+(portrait 64.0 s, portrait loop 108.7 s, scene clip 183.8 s). Turn 2: response 24.6 s,
+portrait 33.5 s, portrait loop 219.2 s, scene clip 339.2 s (both lanes contended with the
+reload); Continuity current; reload restored portrait, portrait loop and every scene clip
+with zero generation requests; only the proxy-root favicon 502s. The served build writes
+its transcripts to /Users/johnj/dev_master/mullet/data/chats. READY FOR OPERATOR.
