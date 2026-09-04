@@ -939,3 +939,18 @@ portrait 33.5 s, portrait loop 219.2 s, scene clip 339.2 s (both lanes contended
 reload); Continuity current; reload restored portrait, portrait loop and every scene clip
 with zero generation requests; only the proxy-root favicon 502s. The served build writes
 its transcripts to /Users/johnj/dev_master/mullet/data/chats. READY FOR OPERATOR.
+
+Persistence audit (344 agents, every claim refuted-checked; full answer at
+scratchpad/persistence-audit.md). Two real defects it surfaced, both verified by hand:
+- The persona is dead weight in the prompt. `personaDescription` is validated at
+  api/chat/+server.ts:94-96 and passed only into the lore-scan options (:149), where
+  lorebook.ts:865 uses it solely for entries with `matchPersonaDescription`. It never
+  reaches `compileCharacterMessages`, so what the operator types as their own character
+  never describes them to the model. SillyTavern injects the persona into the prompt.
+- The author's note engine exists but is unreachable. `injectLoreContext(history, result,
+  authorNoteSettings = DEFAULT_AUTHOR_NOTE_SETTINGS)` (lorebook.ts:1110-1112) is called with
+  two arguments at api/chat/+server.ts:173 and lorebook.ts:1140, so the settings are always
+  the defaults and no UI can set one.
+Also recorded: three server log sites can carry model text, one of them untruncated
+(api/chat/+server.ts:199-200 logs the whole upstream error body); neither log file rotates
+and neither carries timestamps.
