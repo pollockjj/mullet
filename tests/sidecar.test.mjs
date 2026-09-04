@@ -23,7 +23,9 @@ const conversationId = '8d78c151-83f0-4c72-9b9b-1ab957adca78';
 
 test('pins the current SillyTavern staging expression vocabulary and prompt', () => {
   assert.equal(ST_EXPRESSION_SOURCE_REVISION, '30eaf26a438fd629e43492bfe82f05d976766208');
-  assert.equal(SIDECAR_TIMEOUT_MS, 30_000);
+  // Covers a cold model reload on the shared chat host (71.6 s measured), not just the
+// classification itself.
+  assert.equal(SIDECAR_TIMEOUT_MS, 150_000);
   assert.deepEqual(EXPRESSION_LABELS, [
     'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion', 'curiosity',
     'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment', 'excitement', 'fear',

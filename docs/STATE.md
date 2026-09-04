@@ -916,3 +916,16 @@ being asked: summer-weekend-at-the-cabin-9a49d0b5.jsonl, 4 lines, 1889 bytes. AP
 a real server covered save, list, read, rename (file renamed on disk), duplicate, export
 headers, import with a deliberately broken line recovered, and a hostile id answered 404.
 Suite 277 pass, svelte-check 0 errors.
+
+05:26-05:55 CDT 2026-09-04: the served check of the transcript build failed twice with the
+same signature - turn 2's expression sidecar timing out after 30 s, no portrait, and the
+portrait loop never restored. It was not the transcript work and it was not the chat host
+being down: `GET /v1/models` answers in 0.07 s throughout. Timing three identical 8-token
+completions against hammerhead: 71.6 s, then 3.48 s, then 0.77 s. The host evicts an idle
+model and the next completion pays a full reload of a 30 GB Q6 weight set. MULLET's own
+pipeline opens that idle window - the scene clip now takes ~150 s since the references
+actually reach H3 - so every second turn landed on a cold model and blew a 30 s budget.
+Both sidecar budgets (expression classifier and scene director) now stand at 150 s, which
+covers the measured cold reload; nothing on the shared host was touched.
+Gap this cost time to find: the server log carries no timestamps, so a failure cannot be
+lined up with a run without guessing.

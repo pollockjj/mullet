@@ -26,7 +26,9 @@ export const INLINE_SCENE_CAPABILITIES_SPEC = 'mullet_inline_scene_capabilities_
 export const INLINE_SCENE_TEMPLATE_ID = 'z-image-turbo-scene-v1' as const;
 export const INLINE_SCENE_KREA_TEMPLATE_ID = 'krea2-turbo-scene-v1' as const;
 export const INLINE_SCENE_QWEN_TEMPLATE_ID = 'qwen-image-edit-2511-scene-v1' as const;
-export const INLINE_SCENE_TIMEOUT_MS = 30_000 as const;
+// Same reason as SIDECAR_TIMEOUT_MS: this budget has to cover a cold model reload on the
+// shared chat host, not just the direction call itself.
+export const INLINE_SCENE_TIMEOUT_MS = 150_000 as const;
 export const INLINE_SCENE_IMAGE_TIMEOUT_MS = 120_000 as const;
 export const MINIMAX_H3_INLINE_SCENE_STILL_TIMEOUT_MS = 300_000 as const;
 export const INLINE_SCENE_MAX_TURNS = 6 as const;

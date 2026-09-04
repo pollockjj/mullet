@@ -1,7 +1,11 @@
 export const SIDECAR_REQUEST_SPEC = 'mullet_sidecar_request_v1' as const;
 export const SIDECAR_RESULT_SPEC = 'mullet_sidecar_result_v1' as const;
 export const SIDECAR_STATE_SPEC = 'mullet_sidecar_state_v1' as const;
-export const SIDECAR_TIMEOUT_MS = 30_000 as const;
+// The chat host evicts an idle model and reloads it on the next completion. Measured on
+// hammerhead 2026-09-04 with an 8-token classification: 71.6 s cold, then 3.5 s, then
+// 0.77 s. MULLET's own pipeline creates the idle gap - a scene clip takes about 150 s -
+// so a classifier budget under that reload time fails every second turn.
+export const SIDECAR_TIMEOUT_MS = 150_000 as const;
 
 export const ST_EXPRESSION_SOURCE_REVISION = '30eaf26a438fd629e43492bfe82f05d976766208' as const;
 
